@@ -1,0 +1,131 @@
+"""Docker boundary. No fallback to host execution."""
+
+import json
+import shutil
+import subprocess
+import tempfile
+import uuid
+from pathlib import Path
+from typing import Protocol
+
+from tools.base import ToolResult
+from tools.process_runner import ProcessRunner
+
+from .policy import SandboxPolicy
+
+
+class SandboxBackend(Protocol):
+    def execute(self, workspace: Path, name: str, arguments: dict) -> ToolResult: ...
+
+
+class DockerBackend:
+    def __init__(self, policy: SandboxPolicy):
+        self.policy = policy
+        self.healthy = True
+        self.executable = shutil.which("docker")
+        if not self.executable:
+            raise ValueError("Docker 不可用；不会退回宿主机执行。请安装并启动 Docker。")
+        check = subprocess.run(
+            [self.executable, "image", "inspect", policy.image, "--format", "{{.Id}}"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if check.returncode:
+            raise ValueError(f"Docker 镜像不可用；请先构建 {policy.image}。")
+        self.image = check.stdout.strip()  # Pin this session to the inspected image ID.
+        self.runner = ProcessRunner(max_output_bytes=4 * 1024 * 1024)
+
+    def execute(self, workspace: Path, name: str, arguments: dict) -> ToolResult:
+        if not self.healthy:
+            raise OSError("之前的容器清理未确认，拒绝继续执行。")
+        container = "repo-agent-" + uuid.uuid4().hex
+        with tempfile.TemporaryDirectory(prefix="agent-request-") as directory:
+            request = Path(directory) / "request.json"
+            request.write_text(
+                json.dumps(
+                    {
+                        "name": name,
+                        "arguments": arguments,
+                        "tool_limits": {
+                            "command_timeout_seconds": self.policy.command_timeout_seconds,
+                            "python_timeout_seconds": self.policy.python_timeout_seconds,
+                        },
+                    }
+                )
+            )
+            request.chmod(0o644)
+            command = [
+                self.executable,
+                "run",
+                "--rm",
+                "--pull=never",
+                "--name",
+                container,
+                "--network=none",
+                "--read-only",
+                "--user",
+                "65534:65534",
+                "--cap-drop=ALL",
+                "--security-opt=no-new-privileges",
+                "--memory",
+                self.policy.memory,
+                "--memory-swap",
+                self.policy.memory,
+                "--cpus",
+                self.policy.cpus,
+                "--pids-limit",
+                str(self.policy.pids),
+                "--ulimit",
+                f"fsize={self.policy.max_file_bytes}:{self.policy.max_file_bytes}",
+                "--tmpfs",
+                f"/tmp:rw,nosuid,nodev,size={self.policy.tmpfs_size},mode=1777",
+                "--shm-size",
+                self.policy.shm_size,
+                "--env",
+                "HOME=/tmp",
+                "--env",
+                "TMPDIR=/tmp",
+                "--mount",
+                f"type=bind,src={workspace},dst=/workspace",
+                "--mount",
+                f"type=bind,src={request},dst=/request.json,readonly",
+                "--workdir",
+                "/workspace",
+                *(
+                    ["--gpus", "all" if self.policy.gpus == "all" else f"device={self.policy.gpus}"]
+                    if self.policy.gpus is not None
+                    else []
+                ),
+                self.image,
+            ]
+            try:
+                result = self.runner.run(
+                    command, cwd=workspace, timeout_seconds=self.policy.timeout
+                )
+            finally:
+                # Killing the Docker client alone does not terminate its container.
+                self.healthy = False
+                cleanup = subprocess.run(
+                    [self.executable, "rm", "-f", container],
+                    capture_output=True,
+                    timeout=15,
+                    check=False,
+                )
+                if cleanup.returncode and b"No such container" not in cleanup.stderr:
+                    raise OSError("Sandbox 容器清理失败；停止会话，请检查 Docker。")
+                self.healthy = True
+            if result.timed_out or result.exit_code != 0 or result.stdout_truncated:
+                return ToolResult(
+                    False,
+                    error_code="SANDBOX_EXECUTION_FAILED",
+                    error="Sandbox 执行失败、超时或结果超过限制。",
+                )
+            try:
+                payload = json.loads(result.stdout)
+                return ToolResult(**payload)
+            except (ValueError, TypeError):
+                return ToolResult(
+                    False, error_code="SANDBOX_PROTOCOL_ERROR", error="Sandbox 返回了无效结果。"
+                )

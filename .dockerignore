@@ -1,0 +1,15 @@
+*
+!pyproject.toml
+!llm/
+!llm/**
+!tools/
+!tools/**
+!agent/
+!agent/**
+!cli/
+!cli/**
+!sandbox/
+!sandbox/**
+**/__pycache__
+**/*.pyc
+**/.env*
