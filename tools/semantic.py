@@ -50,8 +50,93 @@ _SYMBOL_KINDS = (
     "type_parameter",
 )
 
+class LspToolBase:
+    def _read_snapshot(self):
+        pass
+    def _verify_snapshot(self):
+        pass
+    def _new_client(self, config: LspLanguageConfig) -> LspClient:
+            return LspClient(
+                self.workspace_root,
+                config.command,
+                language_id=config.language_id,
+                timeout_seconds=(
+                    self.timeout_seconds if self.timeout_seconds is not None else config.timeout_seconds
+                ),
+            )
 
-class GetSymbolsTool:
+    @staticmethod
+    def _range(value: Any) -> dict:
+        if not isinstance(value, dict):
+            raise ValueError("Invalid range")
+        converted = {}
+        positions = []
+        for key in ("start", "end"):
+            position = value[key]
+            line, column = position["line"], position["character"]
+            if any(type(x) is not int or x < 0 for x in (line, column)):
+                raise ValueError("Invalid position")
+            positions.append((line, column))
+            converted[key] = {"line": line + 1, "column": column + 1}
+        if positions[0] > positions[1]:
+            raise ValueError("Reversed range")
+        return converted
+
+    @classmethod
+    def _normalize(cls, symbols: Any, uri: str, start: int, limit: int) -> tuple[list, int, bool]:
+        if symbols is None:
+            return [], 0, False
+        if not isinstance(symbols, list):
+            raise ValueError("Expected symbol list")
+        hierarchy = bool(symbols and isinstance(symbols[0], dict) and "location" not in symbols[0])
+        stack = [(iter(symbols), None)]
+        exhausted = object()
+        page = []
+        total = 0
+        # Iterative traversal supports deeply nested classes without Python recursion.
+        while stack:
+            iterator, parent_index = stack[-1]
+            symbol = next(iterator, exhausted)
+            if symbol is exhausted:
+                stack.pop()
+                continue
+            if not isinstance(symbol, dict) or ("location" not in symbol) != hierarchy:
+                raise ValueError("Invalid or mixed symbol formats")
+            name, kind = symbol["name"], symbol["kind"]
+            if not isinstance(name, str) or not name.strip() or type(kind) is not int:
+                raise ValueError("Invalid symbol name or kind")
+            location = symbol if hierarchy else symbol["location"]
+            if not isinstance(location, dict) or (not hierarchy and location.get("uri") != uri):
+                raise ValueError("Document symbol refers to another file")
+            item = {
+                "index": total,
+                "name": name,
+                "kind": _SYMBOL_KINDS[kind] if 1 <= kind < len(_SYMBOL_KINDS) else "unknown",
+                "range": cls._range(location["range"]),
+            }
+            if hierarchy:
+                item["selection_range"] = cls._range(symbol["selectionRange"])
+                item["parent_index"] = parent_index
+                children = symbol.get("children", [])
+                if not isinstance(children, list):
+                    raise ValueError("Invalid children")
+                stack.append((iter(children), total))
+            elif symbol.get("containerName") is not None:
+                if not isinstance(symbol["containerName"], str):
+                    raise ValueError("Invalid container name")
+                item["container_name"] = symbol["containerName"]
+            if symbol.get("detail") is not None:
+                if not isinstance(symbol["detail"], str):
+                    raise ValueError("Invalid symbol detail")
+                item["detail"] = symbol["detail"]
+            if start <= total < start + limit:
+                page.append(item)
+            total += 1
+        return page, total, hierarchy
+
+
+
+class GetSymbolsTool(LspToolBase):
     """List one document's symbols, with bounded, paginated tool output.
 
     Server configuration is constructor-only. Defaults route by source filename.
@@ -74,6 +159,7 @@ class GetSymbolsTool:
         max_symbols: int = 200,
         max_output_chars: int = 20_000,
     ) -> None:
+        super(GetSymbolsTool, self).__init__()
         if type(execution_allowed) is not bool:
             raise ValueError("execution_allowed must be a boolean")
         for name, value in (
@@ -109,16 +195,6 @@ class GetSymbolsTool:
         self.max_file_bytes = max_file_bytes
         self.max_symbols = max_symbols
         self.max_output_chars = max_output_chars
-
-    def _new_client(self, config: LspLanguageConfig) -> LspClient:
-        return LspClient(
-            self.workspace_root,
-            config.command,
-            language_id=config.language_id,
-            timeout_seconds=(
-                self.timeout_seconds if self.timeout_seconds is not None else config.timeout_seconds
-            ),
-        )
 
     @property
     def definition(self) -> ToolDefinition:
@@ -267,72 +343,3 @@ class GetSymbolsTool:
                 ToolErrorCode.OUTPUT_TOO_LARGE, "Symbol output is too large; reduce limit."
             )
         return ToolResult(success=True, data=data)
-
-    @staticmethod
-    def _range(value: Any) -> dict:
-        if not isinstance(value, dict):
-            raise ValueError("Invalid range")
-        converted = {}
-        positions = []
-        for key in ("start", "end"):
-            position = value[key]
-            line, column = position["line"], position["character"]
-            if any(type(x) is not int or x < 0 for x in (line, column)):
-                raise ValueError("Invalid position")
-            positions.append((line, column))
-            converted[key] = {"line": line + 1, "column": column + 1}
-        if positions[0] > positions[1]:
-            raise ValueError("Reversed range")
-        return converted
-
-    @classmethod
-    def _normalize(cls, symbols: Any, uri: str, start: int, limit: int) -> tuple[list, int, bool]:
-        if symbols is None:
-            return [], 0, False
-        if not isinstance(symbols, list):
-            raise ValueError("Expected symbol list")
-        hierarchy = bool(symbols and isinstance(symbols[0], dict) and "location" not in symbols[0])
-        stack = [(iter(symbols), None)]
-        exhausted = object()
-        page = []
-        total = 0
-        # Iterative traversal supports deeply nested classes without Python recursion.
-        while stack:
-            iterator, parent_index = stack[-1]
-            symbol = next(iterator, exhausted)
-            if symbol is exhausted:
-                stack.pop()
-                continue
-            if not isinstance(symbol, dict) or ("location" not in symbol) != hierarchy:
-                raise ValueError("Invalid or mixed symbol formats")
-            name, kind = symbol["name"], symbol["kind"]
-            if not isinstance(name, str) or not name.strip() or type(kind) is not int:
-                raise ValueError("Invalid symbol name or kind")
-            location = symbol if hierarchy else symbol["location"]
-            if not isinstance(location, dict) or (not hierarchy and location.get("uri") != uri):
-                raise ValueError("Document symbol refers to another file")
-            item = {
-                "index": total,
-                "name": name,
-                "kind": _SYMBOL_KINDS[kind] if 1 <= kind < len(_SYMBOL_KINDS) else "unknown",
-                "range": cls._range(location["range"]),
-            }
-            if hierarchy:
-                item["selection_range"] = cls._range(symbol["selectionRange"])
-                item["parent_index"] = parent_index
-                children = symbol.get("children", [])
-                if not isinstance(children, list):
-                    raise ValueError("Invalid children")
-                stack.append((iter(children), total))
-            elif symbol.get("containerName") is not None:
-                if not isinstance(symbol["containerName"], str):
-                    raise ValueError("Invalid container name")
-                item["container_name"] = symbol["containerName"]
-            if symbol.get("detail") is not None:
-                if not isinstance(symbol["detail"], str):
-                    raise ValueError("Invalid symbol detail")
-                item["detail"] = symbol["detail"]
-            if start <= total < start + limit:
-                page.append(item)
-            total += 1
-        return page, total, hierarchy

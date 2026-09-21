@@ -6,7 +6,7 @@
 
 ## 用户配置（推荐）
 
-运行 `./install.sh` 后，模型与密钥统一存放在 `~/.config/repo-agent/.env`，不需要复制到每个项目。安装脚本保留已有配置；修改时直接编辑此文件，然后重启 Agent。
+运行 `./install.sh` 会将仓库 `.env.example` 复制为 `~/.config/repo-agent/.env`，安装过程无需输入模型或 API Key，也不会把环境变量中的密钥写入文件。首次启动前编辑此文件，填写 `LLM_PROVIDER`、`LLM_MODEL` 和对应 API Key；不需要复制到每个项目。重复安装保留已有文件，包括空白或尚未完成的配置；修改后重启 Agent 生效。
 
 `repo-agent` 和 `python -m cli.main` 都会加载用户配置及工作目录 `.env`。`--root` 同时选择工作目录和项目配置位置；`AGENT_ENV_FILE` 可显式指定项目配置文件（相对路径以调用目录为准），替代默认项目 `.env`，用户配置仍作后备。指定的文件不存在时会报错。
 

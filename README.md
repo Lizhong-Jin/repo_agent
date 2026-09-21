@@ -42,7 +42,17 @@ cd coding_agent
 ./install.sh
 ```
 
-脚本会创建安装目录的 `.venv`、安装 Agent、询问模型厂商 / 模型 ID / API Key / 可选 API 基址、构建 Docker 工具镜像，并将 `repo-agent` 安装到 `~/.local/bin`。API Key 输入不回显，配置保存到 `~/.config/repo-agent/.env`，权限为 `600`。重复安装保留已有配置。
+脚本会创建安装目录的 `.venv`、安装 Agent、生成默认配置文件、构建 Docker 工具镜像，并将 `repo-agent` 安装到 `~/.local/bin`。安装时无需提供模型信息或 API Key。配置保存到 `~/.config/repo-agent/.env`，权限为 `600`；重复安装保留已有内容，包括尚未填写的配置。
+
+安装完成后，编辑该文件再启动 Agent：
+
+```dotenv
+LLM_PROVIDER=deepseek
+LLM_MODEL=你的模型ID
+DEEPSEEK_API_KEY=你的APIKey
+```
+
+模板还包含其他厂商的 Key 和运行参数；只需填写所选厂商的 Key。
 
 脚本会为 Bash / Zsh 补充 PATH。安装完成后打开新终端；如果想在当前终端立即使用，执行脚本最后显示的 `export PATH=...` 命令。其他 shell 请手动配置 PATH。安装目录需要保留，命令和虚拟环境依赖该目录。
 
@@ -66,9 +76,6 @@ repo-agent --root /path/to/another-project
 ```bash
 # 已有镜像，或暂时只用文件操作时跳过构建
 ./install.sh --skip-sandbox
-
-# 自动化安装：预先在环境中设置 LLM_PROVIDER、LLM_MODEL、对应 API Key
-./install.sh --non-interactive
 
 # 自定义命令目录，不修改 shell 启动文件
 ./install.sh --bin-dir /path/to/bin --no-path

@@ -17,9 +17,9 @@ repo-agent '修复测试失败并验证'
 repo-agent --root /path/to/another-project
 ```
 
-安装脚本创建独立虚拟环境、询问并保存用户模型配置、构建 Docker 镜像，安装 `~/.local/bin/repo-agent` 并配置 Bash / Zsh 的 PATH。当前终端的 PATH 无法由子进程修改，需新开终端或执行安装结尾打印的命令。无需逐个初始化项目。`--root` 选择工作目录及其 `.env`，默认使用当前目录；用户配置见[配置说明](configuration.md)。
+安装脚本创建独立虚拟环境、生成默认用户配置文件、构建 Docker 镜像，安装 `~/.local/bin/repo-agent` 并配置 Bash / Zsh 的 PATH。当前终端的 PATH 无法由子进程修改，需新开终端或执行安装结尾打印的命令。安装过程不询问模型或 API Key；首次启动前编辑 `~/.config/repo-agent/.env`，填写模型 ID 和对应 Key。无需逐个初始化项目。`--root` 选择工作目录及其 `.env`，默认使用当前目录；用户配置见[配置说明](configuration.md)。
 
-重复执行安装脚本保留配置。`--skip-sandbox` 跳过镜像构建，`--non-interactive` 从环境变量读取首次模型配置，`--no-path` 不修改 shell 配置。默认 Docker 隔离和手动回写行为保持不变。
+重复执行安装脚本保留配置。`--skip-sandbox` 跳过镜像构建，安装不要求预设模型环境变量，`--no-path` 不修改 shell 配置。默认 Docker 隔离和手动回写行为保持不变。
 
 `repo-agent` 生成两份执行追踪文件；若需要额外的完整终端录制，可使用下面保留的旧启动脚本流程。
 

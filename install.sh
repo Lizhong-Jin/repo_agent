@@ -5,10 +5,10 @@ set -euo pipefail
 agent_install_dir="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
     cat <<'HELP'
-用法：./install.sh [--skip-sandbox] [--non-interactive] [--no-path] [--bin-dir DIRECTORY]
-创建 .venv、安装依赖、设置用户级模型配置、构建 Docker 镜像并安装 repo-agent 命令。
+用法：./install.sh [--skip-sandbox] [--no-path] [--bin-dir DIRECTORY]
+创建 .venv、安装依赖、生成默认配置文件、构建 Docker 镜像并安装 repo-agent 命令。
 需要 Python 3.11+ 和已启动的 Docker。--skip-sandbox 仅跳过镜像构建。
-无交互安装从 LLM_PROVIDER、LLM_MODEL 和对应 API Key 环境变量读取配置。
+安装时无需模型或 API Key；安装后编辑提示的配置文件即可。已有配置保持不变。
 HELP
     exit 0
 fi

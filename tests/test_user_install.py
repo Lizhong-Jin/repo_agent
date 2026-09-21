@@ -66,24 +66,30 @@ def test_custom_config_and_private_errors(user_home, tmp_path, monkeypatch):
     assert user_config_path() == tmp_path / "override/.env"
 
 
-def test_user_setup_is_private_and_repeatable(user_home, monkeypatch):
+def test_user_setup_creates_private_template_without_importing_environment(user_home, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "kimi")
     monkeypatch.setenv("LLM_MODEL", "test-model")
-    monkeypatch.setenv("MOONSHOT_API_KEY", 'test-$(literal)-"key')
-    config = configure_user(interactive=False)
-    before = config.read_bytes()
+    monkeypatch.setenv("MOONSHOT_API_KEY", "environment-secret")
+    monkeypatch.setattr("builtins.input", lambda *args: pytest.fail("Installation must not prompt"))
+    config = configure_user(SOURCE)
     assert config.stat().st_mode & 0o777 == 0o600
-    assert read_config(config)["MOONSHOT_API_KEY"] == 'test-$(literal)-"key'
-    assert read_config(config)["LLM_PROVIDER"] == "moonshot"
-    monkeypatch.setenv("LLM_MODEL", "different")
-    configure_user(interactive=False)
-    assert config.read_bytes() == before
+    assert config.read_bytes() == (SOURCE / ".env.example").read_bytes()
+    values = read_config(config)
+    assert values["LLM_MODEL"] == ""
+    assert values["LLM_PROVIDER"] == "deepseek"
+    assert all(not value for name, value in values.items() if name.endswith("_API_KEY"))
+    assert "environment-secret" not in config.read_text()
 
 
-def test_missing_credentials_does_not_create_partial_config(user_home):
-    with pytest.raises(ValueError, match="LLM_MODEL"):
-        configure_user(interactive=False)
-    assert not user_config_path().exists()
+@pytest.mark.parametrize(
+    "content",
+    ["", "LLM_MODEL=\n", "LLM_MODEL=mine\nDEEPSEEK_API_KEY=secret\n", "unfinished config"],
+)
+def test_reinstall_preserves_existing_config_even_if_incomplete(user_home, content):
+    config = configure_user(SOURCE)
+    config.write_text(content)
+    configure_user(SOURCE)
+    assert config.read_text() == content
 
 
 @pytest.mark.parametrize("shell", ["zsh", "bash"])
@@ -115,11 +121,12 @@ def test_command_and_path_setup_preserves_existing_files(user_home, tmp_path, mo
 def test_installed_command_uses_workspace_and_global_credentials(
     user_home, tmp_path, monkeypatch, explicit_root
 ):
-    monkeypatch.setenv("LLM_MODEL", "global-model")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key-never-sent")
-    configure_user(interactive=False)
-    monkeypatch.delenv("LLM_MODEL")
-    monkeypatch.delenv("DEEPSEEK_API_KEY")
+    config = configure_user(SOURCE)
+    config.write_text(
+        config.read_text()
+        .replace("LLM_MODEL=\n", "LLM_MODEL=global-model\n")
+        .replace("DEEPSEEK_API_KEY=\n", "DEEPSEEK_API_KEY=fake-key-never-sent\n")
+    )
     project = tmp_path / "working project"
     project.mkdir()
     (project / ".env").write_text("LLM_MODEL=project-model\n")
@@ -159,11 +166,10 @@ def test_help_does_not_require_valid_config(user_home, tmp_path):
     assert "--root" in result.stdout
 
 
+@pytest.mark.parametrize("legacy_flag", [[], ["--non-interactive"]])
 def test_setup_installs_working_command_without_modifying_projects(
-    user_home, tmp_path, monkeypatch
+    user_home, tmp_path, monkeypatch, legacy_flag
 ):
-    monkeypatch.setenv("LLM_MODEL", "global-model")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key-never-sent")
     monkeypatch.setenv("SHELL", "/bin/zsh")
     project = tmp_path / "empty project"
     project.mkdir()
@@ -174,15 +180,23 @@ def test_setup_installs_working_command_without_modifying_projects(
         "--agent-home",
         str(SOURCE),
         "--skip-sandbox",
-        "--non-interactive",
+        *legacy_flag,
     ]
     for _ in range(2):
-        result = subprocess.run(setup, cwd=project, text=True, capture_output=True, timeout=15)
+        result = subprocess.run(
+            setup, cwd=project, stdin=subprocess.DEVNULL, text=True, capture_output=True, timeout=15
+        )
         assert result.returncode == 0, result.stderr
-        assert "fake-key-never-sent" not in result.stdout + result.stderr
+        assert str(user_config_path()) in result.stdout
+        assert "首次启动前" in result.stdout
     assert list(project.iterdir()) == []
-    monkeypatch.delenv("LLM_MODEL")
-    monkeypatch.delenv("DEEPSEEK_API_KEY")
+    config = user_config_path()
+    assert read_config(config)["LLM_MODEL"] == ""
+    config.write_text(
+        config.read_text()
+        .replace("LLM_MODEL=\n", "LLM_MODEL=global-model\n")
+        .replace("DEEPSEEK_API_KEY=\n", "DEEPSEEK_API_KEY=fake-key-never-sent\n")
+    )
     result = subprocess.run(
         [str(user_home / ".local/bin/repo-agent"), "--sandbox", "local"],
         cwd=project,
@@ -202,8 +216,6 @@ def test_setup_installs_working_command_without_modifying_projects(
 def test_failed_sandbox_build_reports_failure_before_path_setup(user_home, monkeypatch):
     from cli import setup
 
-    monkeypatch.setenv("LLM_MODEL", "test-model")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.setattr(sys, "argv", ["setup", "--agent-home", str(SOURCE), "--non-interactive"])
 
     def failed_build(command, **kwargs):
@@ -214,6 +226,6 @@ def test_failed_sandbox_build_reports_failure_before_path_setup(user_home, monke
     with pytest.raises(SystemExit) as error:
         setup.main()
     assert error.value.code == 1
-    assert user_config_path().exists()  # Credentials survive so the install can be retried.
+    assert user_config_path().exists()  # The template survives so the install can be retried.
     assert not (user_home / ".local/bin/repo-agent").exists()
     assert not (user_home / ".zshrc").exists()
