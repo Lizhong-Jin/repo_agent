@@ -37,6 +37,33 @@ class DockerBackend:
         self.image = check.stdout.strip()  # Pin this session to the inspected image ID.
         self.runner = ProcessRunner(max_output_bytes=4 * 1024 * 1024)
 
+    def execution_context(self) -> dict:
+        """Only report policy actually used by this backend; never host totals."""
+        return {
+            "mode": "docker",
+            "image_id": self.image,
+            "network": "disabled",
+            "writable_paths": ["/workspace", "/tmp", "/dev/shm"],
+            "root_filesystem": "read_only",
+            "changes_apply_to": "workspace_copy",
+            "resources": {
+                "cpu_limit": self.policy.cpus,
+                "memory_limit": self.policy.memory,
+                "pids_limit": self.policy.pids,
+                "tmpfs_size": self.policy.tmpfs_size,
+                "shm_size": self.policy.shm_size,
+                "max_file_bytes": self.policy.max_file_bytes,
+                "max_workspace_bytes": self.policy.max_workspace_bytes,
+                "container_timeout_seconds": self.policy.timeout,
+                "gpu_selection": self.policy.gpus,
+            },
+            "persistence": {
+                "workspace_files_across_calls": True,
+                "processes_across_calls": False,
+                "tmp_across_calls": False,
+            },
+        }
+
     def execute(self, workspace: Path, name: str, arguments: dict) -> ToolResult:
         if not self.healthy:
             raise OSError("之前的容器清理未确认，拒绝继续执行。")
@@ -48,6 +75,7 @@ class DockerBackend:
                     {
                         "name": name,
                         "arguments": arguments,
+                        "execution_context": self.execution_context(),
                         "tool_limits": {
                             "command_timeout_seconds": self.policy.command_timeout_seconds,
                             "python_timeout_seconds": self.policy.python_timeout_seconds,

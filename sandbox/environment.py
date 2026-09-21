@@ -116,7 +116,7 @@ def detect_environment(*, profile: str = "auto", image: str = DEFAULT_IMAGE) -> 
 def check_image_profile(image: str, profile: str, *, allow_unlabelled: bool = False) -> None:
     result = _run(["image", "inspect", image, "--format", "{{json .Config.Labels}}"])
     if result.returncode:
-        raise ValueError("沙箱镜像不存在；先运行 ./run_agent.sh --build-sandbox。")
+        raise ValueError("沙箱镜像不存在；先运行 repo-agent-build-sandbox。")
     try:
         labels = json.loads(result.stdout) or {}
         actual = labels.get(PROFILE_LABEL)
@@ -127,5 +127,5 @@ def check_image_profile(image: str, profile: str, *, allow_unlabelled: bool = Fa
     if actual != profile:
         raise ValueError(
             f"镜像环境 {actual or '未标记'} 与检测结果 {profile} 不一致；"
-            "请运行 ./run_agent.sh --build-sandbox 重新构建。"
+            "请运行 repo-agent-build-sandbox 重新构建。"
         )

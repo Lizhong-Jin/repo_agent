@@ -68,8 +68,20 @@ while True:
                     },
                 }
             )
+            if mode == "tool-stale-only":
+                continue
             report = {"uri": uri, "diagnostics": [{"message": "类型错误 😀"}]}
-            if mode != "unversioned":
+            if mode in ("tool-diagnostics", "tool-unversioned"):
+                report["diagnostics"][0].update(
+                    range={
+                        "start": {"line": 0, "character": 0},
+                        "end": {"line": 0, "character": 1},
+                    },
+                    severity=1,
+                )
+            elif mode == "tool-empty":
+                report["diagnostics"] = []
+            if mode not in ("unversioned", "tool-unversioned"):
                 report["version"] = doc["version"]
             send({"method": "textDocument/publishDiagnostics", "params": report})
     elif method == "textDocument/documentSymbol":

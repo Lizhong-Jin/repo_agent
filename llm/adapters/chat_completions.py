@@ -1,5 +1,5 @@
 from ..errors import InvalidRequestError, InvalidResponseError
-from ..schemas import LLMRequest, LLMResponse, json_string
+from ..schemas import LLMRequest, LLMResponse, Message, json_string
 from .base import Adapter, count, tool_call, usage
 
 
@@ -67,8 +67,10 @@ class ChatCompletionsAdapter(Adapter):
         native = choice["message"]
         if native.get("role") != "assistant":
             raise InvalidResponseError("Expected an assistant message")
+        limited = choice.get("finish_reason") == "length" and not native.get("refusal")
+        truncated = limited and bool(native.get("tool_calls"))
         calls = []
-        for c in native.get("tool_calls") or []:
+        for c in [] if limited else native.get("tool_calls") or []:
             if c.get("type") != "function":
                 raise InvalidResponseError("Unsupported tool call type")
             calls.append(tool_call(c["id"], c["function"]["name"], c["function"]["arguments"]))
@@ -77,6 +79,8 @@ class ChatCompletionsAdapter(Adapter):
         if not text and refusal:
             text = refusal
         message = self.assistant(text, calls, native)
+        if limited:
+            message = Message("assistant", text)
         finish = choice.get("finish_reason")
         reason = {
             "stop": "stop",
@@ -102,4 +106,4 @@ class ChatCompletionsAdapter(Adapter):
             cached_input_tokens=cached,
             reasoning_tokens=count(u.get("completion_tokens_details") or {}, "reasoning_tokens"),
         )
-        return self.response(data, message, reason, tokens, finish)
+        return self.response(data, message, reason, tokens, finish, truncated_tool_calls=truncated)

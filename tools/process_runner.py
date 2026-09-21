@@ -10,7 +10,7 @@ import signal
 import subprocess
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,12 @@ class ProcessResult:
     duration_ms: int
     stdout_truncated: bool
     stderr_truncated: bool
+    status: str = "completed"
+    cleanup_status: str = "not_needed"
+    output_complete: bool = True
+    pid: int | None = None
+    process_group_id: int | None = None
+    cleanup_diagnostics: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ProcessStartError(RuntimeError):
@@ -93,10 +99,13 @@ class ProcessRunner:
         *,
         max_output_bytes: int = 32 * 1024,
         base_env: Mapping[str, str] | None = None,
+        supervise_tree: bool = False,
     ) -> None:
         if type(max_output_bytes) is not int or max_output_bytes <= 0:
             raise ValueError("max_output_bytes must be a positive integer")
         self.max_output_bytes = max_output_bytes
+        self.supervise_tree = supervise_tree
+        self.last_cleanup_status = "not_needed"
         self.base_env = self._validate_environment(
             base_env if base_env is not None else self._default_environment()
         )
@@ -122,6 +131,7 @@ class ProcessRunner:
             raise ValueError("timeout_seconds must be a positive integer")
         if not isinstance(cwd, (str, Path)) or not str(cwd).strip() or "\x00" in str(cwd):
             raise ValueError("cwd must be a non-empty path without NUL")
+        self.last_cleanup_status = "not_needed"
         stdout_capture = _BoundedCapture(self.max_output_bytes)
         stderr_capture = _BoundedCapture(self.max_output_bytes)
         start_time = time.monotonic()
@@ -144,13 +154,26 @@ class ProcessRunner:
 
         streams = {process.stdout: stdout_capture, process.stderr: stderr_capture}
         cleanup_error = None
+        diagnostics = []
+        supervisor = None
+        self.last_cleanup_status = "unknown"
         try:
+            if self.supervise_tree:
+                from .process_supervisor import ProcessSupervisor
+
+                supervisor = ProcessSupervisor(process)
             if os.name == "posix":
                 for stream in streams:
                     os.set_blocking(stream.fileno(), False)
-            timed_out = not self._collect_output(process, streams, start_time + timeout_seconds)
-            if timed_out:
-                cleanup_error = self._terminate_process_tree(process)
+            timed_out = not self._collect_output(
+                process, streams, start_time + timeout_seconds, supervisor
+            )
+            if timed_out or supervisor is not None:
+                if supervisor is not None:
+                    cleanup_error = supervisor.cleanup(lambda: self._drain_output(streams))
+                    diagnostics = supervisor.diagnostics
+                else:
+                    cleanup_error = self._terminate_process_tree(process, diagnostics)
                 # An escaped descendant may still hold a pipe. Drain only for a
                 # bounded interval, then close our ends without waiting for EOF.
                 if not self._collect_output(process, streams, time.monotonic() + 0.25):
@@ -160,12 +183,27 @@ class ProcessRunner:
                     )
         except BaseException:
             # Includes user cancellation; re-raise after terminating owned work.
-            self._terminate_process_tree(process)
+            if supervisor is not None:
+                error = supervisor.cleanup(lambda: self._drain_output(streams))
+                deadline = time.monotonic() + 0.25
+                while not error and streams and time.monotonic() < deadline:
+                    self._drain_output(streams)
+                    if streams:
+                        time.sleep(0.01)
+                if streams:
+                    error = error or "Output pipes remained open after cancellation."
+                self.last_cleanup_status = "unknown" if error else "confirmed"
+            else:
+                error = self._terminate_process_tree(process, diagnostics)
+                self.last_cleanup_status = "unknown" if error else "confirmed"
             raise
         finally:
             for stream in (process.stdout, process.stderr):
                 stream.close()
         duration_ms = round((time.monotonic() - start_time) * 1000)
+        self.last_cleanup_status = (
+            "unknown" if cleanup_error else "confirmed" if timed_out or supervisor else "not_needed"
+        )
         return ProcessResult(
             exit_code=None if timed_out else process.returncode,
             stdout=stdout_capture.text(),
@@ -175,12 +213,22 @@ class ProcessRunner:
             duration_ms=duration_ms,
             stdout_truncated=stdout_capture.truncated,
             stderr_truncated=stderr_capture.truncated,
+            status="timed_out" if timed_out else "completed",
+            cleanup_status=self.last_cleanup_status,
+            output_complete=not (
+                timed_out or cleanup_error or stdout_capture.truncated or stderr_capture.truncated
+            ),
+            pid=process.pid,
+            process_group_id=process.pid if os.name == "posix" else None,
+            cleanup_diagnostics=diagnostics,
         )
 
     @classmethod
-    def _collect_output(cls, process, streams, deadline: float) -> bool:
+    def _collect_output(cls, process, streams, deadline: float, supervisor=None) -> bool:
         """Poll both pipes and the leader under one deadline, without reader threads."""
         while streams or process.poll() is None:
+            if supervisor is not None:
+                supervisor.refresh()
             if time.monotonic() >= deadline:
                 return False
             progressed = False
@@ -197,6 +245,17 @@ class ProcessRunner:
             if not progressed:
                 time.sleep(min(0.01, max(0, deadline - time.monotonic())))
         return True
+
+    @classmethod
+    def _drain_output(cls, streams):
+        """One bounded, nonblocking pass while the supervisor waits for exit."""
+        for stream, capture in list(streams.items()):
+            chunk = cls._read_available(stream)
+            if chunk:
+                capture.feed(chunk)
+            elif chunk == b"":
+                del streams[stream]
+                stream.close()
 
     @staticmethod
     def _read_available(stream) -> bytes | None:
@@ -243,43 +302,63 @@ class ProcessRunner:
     @staticmethod
     def _terminate_process_tree(
         process: subprocess.Popen,
+        diagnostics: list | None = None,
     ) -> str | None:
         cleanup_error = None
         if os.name == "posix":
+            diagnostics = diagnostics if diagnostics is not None else []
 
-            def signal_group(sig: int) -> bool:
+            def signal_group(sig: int, stage: str) -> str:
                 nonlocal cleanup_error
                 try:
                     os.killpg(process.pid, sig)
-                    return True
-                except ProcessLookupError:
-                    return False
-                except PermissionError:
-                    # Some hosts deny signals even for a vanished process group.
-                    # Do not infer that all descendants exited from this error.
-                    cleanup_error = "Unable to confirm or terminate the entire process group."
-                    return False
+                    outcome, error_number = "sent" if sig else "exists", None
+                except ProcessLookupError as error:
+                    outcome, error_number = "gone", error.errno
+                except OSError as error:
+                    outcome, error_number = "unknown", error.errno
+                    cleanup_error = (
+                        f"Process-group cleanup unconfirmed: stage={stage}, "
+                        f"pid={process.pid}, pgid={process.pid}, signal={sig}, errno={error.errno}."
+                    )
+                if len(diagnostics) < 64:
+                    diagnostics.append({"stage": stage, "pid": process.pid,
+                                        "pgid": process.pid, "signal": sig,
+                                        "errno": error_number, "outcome": outcome})
+                return outcome
 
-            if signal_group(signal.SIGTERM):
-                grace_deadline = time.monotonic() + 1
-                while time.monotonic() < grace_deadline:
-                    process.poll()  # Reap the leader, but still check its group.
-                    if not signal_group(0):
+            state = signal_group(signal.SIGTERM, "terminate")
+            if state != "gone":
+                deadline = time.monotonic() + 0.7
+                while state != "unknown" and time.monotonic() < deadline:
+                    process.poll()
+                    state = signal_group(0, "probe_after_term")
+                    if state == "gone":
                         break
-                    time.sleep(min(0.01, max(0, grace_deadline - time.monotonic())))
-                # The leader exiting does not imply that its children exited.
-                signal_group(signal.SIGKILL)
-            if cleanup_error and process.poll() is None:
+                    time.sleep(0.02)
+                if state != "gone":
+                    signal_group(signal.SIGKILL, "kill")
+            if process.poll() is None:
                 try:
-                    process.kill()  # Still try to reap our own leader.
+                    process.kill()
                 except ProcessLookupError:
                     pass
-                except PermissionError:
-                    cleanup_error = "Permission denied while terminating the command."
+                except PermissionError as error:
+                    cleanup_error = f"Leader termination denied: pid={process.pid}, errno={error.errno}."
             try:
                 process.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 cleanup_error = "Command did not exit after process-group termination."
+            deadline = time.monotonic() + 0.25
+            while True:
+                state = signal_group(0, "verify")
+                if state in {"gone", "unknown"} or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.02)
+            if state == "gone" and process.poll() is not None:
+                cleanup_error = None
+            elif not cleanup_error:
+                cleanup_error = "Process group still exists after termination; cleanup is unconfirmed."
             if cleanup_error:
                 logger.warning(cleanup_error)
             return cleanup_error

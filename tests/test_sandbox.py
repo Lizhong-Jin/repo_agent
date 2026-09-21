@@ -131,9 +131,9 @@ def test_container_security_and_cleanup(monkeypatch, tmp_path, interrupt):
     monkeypatch.setattr(backend.runner, "run", execute)
     if interrupt:
         with pytest.raises(KeyboardInterrupt):
-            backend.execute(tmp_path, "read_file", {"path": "a"})
+            backend.execute(tmp_path, "read_file", {"reads": [{"path": "a"}]})
     else:
-        assert backend.execute(tmp_path, "read_file", {"path": "a"}).success
+        assert backend.execute(tmp_path, "read_file", {"reads": [{"path": "a"}]}).success
     command = calls[1]
     for flag in [
         "--network=none",
@@ -158,7 +158,13 @@ def test_real_container_isolation(tmp_path):
     try:
         tools = {tool.definition.name: tool for tool in session.tools()}
         assert tools["write_file"].execute({"path": "hello.txt", "content": "hello"}).success
-        assert tools["read_file"].execute({"path": "hello.txt"}).success
+        assert tools["read_file"].execute({"reads": [{"path": "hello.txt"}]}).success
+        environment = tools["get_execution_environment"].execute({"sections": ["execution", "system"]})
+        assert environment.success
+        assert environment.data["system"]["os"] == "Linux"
+        assert environment.data["execution"]["mode"] == "docker"
+        assert environment.data["execution"]["workspace_root"] == "/workspace"
+        assert environment.data["execution"]["network"] == "disabled"
         result = tools["run_python"].execute(
             {
                 "code": (

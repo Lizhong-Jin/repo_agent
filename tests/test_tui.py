@@ -71,6 +71,7 @@ def test_full_application_stream_draft_footer_and_exit(tmp_path):
         model = StreamingModel()
         runtime = AgentRuntime(model)
         c = control()
+        c.model = "glm-5.2"
         c.runtime = runtime
         status = SessionStatus(tmp_path)
         runtime.on_event = status

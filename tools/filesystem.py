@@ -4,11 +4,13 @@ Workspace-scoped file operations. This path guard is not an OS sandbox.
 Includes tools related to file operations:
 ReadFileTool: Read UTF-8 text files with line ranges and bounded output.
 WriteFileTool: Create or replace UTF-8 text files with bounded content.
-EditFileTool: Replace one unique text fragment in an existing UTF-8 workspace file.
+EditFileTool: replace one or multiple text fragments in an existing UTF-8 workspace file.
 ListFilesTool: List files in a directory with optional filtering and recursion.
 SearchFilesTool: Search for a text fragment in files with optional filtering and recursion.
 MakeDirectoryTool: Create a directory and optionally its parents.
 DeleteFileTool: Delete a file, ensuring it is not a directory or symlink.
+MoveFileTool: Move or rename one regular file inside a bounded workspace.
+GetPathInfoTool: Inspect filesystem metadata for one workspace path.
 
 All tools enforce workspace-relative paths and prevent access to credential files.
 """
@@ -36,27 +38,27 @@ logger = logging.getLogger(__name__)
 
 # ReadFileTool
 class ReadFileTool:
-    """Read UTF-8 source files with 1-based inclusive line ranges and bounded output."""
+    """Read one or multiple UTF-8 source files with 1-based inclusive line ranges and bounded output."""
 
     def __init__(
         self,
         workspace_root: str | Path,
         *,
-        max_lines: int = 200,
+        max_reads: int = 32,
         max_file_bytes: int = 2 * 1024 * 1024,
-        max_output_chars: int = 20_000,
+        max_output_chars: int = 256 * 1024,
     ) -> None:
         self.workspace_root = Path(workspace_root).resolve(strict=True)
         if not self.workspace_root.is_dir():
             raise ValueError("workspace_root must be an existing directory")
         for name, value in (
-            ("max_lines", max_lines),
+            ("max_reads", max_reads),
             ("max_file_bytes", max_file_bytes),
             ("max_output_chars", max_output_chars),
         ):
             if type(value) is not int or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
-        self.max_lines = max_lines
+        self.max_reads = max_reads
         self.max_file_bytes = max_file_bytes
         self.max_output_chars = max_output_chars
 
@@ -65,59 +67,113 @@ class ReadFileTool:
         return ToolDefinition(
             name="read_file",
             description=(
-                "Read a UTF-8 text file inside the workspace. Prefer workspace-relative paths. "
-                "Returns content with line numbers. start_line and end_line are 1-based and "
-                f"inclusive. Returns at most {self.max_lines} lines per call; "
-                "use next_start_line to continue if truncated. "
-                "If output is too large, request a smaller line range."
+                "Read one or multiple UTF-8 text files inside the workspace. Prefer workspace-relative paths. "
+                "Pass reads as an array, even for one file. Each read has its own path and optional "
+                "1-based inclusive start_line/end_line. Results preserve request order, including duplicates. "
+                "Each result has its own success, data and optional error; a file error does not stop other reads. "
+                "Overall success is false if any read fails; successful results are still returned. "
+                f"Returns at most {self.max_output_chars} numbered-content characters across all files, "
+                "allocated in request order. Metadata is not included in this limit. "
+                "Only complete lines are returned; use each result's next_start_line to continue truncated reads. "
+                "OUTPUT_TOO_LARGE means no requested line fits; retry that file separately or request fewer lines. "
+                "A line exceeding the entire budget requires increasing the host's max_output_chars setting."
             ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "path": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "Path to a file inside the workspace.",
-                    },
-                    "start_line": {"type": "integer", "minimum": 1, "default": 1},
-                    "end_line": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": "Inclusive end line; omitted means up to EOF.",
+                    "reads": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": self.max_reads,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "description": "Path to a file inside the workspace.",
+                                },
+                                "start_line": {"type": "integer", "minimum": 1, "default": 1},
+                                "end_line": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "description": "Inclusive end line; omitted means up to EOF.",
+                                },
+                            },
+                            "required": ["path"],
+                            "additionalProperties": False,
+                        },
                     },
                 },
-                "required": ["path"],
+                "required": ["reads"],
                 "additionalProperties": False,
             },
         )
 
     def execute(self, arguments: dict[str, Any]) -> ToolResult:
-        """Validate model arguments and turn expected filesystem failures into tool errors."""
+        """Validate the whole request before reading; isolate individual file failures."""
         if not isinstance(arguments, dict):
             return tool_error(ToolErrorCode.INVALID_ARGUMENTS)
-        if set(arguments) - {"path", "start_line", "end_line"}:
+        reads = arguments.get("reads")
+        if (
+            set(arguments) != {"reads"}
+            or not isinstance(reads, list)
+            or not 1 <= len(reads) <= self.max_reads
+        ):
             return tool_error(
                 ToolErrorCode.INVALID_ARGUMENTS,
-                "Allowed arguments: path, start_line, end_line.",
+                f"Provide only reads: an array of 1 to {self.max_reads} file requests.",
             )
-        path = arguments.get("path")
-        if not isinstance(path, str) or not path.strip() or "\x00" in path:
-            return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS,
-                "path must be a non-empty string without NUL.",
-            )
+        for index, read in enumerate(reads):
+            if not isinstance(read, dict) or set(read) - {"path", "start_line", "end_line"}:
+                return tool_error(
+                    ToolErrorCode.INVALID_ARGUMENTS,
+                    f"reads[{index}] allows only path, start_line, end_line.",
+                )
+            path = read.get("path")
+            if not isinstance(path, str) or not path.strip() or "\x00" in path:
+                return tool_error(
+                    ToolErrorCode.INVALID_ARGUMENTS,
+                    f"reads[{index}].path must be a non-empty string without NUL.",
+                )
+            start = read.get("start_line", 1)
+            end = read.get("end_line")
+            if type(start) is not int or start < 1:
+                return tool_error(
+                    ToolErrorCode.INVALID_ARGUMENTS,
+                    f"reads[{index}].start_line must be a positive integer.",
+                )
+            if "end_line" in read and (type(end) is not int or end < start):
+                return tool_error(
+                    ToolErrorCode.INVALID_ARGUMENTS,
+                    f"reads[{index}].end_line must be an integer >= start_line.",
+                )
+
+        results = []
+        total_output_chars = 0
+        for read in reads:
+            result = self._read_one(read, self.max_output_chars - total_output_chars)
+            entry = {"path": read["path"], "success": result.success, "data": result.data}
+            if not result.success:
+                entry["error"] = {"code": result.error_code, "message": result.error}
+            total_output_chars += len(result.data.get("content", ""))
+            results.append(entry)
+        failures = sum(not entry["success"] for entry in results)
+        return ToolResult(
+            success=failures == 0,
+            data={"results": results, "total_output_chars": total_output_chars},
+            error_code="READ_FAILED" if failures else None,
+            error=(
+                f"{failures} of {len(reads)} reads failed; "
+                "inspect results for per-file errors and successful content."
+                if failures else None
+            ),
+        )
+
+    def _read_one(self, arguments: dict[str, Any], output_budget: int) -> ToolResult:
+        path = arguments["path"]
         start = arguments.get("start_line", 1)
         end = arguments.get("end_line")
-        if type(start) is not int or start < 1:
-            return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS,
-                "start_line must be a positive integer.",
-            )
-        if "end_line" in arguments and (type(end) is not int or end < start):
-            return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS,
-                "end_line must be an integer >= start_line.",
-            )
 
         try:
             target = (self.workspace_root / path).resolve()
@@ -164,17 +220,25 @@ class ReadFileTool:
         if start > max(total, 1):
             return tool_error("LINE_OUT_OF_RANGE", f"start_line exceeds the file's {total} lines.")
         requested_end = min(end if end is not None else total, total)
-        actual_end = min(requested_end, start + self.max_lines - 1)
-        content = "\n".join(
-            f"{number}: {lines[number - 1]}" for number in range(start, actual_end + 1)
-        )
-        if len(content) > self.max_output_chars:
+        numbered_lines = []
+        content_chars = 0
+        actual_end = start - 1
+        for number in range(start, requested_end + 1):
+            line = f"{number}: {lines[number - 1]}"
+            required_chars = len(line) + bool(numbered_lines)
+            if content_chars + required_chars > output_budget:
+                break
+            numbered_lines.append(line)
+            content_chars += required_chars
+            actual_end = number
+        if total and not numbered_lines:
             return tool_error(
                 ToolErrorCode.OUTPUT_TOO_LARGE,
-                f"Numbered content exceeds {self.max_output_chars} characters. "
-                "Request fewer lines; "
-                "a single oversized line requires increasing the host's max_output_chars setting.",
+                f"The first requested numbered line does not fit the remaining {output_budget} characters. "
+                "Retry this file separately; a line exceeding the full budget requires increasing "
+                "the host's max_output_chars setting.",
             )
+        content = "\n".join(numbered_lines)
         truncated = actual_end < requested_end
         return ToolResult(
             success=True,
@@ -262,16 +326,14 @@ class WriteFileTool:
         path = arguments.get("path")
         if not isinstance(path, str) or not path.strip() or "\x00" in path:
             return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS,
-                "path must be a non-empty string without NUL.",
+                ToolErrorCode.INVALID_ARGUMENTS, "path must be a non-empty string without NUL.",
             )
         content = arguments.get("content")
         if not isinstance(content, str):
             return tool_error(ToolErrorCode.INVALID_ARGUMENTS, "content must be a string.")
         if "\x00" in content:
             return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS,
-                "content must not contain NUL bytes.",
+                ToolErrorCode.INVALID_ARGUMENTS, "content must not contain NUL bytes.",
             )
         overwrite = arguments.get("overwrite", False)
         create_parents = arguments.get("create_parents", False)
@@ -286,8 +348,7 @@ class WriteFileTool:
             return tool_error(ToolErrorCode.UNSUPPORTED_ENCODING)
         if len(encoded) > self.max_content_bytes:
             return tool_error(
-                ToolErrorCode.CONTENT_TOO_LARGE,
-                f"Content exceeds {self.max_content_bytes} UTF-8 bytes.",
+                ToolErrorCode.CONTENT_TOO_LARGE, f"Content exceeds {self.max_content_bytes} UTF-8 bytes.",
             )
 
         try:
@@ -362,224 +423,6 @@ class WriteFileTool:
         return normalized.count("\n") + (0 if normalized.endswith("\n") else 1)
 
 
-# EditFileTool
-class EditFileTool:
-    """Replace one unique text fragment in an existing UTF-8 workspace file."""
-
-    def __init__(
-        self,
-        workspace_root: str | Path,
-        *,
-        max_content_bytes: int = 2 * 1024 * 1024,
-    ) -> None:
-        self.workspace_root = Path(workspace_root).resolve(strict=True)
-        if not self.workspace_root.is_dir():
-            raise ValueError("workspace_root must be an existing directory")
-        for name, value in (
-            ("max_content_bytes", max_content_bytes),
-        ):
-            if type(value) is not int or value <= 0:
-                raise ValueError(f"{name} must be a positive integer")
-        self.max_content_bytes = max_content_bytes
-
-    @property
-    def definition(self) -> ToolDefinition:
-        return ToolDefinition(
-            name="edit_file",
-            description=(
-                "Edit an existing UTF-8 text file inside the workspace by replacing "
-                "one exact text fragment with another. old_text must match exactly once. "
-                "Matching treats LF, CRLF and CR as equivalent; overlapping matches "
-                "are rejected. The original BOM and text outside the match are preserved. "
-                "Include enough surrounding context to make the match unique. "
-                "new_text may be empty to delete the matched text. "
-                "Use read_file first if the current content is uncertain. "
-                "Use write_file to create a new file or replace an entire file."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "Path to an existing UTF-8 text file inside the workspace.",
-                    },
-                    "old_text": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "Exact text to replace. It must occur exactly once in the file."
-                    },
-                    "new_text": {
-                        "type": "string",
-                        "description": "Replacement text. May be empty to delete old_text.",
-                    },
-                },
-                "required": ["path", "old_text", "new_text"],
-                "additionalProperties": False,
-            },
-        )
-
-    def execute(self, arguments: dict[str, Any]) -> ToolResult:
-        """Validate model arguments and turn expected filesystem failures into tool errors."""
-        if not isinstance(arguments, dict):
-            return tool_error(ToolErrorCode.INVALID_ARGUMENTS)
-        if set(arguments) - {"path", "old_text", "new_text"}:
-            return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS,
-                "Allowed arguments: path, old_text, new_text.",
-            )
-        path = arguments.get("path")
-        if not isinstance(path, str) or not path.strip() or "\x00" in path:
-            return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS,
-                "path must be a non-empty string without NUL.",
-            )
-        old_text = arguments.get("old_text")
-        if not isinstance(old_text, str) or not old_text:
-            return tool_error(ToolErrorCode.INVALID_ARGUMENTS, "old_text must be a non-empty string.")
-        new_text = arguments.get("new_text")
-        if not isinstance(new_text, str):
-            return tool_error(ToolErrorCode.INVALID_ARGUMENTS, "new_text must be a string.")
-        if "\x00" in old_text or "\x00" in new_text:
-            return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS,
-                "old_text and new_text must not contain NUL bytes.",
-            )
-        if old_text == new_text:
-            return tool_error("NO_CHANGES", "old_text and new_text are identical.")
-
-        try:
-            candidate = self.workspace_root / path
-            target = candidate.resolve()
-            if is_credential_path(self.workspace_root / path, target):
-                return tool_error(ToolErrorCode.PROTECTED_FILE)
-            if not target.is_relative_to(self.workspace_root):
-                return tool_error(ToolErrorCode.PATH_OUTSIDE_WORKSPACE)
-            info = candidate.lstat()
-            if S_ISLNK(info.st_mode):
-                return tool_error(ToolErrorCode.PATH_IS_SYMLINK)
-            if not S_ISREG(info.st_mode):
-                return tool_error(ToolErrorCode.NOT_A_FILE)
-            if info.st_size > self.max_content_bytes:
-                return tool_error(
-                    ToolErrorCode.FILE_TOO_LARGE,
-                    f"File exceeds {self.max_content_bytes} bytes.",
-                )
-            with target.open("rb") as source:
-                raw = source.read(self.max_content_bytes + 1)
-            if len(raw) > self.max_content_bytes:
-                return tool_error(
-                    ToolErrorCode.FILE_TOO_LARGE,
-                    f"File exceeds {self.max_content_bytes} bytes.",
-                )
-            if b"\x00" in raw:
-                return tool_error(ToolErrorCode.BINARY_FILE)
-            text = raw.decode("utf-8-sig")
-        except FileNotFoundError:
-            return tool_error(ToolErrorCode.FILE_NOT_FOUND)
-        except NotADirectoryError:
-            return tool_error(ToolErrorCode.NOT_A_DIRECTORY)
-        except PermissionError:
-            return tool_error(ToolErrorCode.PERMISSION_DENIED)
-        except UnicodeDecodeError:
-            return tool_error(ToolErrorCode.UNSUPPORTED_ENCODING)
-        except (OSError, RuntimeError):
-            return tool_error(ToolErrorCode.READ_ERROR)
-
-        # Choose a newline convention for the replacement only. Existing text
-        # outside the match must retain its original (possibly mixed) newlines.
-        if "\r\n" in text:
-            newline = "\r\n"
-        elif "\r" in text:
-            newline = "\r"
-        else:
-            newline = "\n"
-        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
-        # Agent-facing fragments use LF semantics, matching read_file output.
-        old_normalized = old_text.replace("\r\n", "\n").replace("\r", "\n")
-        new_normalized = new_text.replace("\r\n", "\n").replace("\r", "\n")
-        match_start = normalized.find(old_normalized)
-        if match_start == -1:
-            return tool_error("NO_MATCH", "old_text does not occur in the file.")
-        # Starting one character later also catches overlapping occurrences.
-        if normalized.find(old_normalized, match_start + 1) != -1:
-            return tool_error("MULTIPLE_MATCHES", "old_text occurs more than once in the file.")
-        start_line = normalized.count("\n", 0, match_start) + 1
-        original_start = self._original_text_offset(text, match_start)
-        original_end = self._original_text_offset(text, match_start + len(old_normalized))
-        replacement = new_normalized.replace("\n", newline)
-        updated_text = text[:original_start] + replacement + text[original_end:]
-
-        # utf-8-sig decoding stripped the BOM, so restore exactly the original one.
-        bom = b"\xef\xbb\xbf" if raw.startswith(b"\xef\xbb\xbf") else b""
-        encoded = bom + updated_text.encode("utf-8")
-        if len(encoded) > self.max_content_bytes:
-            return tool_error(
-                "EDIT_RESULT_TOO_LARGE",
-                f"Edited content would exceed {self.max_content_bytes} bytes.",
-            )
-        old_hash = hashlib.sha256(raw).hexdigest()
-        new_hash = hashlib.sha256(encoded).hexdigest()
-        old_mode = info.st_mode & 0o777
-        temp_path: Path | None = None
-
-        try:
-            with NamedTemporaryFile(mode="wb", dir=target.parent, delete=False) as temp_file:
-                temp_path = Path(temp_file.name)
-                temp_file.write(encoded)
-                temp_file.flush()
-                os.fsync(temp_file.fileno())
-            os.chmod(temp_path, old_mode)
-            temp_path.replace(target)
-        except PermissionError:
-            return tool_error(ToolErrorCode.PERMISSION_DENIED)
-        except (OSError, RuntimeError):
-            return tool_error(ToolErrorCode.WRITE_ERROR)
-        finally:
-            if temp_path is not None:
-                try:
-                    # Successful replace already removed the temporary path.
-                    temp_path.unlink(missing_ok=True)
-                except OSError:
-                    # Cleanup failure must not replace the original write error.
-                    logger.warning(
-                        "Unable to remove temporary file %s", temp_path, exc_info=True
-                    )
-
-        return ToolResult(
-            success=True,
-            data={
-                "path": target.relative_to(self.workspace_root).as_posix(),
-                "replacements": 1,
-                "start_line": start_line,
-                "oldline_count": self._count_lines(old_normalized),
-                "newline_count": self._count_lines(new_normalized),
-                "bytes_before": len(raw),
-                "bytes_after": len(encoded),
-                "old_sha256": old_hash,
-                "new_sha256": new_hash,
-            },
-        )
-
-    @staticmethod
-    def _original_text_offset(text: str, normalized_offset: int) -> int:
-        """Map an LF-normalized boundary back to the original text boundary."""
-        original_offset = normalized_offset
-        cursor = 0
-        while True:
-            crlf = text.find("\r\n", cursor)
-            if crlf == -1 or crlf >= original_offset:
-                return original_offset
-            # CRLF loses one character during normalization; lone CR does not.
-            original_offset += 1
-            cursor = crlf + 2
-
-    @staticmethod
-    def _count_lines(text: str) -> int:
-        if not text:
-            return 0
-        return text.count("\n") + (0 if text.endswith("\n") else 1)
-
 @dataclass(frozen=True)
 class _PreparedEdit:
     index: int
@@ -589,9 +432,9 @@ class _PreparedEdit:
     new_text: str
     start_line: int
 
-# BatchEditFileTool
-class BatchEditFileTool:
-    """Batched replace text fragments in an existing UTF-8 workspace file."""
+# EditFileTool
+class EditFileTool:
+    """replace one or multiple text fragments in an existing UTF-8 workspace file."""
 
     def __init__(
         self,
@@ -618,9 +461,9 @@ class BatchEditFileTool:
     @property
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
-            name="batch_edit_file",
+            name="edit_file",
             description=(
-                "Apply multiple exact replacements to one existing UTF-8 "
+                "Apply one or multiple exact replacements to one existing UTF-8 "
                 "file inside the workspace. Every old_text must match "
                 "exactly once in the original file, and edit ranges must "
                 "not overlap. All edits are validated before the file is "
@@ -1117,7 +960,7 @@ class FindFileTool:
         if not self.workspace_root.is_dir():
             raise ValueError("workspace_root must be an existing directory")
         for name, value in (
-            ("max_entries", max_results),
+            ("max_results", max_results),
         ):
             if type(value) is not int or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")

@@ -8,6 +8,8 @@ from typing import Any
 from llm import ConfigurationError
 from llm.thinking import thinking_options
 
+from .thinking_display import display_mode
+
 
 def positive_int(value):
     try:
@@ -19,31 +21,92 @@ def positive_int(value):
     return number
 
 
+def step_limit(value):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("轮数上限必须为非负整数；0 表示无上限") from None
+    if number < 0:
+        raise argparse.ArgumentTypeError("轮数上限必须为非负整数；0 表示无上限")
+    return number
+
+
+def stream_value(value: str) -> bool:
+    if value.lower() not in {"true", "false", "1", "0"}:
+        raise argparse.ArgumentTypeError("LLM_STREAM must be true, false, 1 or 0")
+    return value.lower() in {"true", "1"}
+
+
+THINKING_FIELDS = {
+    "thinking",
+    "reasoning",
+    "reasoning_effort",
+    "enable_thinking",
+    "thinking_budget",
+    "output_config",
+}
+
+
+def native_thinking(extra):
+    return bool(THINKING_FIELDS.intersection(extra)) or (
+        isinstance(extra.get("generationConfig"), dict)
+        and "thinkingConfig" in extra["generationConfig"]
+    )
+
+
+class ThinkingArgument(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+        namespace.thinking_explicit = True
+
+
+RUNTIME_OPTIONS = (
+    ("thinking-display", "AGENT_THINKING_DISPLAY", "collapsed", display_mode),
+    ("max-steps", "AGENT_MAX_STEPS", 8, step_limit),
+    ("max-output-tokens", "AGENT_MAX_OUTPUT_TOKENS", 4096, int),
+    ("max-recoveries", "AGENT_MAX_RECOVERIES", 2, int),
+    ("recovery-max-output-tokens", "AGENT_RECOVERY_MAX_OUTPUT_TOKENS", None, positive_int),
+    ("context-window", "LLM_CONTEXT_WINDOW", None, positive_int),
+    ("temperature", "LLM_TEMPERATURE", None, float),
+    ("tool-choice", "LLM_TOOL_CHOICE", "auto", str),
+    ("thinking", "LLM_THINKING", "auto", str),
+    ("reasoning-effort", "LLM_REASONING_EFFORT", None, str),
+    ("thinking-budget", "LLM_THINKING_BUDGET", None, int),
+    ("thinking-history", "LLM_THINKING_HISTORY", "auto", str),
+    ("thinking-profile", "LLM_THINKING_PROFILE", "{}", str),
+    ("thinking-recall", "LLM_THINKING_RECALL", True, stream_value),
+    ("timeout", "LLM_TIMEOUT", 300.0, float),
+    ("connect-timeout", "LLM_CONNECT_TIMEOUT", 10.0, float),
+    ("write-timeout", "LLM_WRITE_TIMEOUT", 30.0, float),
+    ("pool-timeout", "LLM_POOL_TIMEOUT", 10.0, float),
+    ("max-retries", "LLM_MAX_RETRIES", 2, int),
+    ("retry-delay", "LLM_RETRY_DELAY", 0.5, float),
+    ("max-retry-delay", "LLM_MAX_RETRY_DELAY", 30.0, float),
+    ("system-prompt", "AGENT_SYSTEM_PROMPT", None, str),
+    ("extra-json", "LLM_EXTRA_JSON", "{}", str),
+)
+
+
 def add_runtime_arguments(parser: argparse.ArgumentParser) -> None:
-    for flag, env, default, kind in (
-        ("max-steps", "AGENT_MAX_STEPS", 8, int),
-        ("max-output-tokens", "AGENT_MAX_OUTPUT_TOKENS", 4096, int),
-        ("context-window", "LLM_CONTEXT_WINDOW", None, positive_int),
-        ("temperature", "LLM_TEMPERATURE", None, float),
-        ("tool-choice", "LLM_TOOL_CHOICE", "auto", str),
-        ("thinking", "LLM_THINKING", "auto", str),
-        ("reasoning-effort", "LLM_REASONING_EFFORT", None, str),
-        ("thinking-budget", "LLM_THINKING_BUDGET", None, int),
-        ("timeout", "LLM_TIMEOUT", 300.0, float),
-        ("connect-timeout", "LLM_CONNECT_TIMEOUT", 10.0, float),
-        ("write-timeout", "LLM_WRITE_TIMEOUT", 30.0, float),
-        ("pool-timeout", "LLM_POOL_TIMEOUT", 10.0, float),
-        ("max-retries", "LLM_MAX_RETRIES", 2, int),
-        ("retry-delay", "LLM_RETRY_DELAY", 0.5, float),
-        ("max-retry-delay", "LLM_MAX_RETRY_DELAY", 30.0, float),
-        ("system-prompt", "AGENT_SYSTEM_PROMPT", None, str),
-        ("extra-json", "LLM_EXTRA_JSON", "{}", str),
-    ):
+    for flag, env, default, kind in RUNTIME_OPTIONS:
         parser.add_argument(
             f"--{flag}",
             type=kind,
+            action=ThinkingArgument
+            if flag
+            in {
+                "thinking",
+                "reasoning-effort",
+                "thinking-budget",
+                "thinking-history",
+                "thinking-profile",
+            }
+            else "store",
             default=os.getenv(env) or default,
-            help=f"配置项 {env}；默认 {default if default is not None else '不指定'}",
+            help=(
+                f"配置项 {env}；默认 {default if default is not None else '不指定'}"
+                + ("；0 表示轮数无上限" if flag == "max-steps" else "")
+            ),
         )
 
     try:
@@ -56,12 +119,6 @@ def add_runtime_arguments(parser: argparse.ArgumentParser) -> None:
         default=stream,
         help="启用模型流式响应（默认开启）",
     )
-
-
-def stream_value(value: str) -> bool:
-    if value.lower() not in {"true", "false", "1", "0"}:
-        raise argparse.ArgumentTypeError("LLM_STREAM must be true, false, 1 or 0")
-    return value.lower() in {"true", "1"}
 
 
 def request_options(args: argparse.Namespace) -> dict[str, Any]:
@@ -78,19 +135,18 @@ def request_options(args: argparse.Namespace) -> dict[str, Any]:
         effort=args.reasoning_effort,
         budget=args.thinking_budget,
         max_output_tokens=args.max_output_tokens,
+        history=getattr(args, "thinking_history", "auto"),
+        base_url=getattr(args, "base_url", None),
+        profile=getattr(args, "thinking_profile", "{}"),
     )
-    thinking_fields = {
-        "thinking",
-        "reasoning",
-        "reasoning_effort",
-        "enable_thinking",
-        "thinking_budget",
-        "output_config",
-        "generationConfig",
-    }
-    if thinking and thinking_fields & extra.keys():
+    if thinking and native_thinking(extra):
         raise ConfigurationError("LLM_EXTRA_JSON conflicts with explicit thinking settings")
-    return {**extra, **thinking}
+    merged = {**extra, **thinking}
+    if "generationConfig" in thinking and "generationConfig" in extra:
+        if not isinstance(extra["generationConfig"], dict):
+            raise ConfigurationError("generationConfig 必须为对象")
+        merged["generationConfig"] = {**extra["generationConfig"], **thinking["generationConfig"]}
+    return merged
 
 
 def writeback_mode(value: str) -> str:

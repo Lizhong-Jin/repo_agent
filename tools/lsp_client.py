@@ -287,8 +287,16 @@ class LspClient:
             params["context"] = {"includeDeclaration": include_declaration}
             return self._request("textDocument/references", params) or []
 
-    def get_diagnostics(self, path: str | Path) -> dict[str, Any]:
+    def get_diagnostics(
+        self, 
+        path: str | Path,
+        *,
+        text: str | None=None,
+    ) -> dict[str, Any]:
         """Return diagnostics plus freshness metadata; absence is never success.
+
+        When text is supplied, diagnose exactly that snapshot instead of
+        re-reading the document from disk.
 
         Prefer pull diagnostics when advertised. For push servers, wait for a
         report. ``version=None`` means freshness cannot be verified: unversioned
@@ -296,7 +304,7 @@ class LspClient:
         is not guaranteed even for versioned reports. Timeout closes the session.
         """
         with self._lock:
-            uri = self.sync_document(path)
+            uri = self.sync_document(path, text=text)
             version = self._documents[uri][0]
             if self._supports("diagnosticProvider"):
                 params: dict[str, Any] = {"textDocument": {"uri": uri}}

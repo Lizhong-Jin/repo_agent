@@ -93,8 +93,8 @@ def test_file_error_then_model_corrects_path(tmp_path):
     (tmp_path / "actual.txt").write_text("actual content")
     model = ScriptedLLM(
         [
-            reply(calls=[ToolCall("a", "read_file", {"path": "missing.txt"})]),
-            reply(calls=[ToolCall("b", "read_file", {"path": "actual.txt"})]),
+            reply(calls=[ToolCall("a", "read_file", {"reads": [{"path": "missing.txt"}]})]),
+            reply(calls=[ToolCall("b", "read_file", {"reads": [{"path": "actual.txt"}]})]),
             reply("found actual content"),
         ]
     )
@@ -127,7 +127,7 @@ def test_tool_exception_or_invalid_result_is_observation(invalid_result):
 def test_non_normal_finish_never_executes_tools(finish):
     model = ScriptedLLM([reply("partial", [ToolCall("a", "record", {})], finish)])
     tool = RecordingTool()
-    result = AgentRuntime(model, [tool]).run("task")
+    result = AgentRuntime(model, [tool], max_recoveries=0).run("task")
     assert result.status == "stopped"
     assert result.response.finish_reason == finish
     assert result.text == "partial"
@@ -167,7 +167,7 @@ def test_reused_call_ids_rejected_before_reexecuting():
 
 def test_bad_config_and_empty_task():
     model = ScriptedLLM([])
-    for steps in (0, -1, True, 1.2):
+    for steps in (-1, True, 1.2):
         with pytest.raises(ValueError):
             AgentRuntime(model, max_steps=steps)
     with pytest.raises(ValueError, match="Duplicate"):
@@ -193,7 +193,7 @@ def test_real_client_and_read_file_with_mock_http(tmp_path):
                     {
                         "id": "a",
                         "type": "function",
-                        "function": {"name": "read_file", "arguments": '{"path":"main.py"}'},
+                        "function": {"name": "read_file", "arguments": '{"reads":[{"path":"main.py"}]}'},
                     }
                 ],
             }
@@ -201,7 +201,7 @@ def test_real_client_and_read_file_with_mock_http(tmp_path):
         else:
             assert body["messages"][-2]["reasoning_content"] == "provider-state"
             result = json.loads(body["messages"][-1]["content"])
-            assert result["data"]["content"] == "1: print('hello')"
+            assert result["data"]["results"][0]["data"]["content"] == "1: print('hello')"
             message = {"role": "assistant", "content": "代码打印 hello。"}
             finish = "stop"
         return httpx.Response(
@@ -228,7 +228,8 @@ def test_cli_uses_runtime(monkeypatch, tmp_path, capsys):
     model = FakeClient([reply("CLI result")])
     monkeypatch.setattr(cli, "LLMClient", lambda config: model)
     monkeypatch.setattr(
-        "sys.argv", ["repo-agent", "--sandbox", "local", "task", "--model", "test", "--root", str(tmp_path)]
+        "sys.argv",
+        ["repo-agent", "--sandbox", "local", "task", "--model", "test", "--root", str(tmp_path)],
     )
     cli.main()
     output = capsys.readouterr().out

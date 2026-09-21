@@ -17,12 +17,16 @@ def collect() -> dict:
         "cuda_available": False,
         "devices": [],
         "nvcc": None,
+        "torch_status": "unknown",
+        "triton_status": "unknown",
+        "nvcc_status": "missing",
         "errors": {},
     }
     for name in ("torch", "triton"):
         try:
             module = importlib.import_module(name)
             report[name] = str(module.__version__)
+            report[name + "_status"] = "available"
             if name == "torch":
                 report["torch_cuda_version"] = module.version.cuda
                 report["cuda_available"] = bool(module.cuda.is_available())
@@ -38,15 +42,22 @@ def collect() -> dict:
                             }
                         )
         except Exception as error:
+            report[name + "_status"] = (
+                "missing"
+                if isinstance(error, ModuleNotFoundError) and error.name == name
+                else "unavailable"
+            )
             report["errors"][name] = type(error).__name__
             if name == "torch":
                 report["cuda_available"] = False
     nvcc = shutil.which("nvcc")
     if nvcc:
+        report["nvcc_status"] = "unavailable"
         try:
             result = subprocess.run([nvcc, "--version"], capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
                 report["nvcc"] = result.stdout.strip()[-4096:]
+                report["nvcc_status"] = "available"
             else:
                 report["errors"]["nvcc"] = f"exit {result.returncode}"
         except (OSError, subprocess.TimeoutExpired) as error:

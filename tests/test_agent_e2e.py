@@ -19,10 +19,10 @@ def test_interactive_file_tasks_with_default_tools(tmp_path, monkeypatch, capsys
                 ("write_file", {"path": "demo/math.py", "content": source}),
                 ("write_file", {"path": "demo/scratch.txt", "content": "temporary"}),
             ],
-            [("read_file", {"path": "demo/math.py"})],
-            [("edit_file", {"path": "demo/math.py", "old_text": "a - b", "new_text": "a + b"})],
+            [("read_file", {"reads": [{"path": "demo/math.py"}]})],
+            [("edit_file", {"path": "demo/math.py", "edits": [{"old_text": "a - b", "new_text": "a + b"}]})],
             [
-                ("read_file", {"path": "demo/math.py"}),
+                ("read_file", {"reads": [{"path": "demo/math.py"}]}),
                 ("search_files", {"path": "demo", "query": "return a + b"}),
                 ("list_files", {"path": "demo"}),
             ],
@@ -133,7 +133,7 @@ def test_interactive_file_tasks_with_default_tools(tmp_path, monkeypatch, capsys
     assert len([m for m in requests[-1]["messages"] if m["role"] == "user"]) == 2
     assert (tmp_path / "demo/math.py").read_text() == corrected
     assert not (tmp_path / "demo/scratch.txt").exists()
-    assert "return a + b" in observations["step5_0"]["content"]
+    assert "return a + b" in observations["step5_0"]["results"][0]["data"]["content"]
     assert observations["step5_1"]["matches"][0]["path"] == "demo/math.py"
     assert {entry["name"] for entry in observations["step5_2"]["entries"]} == {
         "math.py",

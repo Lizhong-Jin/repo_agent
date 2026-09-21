@@ -4,6 +4,8 @@ import argparse
 import subprocess
 from pathlib import Path
 
+from cli.installation import record_image
+
 from .environment import (
     CUDA_BASE,
     DEFAULT_IMAGE,
@@ -48,6 +50,8 @@ def main() -> None:
         result = subprocess.run(build_command(root, environment.profile, args.image), check=False)
     except (OSError, ValueError) as error:
         parser.exit(1, f"{error}\n")
+    if result.returncode == 0:
+        record_image(root, args.image)
     raise SystemExit(result.returncode)
 
 

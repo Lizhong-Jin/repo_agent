@@ -14,11 +14,14 @@ def test_credentials_are_protected(tmp_path, tool_type, name):
     if tool_type is WriteFileTool:
         args.update(content="replacement", overwrite=True)
     elif tool_type is EditFileTool:
-        args.update(old_text="secret", new_text="replacement")
+        args.update(edits=[{"old_text": "secret", "new_text": "replacement"}])
     elif tool_type is SearchFilesTool:
         args.update(query="secret", include_hidden=True)
-    result = tool_type(tmp_path).execute(args)
-    assert result.error_code == "PROTECTED_FILE"
+    result = tool_type(tmp_path).execute({"reads": [args]} if tool_type is ReadFileTool else args)
+    if tool_type is ReadFileTool:
+        assert result.data["results"][0]["error"]["code"] == "PROTECTED_FILE"
+    else:
+        assert result.error_code == "PROTECTED_FILE"
     assert target.read_text() == "secret"
     assert "secret" not in str(result)
 
@@ -34,11 +37,14 @@ def test_symlink_cannot_hide_credentials(tmp_path, tool_type, reverse):
     if tool_type is WriteFileTool:
         args.update(content="replacement", overwrite=True)
     elif tool_type is EditFileTool:
-        args.update(old_text="secret", new_text="replacement")
+        args.update(edits=[{"old_text": "secret", "new_text": "replacement"}])
     elif tool_type is SearchFilesTool:
         args.update(query="secret", include_hidden=True)
-    result = tool_type(tmp_path).execute(args)
-    assert result.error_code == "PROTECTED_FILE"
+    result = tool_type(tmp_path).execute({"reads": [args]} if tool_type is ReadFileTool else args)
+    if tool_type is ReadFileTool:
+        assert result.data["results"][0]["error"]["code"] == "PROTECTED_FILE"
+    else:
+        assert result.error_code == "PROTECTED_FILE"
     assert target.read_text() == "secret"
     assert "secret" not in str(result)
 
@@ -52,10 +58,13 @@ def test_custom_env_is_protected(tmp_path, monkeypatch, tool_type):
     if tool_type is WriteFileTool:
         args.update(content="replacement", overwrite=True)
     elif tool_type is EditFileTool:
-        args.update(old_text="secret", new_text="replacement")
+        args.update(edits=[{"old_text": "secret", "new_text": "replacement"}])
     elif tool_type is SearchFilesTool:
         args.update(query="secret", include_hidden=True)
-    result = tool_type(tmp_path).execute(args)
-    assert result.error_code == "PROTECTED_FILE"
+    result = tool_type(tmp_path).execute({"reads": [args]} if tool_type is ReadFileTool else args)
+    if tool_type is ReadFileTool:
+        assert result.data["results"][0]["error"]["code"] == "PROTECTED_FILE"
+    else:
+        assert result.error_code == "PROTECTED_FILE"
     assert target.read_text() == "secret"
     assert "secret" not in str(result)

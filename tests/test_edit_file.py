@@ -18,8 +18,12 @@ from tools import EditFileTool
         ("a\r\nb\nc", "c", "C", "a\r\nb\nC", 3),
         ("a\r\nb\nc", "a\nb\nc", "X", "X", 1),
         ("a\r\nb\nc", "a\r\nb", "X", "X\nc", 1),
-        ("a\r\nb\nc", "b", "B\nD", "a\r\nB\r\nD\nc", 2),
-        ("a\rb\rc", "b", "B\nD", "a\rB\rD\rc", 2),
+        # A match without newlines uses LF, preserving all surrounding bytes.
+        ("a\r\nb\nc", "b", "B\nD", "a\r\nB\nD\nc", 2),
+        ("a\rb\rc", "b", "B\nD", "a\rB\nD\rc", 2),
+        # A match containing newlines preserves that fragment's convention.
+        ("a\r\nb\r\nc", "b\nc", "B\nD", "a\r\nB\r\nD", 2),
+        ("a\rb\rc", "b\nc", "B\nD", "a\rB\rD", 2),
         ("a\nb\nc", "b", "B\nD", "a\nB\nD\nc", 2),
         ("a\r\nb\nc", "a\nb\nc", "", "", 1),
     ],
@@ -33,12 +37,13 @@ def test_edit_preserves_unmatched_bytes_and_bom(
     target.write_bytes(original)
 
     result = EditFileTool(tmp_path).execute(
-        {"path": target.name, "old_text": old_text, "new_text": new_text}
+        {"path": target.name, "edits": [{"old_text": old_text, "new_text": new_text}]}
     )
 
     assert result.success
     assert target.read_bytes() == expected
-    assert result.data["start_line"] == start_line
+    assert result.data["edits_applied"] == 1
+    assert result.data["changes"][0]["start_line"] == start_line
     assert result.data["bytes_before"] == len(original)
     assert result.data["bytes_after"] == len(expected)
     assert result.data["old_sha256"] == hashlib.sha256(original).hexdigest()
@@ -63,7 +68,7 @@ def test_multiple_matches_including_overlaps_leave_file_unchanged(tmp_path, befo
     target.write_bytes(original)
 
     result = EditFileTool(tmp_path).execute(
-        {"path": target.name, "old_text": old_text, "new_text": "X"}
+        {"path": target.name, "edits": [{"old_text": old_text, "new_text": "X"}]}
     )
 
     assert not result.success
@@ -78,7 +83,7 @@ def test_preserved_bom_counts_toward_result_size_limit(tmp_path):
     target.write_bytes(original)
 
     result = EditFileTool(tmp_path, max_content_bytes=len(original)).execute(
-        {"path": target.name, "old_text": "abc", "new_text": "abcd"}
+        {"path": target.name, "edits": [{"old_text": "abc", "new_text": "abcd"}]}
     )
 
     assert result.error_code == "EDIT_RESULT_TOO_LARGE"
@@ -91,7 +96,7 @@ def test_no_match_leaves_file_unchanged(tmp_path):
     target.write_bytes(original)
 
     result = EditFileTool(tmp_path).execute(
-        {"path": target.name, "old_text": "missing", "new_text": "X"}
+        {"path": target.name, "edits": [{"old_text": "missing", "new_text": "X"}]}
     )
 
     assert result.error_code == "NO_MATCH"

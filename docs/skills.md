@@ -2,13 +2,16 @@
 
 [返回 README](../README.md)
 
-本文中的命令默认在 Agent 安装目录执行；任务项目目录会单独注明。
+CLI 示例在任务项目目录执行；Python 开发示例使用已安装的项目环境。
 
 ## 使用技能
 
-CLI 默认启用技能框架，随程序提供 `debug-and-fix`，用于定位代码报错、异常行为和失败测试，
-并完成修复及回归验证。升级后先在 Agent 安装目录执行 `python -m pip install -e .`，
-更新依赖并重启会话。
+CLI 默认启用技能框架，提供两个内置技能：
+
+| 技能 | 用途 |
+| --- | --- |
+| `debug-and-fix` | 定位代码报错、异常行为和失败测试，修复并回归验证 |
+| `gpu-kernel-development` | CUDA / Triton / PyTorch 算子的实现、正确性与性能验证 |
 
 交互模式下使用：
 
@@ -55,12 +58,12 @@ description: 排查 Widget 组件的初始化失败和配置异常。
 
 采用 YAML frontmatter，支持多行描述；`name` 必须与目录同名，`description` 必须是
 非空文本且不超过 1024 字符，正文不能为空。其他元数据不参与路由或权限控制。
-第一版不读取 `agents/openai.yaml`、全局技能目录或 `.agents/skills`；本项目的 `.agents`
+不读取 `agents/openai.yaml`、全局技能目录或 `.agents/skills`；本项目的 `.agents`
 受保护且不进入沙箱副本，所以项目技能使用普通的 `skills/` 目录。
 
 ## 加载与权限
 
-会话启动时读取并校验技能、固定正文快照，只将名称、描述与来源放入模型的技能目录。
+Agent 进程启动时读取并校验技能、固定正文快照，只将名称、描述与来源放入模型的技能目录。
 只有显式指定或调用 `load_skill` 才把正文加入上下文；脚本和参考资料不会自动读取或执行。
 内置技能随安装包分发，是纯说明技能；项目技能资源以返回的 `base_path` 为基准，
 通过已有文件工具读取、隔离执行工具运行。Docker 模式从沙箱副本发现项目技能，
@@ -70,7 +73,7 @@ local 模式加载技能不会开放命令或 Python 执行权限。
 名称冲突（包括与内置技能同名）、无效技能、符号链接、硬链接及非普通技能文件会明确报错，
 不会静默覆盖。每个 `SKILL.md` 最多 64 KiB，总共最多 64 个技能，模型目录最多 16000 字符；
 超限会提示缩短描述或减少技能。没有 `SKILL.md` 的普通子目录会被忽略。
-增删或修改技能后重启会话；`/clear` 只清空对话，不重新发现技能。
+增删或修改技能后重启 Agent；`/clear` 和界面内 `/new` 都不会重新发现技能。Docker 恢复旧工作副本时仍读取副本中的技能；若修改的是宿主机项目技能，可用 `--new-session` 建立新副本。
 已加载的正文会留在后续对话历史中，但只应在后续任务仍相关时使用。
 
 终端会显示已加载的技能名；日志的 `skill_loaded` 事件记录名称、来源、内容 SHA-256
@@ -92,6 +95,6 @@ runtime = AgentRuntime(client, tools=create_default_tools(root), skills=SkillReg
 result = runtime.run("$debug-and-fix 分析导入失败的原因")
 ```
 
-离线验证：`python -m pytest -q tests/test_skills.py tests/test_tui.py`。
+离线验证：`.venv/bin/python -m pytest -q tests/test_skills.py tests/test_tui.py`。
 测试覆盖选择后的加载、显式调用、多轮历史、日志、目录校验、沙箱资源路径和权限保持；
 模型响应使用本地模拟，不消耗推理额度，也不能证明真实模型的技能选择率。

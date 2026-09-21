@@ -235,11 +235,11 @@ def test_sandbox_snapshot_resources_and_local_permissions(tmp_path):
         skill = registry.get("sample")
         assert skill.base_path == "skills/sample"
         result = ReadFileTool(session.workspace).execute(
-            {
+            {"reads": [{
                 "path": skill.base_path + "/references/case.txt",
-            }
+            }]}
         )
-        assert "snapshot reference" in result.data["content"]
+        assert "snapshot reference" in result.data["results"][0]["data"]["content"]
         assert session.changes()[1] == []
         runtime = AgentRuntime(Model(reply()), create_default_tools(tmp_path), skills=registry)
         assert "load_skill" in runtime._tools
@@ -258,7 +258,7 @@ def test_debug_skill_repair_with_real_files_and_regression(tmp_path):
     assert before.returncode != 0 and b"AssertionError" in before.stderr
     model = Model(
         reply(calls=[ToolCall("load", "load_skill", {"name": "debug-and-fix"})]),
-        reply(calls=[ToolCall("read", "read_file", {"path": "calculator.py"})]),
+        reply(calls=[ToolCall("read", "read_file", {"reads": [{"path": "calculator.py"}]})]),
         reply(
             calls=[
                 ToolCall(
@@ -266,8 +266,7 @@ def test_debug_skill_repair_with_real_files_and_regression(tmp_path):
                     "edit_file",
                     {
                         "path": "calculator.py",
-                        "old_text": "a - b",
-                        "new_text": "a + b",
+                        "edits": [{"old_text": "a - b", "new_text": "a + b"}],
                     },
                 )
             ]

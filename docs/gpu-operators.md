@@ -1,10 +1,20 @@
 # CUDA、Triton 与 PyTorch 算子开发
 
+[返回 README](../README.md) · [Sandbox](../sandbox/README.md)
+
 此功能包括 CUDA 文件符号查询、GPU 沙箱运行配置、GPU 开发镜像、环境探测、
 算子环境自检，以及内置 `$gpu-kernel-development` 技能。Triton/PyTorch 是 Python 库，
 其 `.py` 文件继续使用 pylsp；`.cu`、`.cuh` 使用 clangd 的 `cuda` 语言标识。
 
 ## 在 Linux NVIDIA 机器准备
+
+Linux native 也可直接使用宿主机 GPU，无需 Docker：
+
+```bash
+repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all
+```
+
+默认 native 不开放 GPU，需显式指定 CUDA profile 或 GPU 参数；Linux 可选单卡，WSL2 仅支持 `all`。需要宿主机驱动、GPU 设备权限，并在 Agent 的 Python 环境中预装 CUDA 版 PyTorch、Triton 等依赖。启动会在沙箱内验证实际 CUDA kernel；网络和文件保护继续生效，无显存/算力配额。依赖、权限范围、缓存行为及真实硬件测试见 [原生 GPU 说明](native-sandbox.md#linux--wsl2-原生-gpu)。以下镜像构建、自动检测和容器资源上限描述 Docker 模式。
 
 当前 GPU 镜像基线面向 Linux x86_64，使用官方
 `pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel`：PyTorch 2.7.1、CUDA Toolkit 12.8、
@@ -21,10 +31,10 @@ Mac 的 MPS 或 Linux CPU 模式不能替代 CUDA/Triton GPU 验证。
 
 ```bash
 # 首次使用或更新沙箱代码后构建，不需要模型配置
-./run_agent.sh --build-sandbox
+repo-agent-build-sandbox
 
 # 完成项目模型配置后启动任意任务
-./run_agent.sh "任务内容"
+repo-agent --sandbox docker "任务内容"
 ```
 
 例如任务内容可以是“用 Triton 实现逐元素加法，提供 PyTorch 参考实现、边界测试和基准测试”。
@@ -48,7 +58,7 @@ Dockerfile 内部不能可靠检测宿主机 GPU，因此请使用上述构建�
 - 当前 CUDA 镜像限 Linux x86_64；检测到其他架构的 NVIDIA 环境时明确报错。
 - 两种环境都使用 `repo-agent-sandbox:v1`。构建会更新该标签，启动校验镜像的环境标签；
   缺镜像、旧镜像未标记或标签与检测结果不匹配时，提示重新执行同一条构建命令。
-  更新镜像后启动新会话；已有会话继续使用其固定的镜像。
+  运行中的后端继续使用固定的镜像 ID；更新镜像后重启 Agent，恢复会话时也会按当前配置重建后端。
 
 高级覆盖选项仅用于特殊需求，日常使用无需指定：
 
@@ -72,7 +82,7 @@ Dockerfile 内部不能可靠检测宿主机 GPU，因此请使用上述构建�
 | run_python 最大超时 | 30 秒 | 900 秒 |
 | 容器总超时 | 130 秒 | 930 秒 |
 
-默认工具超时仍为原来的短超时；首次 CUDA 扩展编译显式设置 `timeout_seconds=600` 或 900。
+默认单次命令超时为 60 秒，Python 超时为 10 秒；首次 CUDA 扩展编译显式设置 `timeout_seconds=600` 或 900。
 最终回写验证使用 profile 的命令超时上限。GPU 显存不由容器内存上限约束；测试需按目标卡容量选尺寸。
 禁网、非 root、只读根文件系统和原有 workspace 回写流程继续生效，不使用 privileged 模式。
 
@@ -104,7 +114,7 @@ CUDA 扩展示例验证 float32，并覆盖非默认 stream。缺少 GPU 明确�
 在宿主机运行完整沙箱链路验证：
 
 ```bash
-RUN_CUDA_DOCKER_TESTS=1 .venv/bin/pytest -q tests/test_gpu_support.py
+RUN_CUDA_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_gpu_support.py
 ```
 
 ## 编写实际算子

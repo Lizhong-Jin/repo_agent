@@ -1,54 +1,93 @@
-# 配置与思考模式
+# 配置参考
 
 [返回 README](../README.md)
 
-本文中的命令默认在 Agent 安装目录执行；任务项目目录会单独注明。
+`repo-agent config` 可在任务项目目录执行；`--root` 指定用于计算生效配置的项目。
 
-## 用户配置（推荐）
+## 用户配置
 
-运行 `./install.sh` 会将仓库 `.env.example` 复制为 `~/.config/repo-agent/.env`，安装过程无需输入模型或 API Key，也不会把环境变量中的密钥写入文件。首次启动前编辑此文件，填写 `LLM_PROVIDER`、`LLM_MODEL` 和对应 API Key；不需要复制到每个项目。重复安装保留已有文件，包括空白或尚未完成的配置；修改后重启 Agent 生效。
+运行 `./install.sh` 会将 `.env.example` 复制为 `~/.config/repo-agent/.env`，安装过程无需输入模型或 API Key。已有用户配置保持不变。
 
-`repo-agent` 和 `python -m cli.main` 都会加载用户配置及工作目录 `.env`。`--root` 同时选择工作目录和项目配置位置；`AGENT_ENV_FILE` 可显式指定项目配置文件（相对路径以调用目录为准），替代默认项目 `.env`，用户配置仍作后备。指定的文件不存在时会报错。
+`repo-agent` 和 `python -m cli.main` 都读取用户配置及工作目录 `.env`。优先级为 **命令行参数 > 已有非空环境变量 > 项目 `.env` > 用户 `.env` > 内置默认值**。项目显式空值可以清除同名用户配置，例如 `LLM_BASE_URL=` 恢复厂商默认端点。配置按字面量解析，不执行命令或变量展开。
 
-优先级为 **命令行参数 > 已有非空环境变量 > 项目 `.env` > 用户 `.env` > 内置默认值**。项目的显式空值清除同名用户配置，例如 `LLM_BASE_URL=` 恢复厂商默认端点。所有配置都按字面量解析，不执行 shell 命令或变量展开。
+用户配置目录默认为 `${XDG_CONFIG_HOME:-~/.config}/repo-agent`，也可在启动前通过 `AGENT_CONFIG_DIR` 指定。`--root` 同时选择工作目录及项目 `.env`；`AGENT_ENV_FILE` 可指定项目配置文件（相对路径以调用目录为准），指定文件不存在时会报错。
 
-用户配置目录默认为 `${XDG_CONFIG_HOME:-~/.config}/repo-agent`；也可在启动前设置 `AGENT_CONFIG_DIR` 指定目录，配置文件名始终为 `.env`。安装目录 `.env.defaults` 不会自动迁移或加载；已有用户可以将需要的值手动转入用户配置。
+## 查看和修改配置
 
-## 项目默认配置（兼容旧版初始化）
+这些命令可以在任意工作目录运行，不要求先配置模型，不启动 Docker 或 Agent 会话，也不发出 API 请求：
 
-在安装目录创建或编辑 **`.env.defaults`**，用来保存你常用的模型、思考设置、超时等默认值。它只在 `--init` 时使用，不参与项目每次启动时的动态配置读取。
-
-```dotenv
-LLM_PROVIDER=deepseek
-LLM_MODEL=你常用的模型ID
-LLM_THINKING=enabled
-AGENT_MAX_STEPS=12
-AGENT_MAX_OUTPUT_TOKENS=8192
-LLM_TIMEOUT=180
+```bash
+repo-agent config show                 # 查看按当前工作目录计算的生效值及来源
+repo-agent config show --user          # 只看用户配置保存的值
+repo-agent config show --root /path/to/project
+repo-agent config path                 # 查看用户配置文件位置
+repo-agent config edit                 # 交互选择一个配置项并修改
+repo-agent config edit LLM_TIMEOUT     # 直接交互修改指定项
+repo-agent config set LLM_TIMEOUT 120
+repo-agent config set AGENT_MAX_STEPS 12
+# 不限制每条任务的模型调用轮数
+repo-agent config set AGENT_MAX_STEPS 0
+repo-agent config set LLM_BASE_URL ''   # 保存空值，恢复厂商默认地址
+repo-agent config set DEEPSEEK_API_KEY # 隐藏输入 API Key，不把 Key 放在命令行中
+repo-agent config model                # 选择供应商、填写模型和 Key，保存后退出
 ```
 
-默认文件可以只保留需要覆盖的字段；其他字段由 `.env.example` 补齐。初始化优先级为 **已有项目 `.env` > 安装目录 `.env.defaults` > `.env.example`**，已有空值也会保留。默认文件不存在时继续使用 `.env.example`。这样升级后新增的配置项仍可获得默认值，同时不会改动已有项目的选择。
+`repo-agent config` 等同于 `config show`。显示时 Key 仅标注已设置或未设置；空配置项会说明其默认行为和来源。生效视图不包含另一次启动额外传入的参数，也不表示已运行会话中的临时设置；需要查看保存的原始值时使用 `--user`。
 
-编辑默认值后，在新任务目录执行安装目录的 `run_agent.sh --init` 即可。修改 `.env.defaults` 不会同步覆盖已经创建的项目；对旧项目再次 init，也只会补齐缺少的字段。建议将手动创建的文件权限设为 `600`；该文件已被现有 `.gitignore` 规则忽略；如填写 Key，会随默认值复制到新项目的 `.env`。不要把安装目录的 `.env` 当作全局默认配置。
+`edit` 显示配置项供选择，回车保留原值，输入 `:empty` 清空；Ctrl+C 取消。`set` 检查数值、枚举和 JSON 等基础格式，只更新用户 `.env`，保留其他配置和注释；API Key 通过隐藏输入保存。参数间及模型特有的兼容性仍在启动或模型调用时检查。保存后重启 Agent 生效，当前会话切换模型仍使用 `/model`。如果保存的用户值被项目或环境变量覆盖，命令会提示来源。`--root` 只用于判断覆盖关系，不会把改动写入项目配置。
 
-`.env.defaults` 使用与项目 `.env` 相同的字面量 `KEY=VALUE` 格式，支持成对引号、可选 `export` 和整行注释，不执行命令或变量展开；未知、重复字段及格式错误会在创建项目文件之前报错，错误信息不包含配置值。
+## 模板与内置默认值
+
+首次安装复制当前 `.env.example`；重复安装不覆盖用户文件。只有未配置或显式留空时才回退到内置默认值。当前模板与内置值有以下差异：
+
+| 配置项 | 当前安装模板 | 内置默认值 |
+| --- | --- | --- |
+| `AGENT_MAX_STEPS` | `50` | `8` |
+| `AGENT_MAX_OUTPUT_TOKENS` | `51200` | `4096` |
+| `AGENT_SANDBOX_WRITEBACK` | `manual` | `manual` |
+
+这些值不是模型能力声明；输出上限仍需符合实际模型限制。已有配置可能与两列都不同，使用 `repo-agent config show` 查看生效值和来源。模板变更不会自动同步到已有用户配置。
+
+## 在 Agent 中设置和切换模型
+
+交互终端启动时，若缺少模型名或 API Key，会在创建沙箱前自动进入设置向导。已有完整配置则直接进入会话；希望启动时重新选择，可以运行：
+
+```bash
+repo-agent --configure-model
+```
+
+向导从项目当前支持的供应商列表中选择（可输入序号或供应商名称），模型名称手动填写，API Key 隐藏输入。已配置同一供应商时，模型名和 Key 可以回车保留；Ctrl+C 取消。向导中的模型名称仍需手动输入，配置命令保存时不发出 API 请求。进入会话或会话内切换模型时，会查询模型元数据以获取上下文上限；查询失败不影响使用，生成权限和 Key 是否有效仍由实际模型调用验证。
+
+会话中输入 `/model` 可再次打开相同向导。仅在当前任务结束后切换；全屏界面底部显示当前供应商和模型。设置成功后立即生效，并保存到用户 `.env`，作为以后启动的默认设置。用户配置以权限 `600` 原子更新，保留其他供应商的 Key、注释及无关设置；Key 不进入对话、任务历史或追踪日志。取消或保存失败时，当前模型和上下文保持不变。
+
+切换成功后清空模型对话上下文，已完成的文件修改、沙箱副本和会话 token 总计保留。思考设置恢复目标模型在该接口上保存的偏好（没有偏好时为 `auto`），清除旧模型的原生额外参数及旧上下文窗口上限，并重新查询新模型的上限，避免把旧模型的特有参数带到新模型。切换供应商时恢复新供应商默认 API 地址；同一供应商保留当前自定义地址。需要自定义地址时仍可编辑用户配置或通过 `--base-url` 指定。
+
+会话中的显式选择立即作用于本次会话；下次启动仍遵循上述配置优先级，项目 `.env`、环境变量或命令行参数可以覆盖保存的用户默认值。非交互输入不会询问或明文读取 Key，缺少配置时给出文件路径；可在终端完成设置后再用于脚本。
+
+默认卸载保留用户配置；`./uninstall.sh --purge` 才会清理未共享的用户配置和 Key，详见[安装与卸载](installation.md)。
 
 ## 配置参考
 
-所有已接入的运行设置都列在安装目录的 `.env.example` 中。新项目初始化时会生成完整 `.env`；旧任务目录在升级 Agent 后执行 `./run_agent.sh --init`，即可补充新增配置项。已有值不变，新增项保持默认行为。配置在启动时读取，修改后需要退出并重新启动；不是会话内热更新。
+所有已接入的运行设置都列在安装目录的 `.env.example` 中。首次安装将模板复制为用户配置；重复安装保留文件内容。升级后可对照模板手动补充新增选项，未配置的选项使用内置默认值。项目 `.env` 是可选覆盖文件，只需填写与默认配置不同的选项。配置在启动时读取，修改后需要退出并重新启动；不是会话内热更新。
 
-| 配置项 | 默认值 | 作用 |
+| 配置项 | 内置默认值（未配置时） | 作用 |
 | --- | --- | --- |
 | `LLM_PROVIDER` / `LLM_MODEL` | `deepseek` / 必填 | 厂商与模型 ID |
 | `LLM_BASE_URL` | 空 | 空值使用厂商预设地址 |
-| `LLM_CONTEXT_WINDOW` | 空 | 模型上下文窗口上限，仅用于显示，不会压缩历史 |
-| `AGENT_MAX_STEPS` | `8` | 每条用户任务最多调用模型的轮数 |
+| `LLM_CONTEXT_WINDOW` | 空 | 留空从服务端自动获取；正整数手动覆盖，仅用于显示，不会压缩历史 |
+| `AGENT_MAX_STEPS` | `8` | 每条用户任务最多调用模型的轮数；`0` 表示无上限 |
 | `AGENT_MAX_OUTPUT_TOKENS` | `4096` | 每次模型请求的输出 token 上限 |
+| `AGENT_MAX_RECOVERIES` | `2` | 连续输出截断的额外恢复次数，文字/工具共享计数；0 关闭；正常工具轮完成后重置 |
+| `AGENT_RECOVERY_MAX_OUTPUT_TOKENS` | 留空 | 工具参数重生成时的输出额度上限；每次翻倍至此值。留空沿用原额度；显式值须不低于原额度且符合模型限制 |
 | `LLM_TEMPERATURE` | 空 | 不传温度，使用模型默认行为；显式值需符合模型限制 |
 | `LLM_TOOL_CHOICE` | `auto` | `auto` 自主选择；`none` 不调用工具；`required` 每轮强制调用工具，可能导致任务达到轮数上限 |
 | `LLM_THINKING` | `auto` | 不指定开关；也可选 `enabled`、`disabled`；Claude 另支持 `adaptive` |
-| `LLM_REASONING_EFFORT` | 空 | 可选思考强度，支持范围见下表 |
+| `LLM_REASONING_EFFORT` | 空 | 可选思考强度，支持范围见 [思考设置](thinking.md) |
 | `LLM_THINKING_BUDGET` | 空 | 可选思考 token 预算，必须是正整数 |
+| `LLM_THINKING_HISTORY` | `auto` | GLM 历史思考保留：auto / on / off |
+| `LLM_THINKING_RECALL` | `true` | 是否自动保存并恢复每个模型的交互思考偏好 |
+| `LLM_THINKING_PROFILE` | `{}` | 当前模型能力覆盖 JSON，见 [思考设置](thinking.md) |
+| `AGENT_THINKING_DISPLAY` | `collapsed` | 思考区块显示：collapsed / expanded / hidden |
 | `LLM_STREAM` | `true` | 默认流式接收；`--no-stream` 关闭 |
 | `LLM_TIMEOUT` | `300` | 首批及相邻网络数据读取等待，单位秒，不是整个任务的总时限 |
 | `LLM_CONNECT_TIMEOUT` | `10` | 建立连接的最长等待秒数 |
@@ -57,8 +96,8 @@ LLM_TIMEOUT=180
 | `LLM_MAX_RETRIES` | `2` | 对可重试 HTTP 错误的额外重试次数，`0` 关闭，最大 `10`；连接错误和超时仍不自动重试 |
 | `LLM_RETRY_DELAY` / `LLM_MAX_RETRY_DELAY` | `0.5` / `30` | 重试基础间隔与最大间隔，单位秒 |
 | `AGENT_SYSTEM_PROMPT` | 空 | 空值使用内置提示词；非空的单行文本替换它 |
-| `AGENT_LOG_DIR` | `logs` | 终端对话与执行追踪日志目录 |
-| `AGENT_SANDBOX_WRITEBACK` | `manual` | `manual` 手动回写；`on-success` 按检查结果自动回写 |
+| `AGENT_LOG_DIR` | 项目 `logs/` | 运行片段追踪日志；不改变连续会话日志或快照位置 |
+| `AGENT_SANDBOX_WRITEBACK` | `manual` | 仅 Docker：`manual` 手动回写；`on-success` 按检查结果自动回写；local/native 忽略此配置 |
 | `AGENT_SANDBOX_VERIFY_COMMAND` | 空 | on-success 回写前的最终验证命令，使用 JSON 参数数组 |
 | `LLM_EXTRA_JSON` | `{}` | 高级厂商原生请求参数，须为 JSON 对象，不允许覆盖统一字段或与显式思考配置冲突 |
 
@@ -72,31 +111,43 @@ repo-agent --thinking enabled --max-steps 12 --max-output-tokens 8192 --timeout 
 
 ## 思考配置
 
-`.env` 中可以这样启用思考并增加输出上限：
+`LLM_THINKING=auto` 表示不指定思考开关，不保证关闭思考；单独填写强度或预算仍可能发送这些参数。强度、预算、历史保留和显示方式是独立设置，支持范围取决于当前模型。
 
-```dotenv
-LLM_THINKING=enabled
-LLM_REASONING_EFFORT=
-LLM_THINKING_BUDGET=
-AGENT_MAX_STEPS=12
-AGENT_MAX_OUTPUT_TOKENS=8192
-LLM_TIMEOUT=180
+交互命令、按模型保存的偏好、档位及能力覆盖统一见[思考设置](thinking.md)。内置规则由 [llm/thinking_catalog.py](../llm/thinking_catalog.py) 维护，协议映射位于 [llm/thinking.py](../llm/thinking.py)。不支持或冲突的组合会报错，服务端仍决定实际可用能力。
+
+完整配置模板见 [`.env.example`](../.env.example)，回写条件见 [Sandbox](../sandbox/README.md#自动回写配置与恢复)。
+
+## 校验与恢复用户配置
+
+```bash
+repo-agent config validate              # 校验当前目录的配置和合并后的设置
+repo-agent config validate --user       # 只校验用户配置
+repo-agent config unset LLM_TIMEOUT     # 删除此项用户覆盖值
+repo-agent config backup                # 手动备份，当前文件损坏时也可以使用
+repo-agent config backups               # 列出备份名（新到旧），不显示内容
+repo-agent config restore <备份名>       # 恢复指定备份
+repo-agent config reset                 # 恢复安装目录 .env.example 模板
 ```
 
-此示例可用于支持思考开关的 DeepSeek 模型。Claude 手动思考还需填写预算；各模型是否支持参数由服务端确认。`auto` 的含义是“不发送思考开关”，并不保证关闭思考；只要填写了强度或预算，仍会发送这些参数。
+`validate` 检查格式、数值范围、供应商思考参数及额外 JSON 的组合冲突，也提示未知字段、重复字段和缺少模型/Key。无效格式或参数返回 1；提示性问题返回 0。它不请求模型 API，因此不能验证账户权限、余额或远端模型是否存在。`unset` 删除用户文件中的条目，与将值设置为空不同；项目配置和环境变量仍按既有优先级生效。
 
-| 厂商 | 当前映射方式 |
+通过配置命令或模型向导修改已有用户配置时，旧内容会自动备份到同目录 `.env.backups/`；目录权限 `700`，备份及新配置权限 `600`。备份包含历史 API Key，不在终端输出内容，也不会自动过期。
+
+`restore` 只接受 `backups` 列出的备份名，恢复前校验备份格式和参数组合，并先备份当前文件。当前 `.env` 格式错误也可以恢复。`reset` 同样先备份，包括损坏文件的原始内容，再复制 `.env.example`；默认模板中的模型和 Key 为空，需要重新配置。没有可用备份时可用此入口恢复。
+
+这些操作只修改用户配置，不改项目 `.env` 或进程环境变量；已运行的会话不受影响，下次启动生效。默认卸载保留备份；`uninstall.sh --purge` 在配置不被共享时一并清理受管配置备份，保留备份目录中的其他文件。
+
+## 思考内容显示偏好
+
+`AGENT_THINKING_DISPLAY=collapsed` 为默认值；也支持 `expanded`、`hidden`，启动参数为 `--thinking-display`。该项为用户级界面偏好，交互命令 `/thinking display ...` 和 Ctrl+T 自动保存到用户 `.env`，不写入按模型保存强度的 `thinking.json`。显示命令可以在生成中生效，详细行为见 [思考显示](thinking.md#显示思考内容)。
+
+## 数据目录与启动参数
+
+| 设置 | 默认位置 / 作用 |
 | --- | --- |
-| OpenAI / ChatGPT | `enabled` 发送 `reasoning.effort`，未填强度时使用 `medium`；`disabled` 发送 `none`。没有独立预算映射。各模型支持的强度不同，有些不能关闭思考。 |
-| Claude | `enabled` 是手动模式，预算必填且满足 `1024 <= budget < 输出上限`；`adaptive` 不填写预算。强度通过 `output_config.effort` 传递，接受 `low/medium/high/max`，具体模型可能只支持其中一部分。 |
-| Gemini | 预算映射到 `thinkingBudget`，强度映射到 `thinkingLevel`，不能同时填写。强度接受 `minimal/low/medium/high`，由模型决定具体支持范围。启用且未指定强度或预算时，Gemini 3 使用 `high`，其他模型使用动态预算 `-1`。不能把降低思考强度等同于完全关闭思考。 |
-| Qwen | 开关映射到 `enable_thinking`，预算映射到 `thinking_budget`；不映射强度。 |
-| DeepSeek / GLM | 开关映射到 `thinking.type`，强度映射到 `reasoning_effort`；不映射独立预算。 |
-| Kimi / 豆包 | 映射 `thinking.type` 开关，不映射强度或独立预算。 |
-| MiniMax | 当前没有通用开关映射，使用 `auto` 并将强度、预算留空；非默认设置会报错。 |
+| `AGENT_CONFIG_DIR` | 覆盖用户配置目录；未设置时使用 `${XDG_CONFIG_HOME:-~/.config}/repo-agent` |
+| `AGENT_ENV_FILE` | 覆盖项目配置文件；未设置时读取项目根目录 `.env` |
+| `XDG_STATE_HOME` | 用户状态基目录，默认 `~/.local/state`；包含会话和安装登记 |
+| `AGENT_LOG_DIR` | 运行片段日志；显式相对路径以调用目录为准，留空使用项目 `logs/` |
 
-统一思考配置在 `llm/thinking.py` 转换；`AgentRuntime` 在每一轮请求中传递温度、工具选择和转换后的参数。明确不支持的映射或相互冲突的配置会报错，不会悄悄丢弃。模型级别的支持范围由 API 最终验证；本项目不会自动更换模型 ID。默认使用流式接收，支持只接受流式调用的模型。
-
-参数映射依据：[OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning)、[Claude 手动思考](https://platform.claude.com/docs/en/build-with-claude/extended-thinking)、[Claude 自适应思考](https://platform.claude.com/docs/en/build-with-claude/thinking-steering-and-cost)、[Gemini thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking)、[Qwen 深度思考](https://help.aliyun.com/en/model-studio/deep-thinking)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)、[GLM 深度思考](https://docs.bigmodel.cn/cn/guide/capabilities/thinking)、[Kimi 官方项目](https://github.com/MoonshotAI/Kimi-K2.5)。
-
-完整模板见 [`.env.example`](../.env.example)，回写条件见 [Sandbox 使用说明](../sandbox/README.md)。
+配置目录和状态目录变量在启动前设置，不属于 `.env` 中的运行参数。`--new-session`、`--name`、`--root` 是启动选项；会话名称和上下文保存在会话状态中，不写入模型配置。完整存储结构见[会话管理](sessions.md#保存位置)。

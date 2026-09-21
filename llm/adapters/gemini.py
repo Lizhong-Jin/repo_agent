@@ -2,7 +2,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from ..errors import InvalidResponseError
-from ..schemas import LLMRequest, LLMResponse
+from ..schemas import LLMRequest, LLMResponse, Message
 from .base import Adapter, count, tool_call, usage
 
 
@@ -106,9 +106,14 @@ class GeminiAdapter(Adapter):
             raise InvalidResponseError("Expected exactly one Gemini candidate")
         candidate = candidates[0]
         native = candidate.get("content") or {"role": "model", "parts": []}
+        limited = candidate.get("finishReason") == "MAX_TOKENS"
+        truncated = False
         texts, calls = [], []
         for part in native.get("parts", []):
             if "functionCall" in part:
+                if limited:
+                    truncated = True
+                    continue
                 c = part["functionCall"]
                 calls.append(
                     tool_call(c.get("id") or f"call_{uuid4().hex}", c["name"], c.get("args", {}))
@@ -128,6 +133,9 @@ class GeminiAdapter(Adapter):
             "PROHIBITED_CONTENT": "blocked",
             "SPII": "blocked",
         }.get(finish, "other")
-        return self.response(
-            data, self.assistant("".join(texts), calls, native), reason, tokens, finish
+        message = (
+            Message("assistant", "".join(texts))
+            if limited
+            else self.assistant("".join(texts), calls, native)
         )
+        return self.response(data, message, reason, tokens, finish, truncated_tool_calls=truncated)

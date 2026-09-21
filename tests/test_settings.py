@@ -45,6 +45,7 @@ def test_cli_normalizes_empty_base_url(tmp_path, monkeypatch, env_value, flags, 
             *flags,
         ],
     )
+    monkeypatch.setattr(LLMClient, "get_context_limit", lambda self, **kw: None)
     monkeypatch.setattr(cli, "LLMClient", make_client)
     monkeypatch.setattr(cli, "run_interactive", lambda runtime, **kwargs: None)
     cli.main()  # Construct and close the real client without making any API requests.
@@ -226,3 +227,50 @@ def test_context_window_cli_overrides_environment(monkeypatch):
     assert parser.parse_args(["--context-window", "65536"]).context_window == 65536
     with pytest.raises(SystemExit):
         parser.parse_args(["--context-window", "0"])
+
+
+@pytest.mark.parametrize("model", ["glm-5.3", "GLM-5.3-FLASH", "glm-5.3-flashx"])
+@pytest.mark.parametrize(
+    "requested,native",
+    [
+        ("minimal", "low"),
+        ("low", "low"),
+        ("medium", "high"),
+        ("high", "high"),
+        ("xhigh", "max"),
+        ("max", "max"),
+    ],
+)
+def test_glm_53_effort_aliases_reach_wire(model, requested, native):
+    parser = argparse.ArgumentParser()
+    add_runtime_arguments(parser)
+    args = parser.parse_args(["--thinking", "enabled", "--reasoning-effort", requested])
+    args.provider, args.model = "glm", model
+    body = ADAPTERS["chat_completions"]("zhipu", model).encode(
+        LLMRequest([Message("user", "task")], extra=request_options(args))
+    )
+    assert body["model"] == model
+    assert body["thinking"] == {"type": "enabled"}
+    assert body["reasoning_effort"] == native
+
+
+@pytest.mark.parametrize("model", ["glm-5.3", "GLM-5.3-FLASH"])
+def test_glm_53_cannot_disable_and_auto_preserves_default(model):
+    with pytest.raises(ConfigurationError, match="不能关闭思考"):
+        thinking_options("glm", model, mode="disabled")
+    assert thinking_options("zhipu", model) == {}
+    assert thinking_options("zhipu", model, mode="auto", effort="medium") == {
+        "reasoning_effort": "high"
+    }
+
+
+def test_glm_53_mapping_does_not_guess_other_models_or_providers():
+    for provider, model in [
+        ("deepseek", "glm-5.3"),
+        ("zhipu", "glm-5.30"),
+        ("zhipu", "custom-model"),
+    ]:
+        assert thinking_options(provider, model, effort="medium") == {"reasoning_effort": "medium"}
+        assert thinking_options(provider, model, mode="disabled") == {
+            "thinking": {"type": "disabled"}
+        }

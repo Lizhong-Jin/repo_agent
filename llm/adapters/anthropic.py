@@ -1,5 +1,5 @@
 from ..errors import InvalidRequestError, InvalidResponseError
-from ..schemas import LLMRequest, LLMResponse
+from ..schemas import LLMRequest, LLMResponse, Message
 from .base import Adapter, count, tool_call, usage
 
 
@@ -58,13 +58,18 @@ class AnthropicAdapter(Adapter):
     def decode(self, data: dict) -> LLMResponse:
         if data.get("role") != "assistant":
             raise InvalidResponseError("Expected an Anthropic assistant response")
+        limited = data.get("stop_reason") == "max_tokens"
+        truncated = False
         blocks = data["content"]
         texts, calls = [], []
         for b in blocks:
             if b["type"] == "text":
                 texts.append(b["text"])
             elif b["type"] == "tool_use":
-                calls.append(tool_call(b["id"], b["name"], b["input"]))
+                if limited:
+                    truncated = True
+                else:
+                    calls.append(tool_call(b["id"], b["name"], b["input"]))
             elif b["type"] not in {"thinking", "redacted_thinking"}:
                 raise InvalidResponseError("Unsupported Anthropic content block")
         finish = data.get("stop_reason")
@@ -88,6 +93,9 @@ class AnthropicAdapter(Adapter):
             cached_input_tokens=cached,
             cache_write_tokens=written,
         )
-        return self.response(
-            data, self.assistant("".join(texts), calls, blocks), reason, tokens, finish
+        message = (
+            Message("assistant", "".join(texts))
+            if limited
+            else self.assistant("".join(texts), calls, blocks)
         )
+        return self.response(data, message, reason, tokens, finish, truncated_tool_calls=truncated)

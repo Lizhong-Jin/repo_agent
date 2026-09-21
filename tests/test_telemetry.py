@@ -91,7 +91,7 @@ def test_failure_still_logs_partial_usage_and_total_time(tmp_path, capsys, error
         Model(
             [
                 reply(
-                    calls=[ToolCall("r", "read_file", {"path": "missing"})],
+                    calls=[ToolCall("r", "read_file", {"reads": [{"path": "missing"}]})],
                     usage=Usage(input_tokens=20, output_tokens=4),
                 ),
                 error,
@@ -106,16 +106,16 @@ def test_failure_still_logs_partial_usage_and_total_time(tmp_path, capsys, error
     assert stats.status == status
     assert len(stats.model_calls) == 2
     assert stats.token_total("total_tokens") == (24, 1)
-    assert stats.tool_calls[0].error_code == "FILE_NOT_FOUND"
+    assert stats.tool_calls[0].error_code == "READ_FAILED"
     assert capsys.readouterr().out == ""
     output = tracer.text_path.read_text()
     assert "仅 1/2 次已知" in output
     assert "总耗时=" in output
-    assert "FILE_NOT_FOUND" in output
+    assert "READ_FAILED" in output
     assert "思考=未返回" in output
 
 
-@pytest.mark.parametrize("finish,status", [("tool_calls", "max_steps"), ("length", "stopped")])
+@pytest.mark.parametrize("finish,status", [("tool_calls", "max_steps"), ("length", "max_steps")])
 def test_stopped_tasks_emit_final_statistics(finish, status):
     events = []
     calls = [ToolCall("unknown", "unknown_tool", {})] if finish == "tool_calls" else []
@@ -137,7 +137,7 @@ def test_tool_interrupt_and_broken_logger_do_not_lose_file_operation(tmp_path):
             raise KeyboardInterrupt
 
     runtime = AgentRuntime(
-        Model([reply(calls=[ToolCall("r", "read_file", {"path": "a"})])]),
+        Model([reply(calls=[ToolCall("r", "read_file", {"reads": [{"path": "a"}]})])]),
         [InterruptedReader(tmp_path)],
     )
     with pytest.raises(KeyboardInterrupt):
@@ -172,7 +172,9 @@ def test_zero_usage_is_reported_as_zero(capsys, tracer):
     snapshot = deepcopy(result.stats)
     assert snapshot.token_total("total_tokens") == (0, 1)
     assert capsys.readouterr().out == ""
-    assert "输入=0，输出=0，合计=0" in tracer.text_path.read_text().replace(",", "，").replace(" ", "")
+    assert "输入=0，输出=0，合计=0" in tracer.text_path.read_text().replace(",", "，").replace(
+        " ", ""
+    )
 
 
 def test_structured_trace_ids_usage_permissions_and_session_summary(tmp_path, capsys):
@@ -249,17 +251,34 @@ def test_disk_write_failure_does_not_repeat_file_operations(tmp_path, capsys):
 def test_trace_exposes_command_exit_without_leaking_output(tracer):
     from agent.Tracing import RunTrace, ToolCallRecord
     from tools import ToolResult
+
     call = ToolCall("command-id", "run_command", {"command": ["test"]})
     record = ToolCallRecord(1, call.id, call.name, {})
-    message = ToolResult(True, {"exit_code": 2, "timed_out": False,
-                                "cleanup_error": None, "stderr": "private output"}).to_message(call)
+    message = ToolResult(
+        True,
+        {"exit_code": 2, "timed_out": False, "cleanup_error": None, "stderr": "private output"},
+    ).to_message(call)
     RunTrace.tool_result(record, message)
     assert record.status == "success"  # Invocation succeeded; the command exited nonzero.
     assert record.exit_code == 2
     assert "private output" not in str(record)
     from agent.Tracing import RunStats
+
     stats = RunStats(1, tool_calls=[record])
     tracer("tool_end", stats)
     event = json.loads(tracer.jsonl_path.read_text().splitlines()[-1])
     assert event["tool_call"]["exit_code"] == 2
     assert "命令退出码=2" in tracer.text_path.read_text()
+
+
+def test_per_call_text_log_includes_reasoning_subtotal(tracer):
+    runtime = AgentRuntime(
+        Model([reply(usage=Usage(input_tokens=6687, output_tokens=48304, reasoning_tokens=44963))]),
+        on_event=tracer,
+    )
+    runtime.run("task")
+    line = next(
+        line for line in tracer.text_path.read_text().splitlines() if "模型调用 #1 success" in line
+    )
+    assert "输入=6687, 输出=48304, 其中思考=44963" in line
+    assert runtime.last_stats.token_total("total_tokens")[0] == 54991

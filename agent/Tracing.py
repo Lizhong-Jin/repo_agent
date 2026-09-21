@@ -21,6 +21,9 @@ class ModelCallRecord:
     step: int
     first_data_seconds: float | None = None
     first_text_seconds: float | None = None
+    first_thinking_seconds: float | None = None
+    thinking_characters: int = 0
+    thinking_available: bool | None = None
     first_display_seconds: float | None = None
     response_seconds: float | None = None
     thinking: dict | None = None
@@ -54,6 +57,8 @@ class RunStats:
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     skill_loads: list[dict[str, str]] = field(default_factory=list)
     error_type: str | None = None
+    recoveries: list[dict[str, Any]] = field(default_factory=list)
+    stop_reason: str | None = None
 
     task_id: str = field(default_factory=lambda: uuid4().hex)
     trace_error: str | None = None
@@ -124,7 +129,9 @@ def format_event(event: str, stats: RunStats) -> str:
             usage = call.usage
             counters = (
                 f"输入={usage.input_tokens if usage.input_tokens is not None else '未返回'}, "
-                f"输出={usage.output_tokens if usage.output_tokens is not None else '未返回'}"
+                f"输出={usage.output_tokens if usage.output_tokens is not None else '未返回'}, "
+                "其中思考="
+                f"{usage.reasoning_tokens if usage.reasoning_tokens is not None else '未返回'}"
                 if usage
                 else "用量未返回"
             )
@@ -132,6 +139,7 @@ def format_event(event: str, stats: RunStats) -> str:
                 f"模型调用 #{call.step} {call.status}，耗时 {call.elapsed_seconds:.3f}s, "
                 f"tokens: {counters}，结束原因: {call.finish_reason or call.error_type or '未知'}"
                 f"，首行数据={call.first_data_seconds}，首字={call.first_text_seconds}"
+                f"，首段思考={call.first_thinking_seconds}，思考字符={call.thinking_characters}"
                 f"，首次显示={call.first_display_seconds}，响应总时长={call.response_seconds}"
                 f"，思考设置={json.dumps(call.thinking, ensure_ascii=False)}"
             )
@@ -164,6 +172,10 @@ def format_event(event: str, stats: RunStats) -> str:
         )
         if stats.error_type:
             text += f"，异常类型={stats.error_type}"
+    if event == "recovery":
+        text = stats.recoveries[-1]["message"]
+    elif event == "task_end" and stats.stop_reason:
+        text += f"，停止原因：{stats.stop_reason}"
     if event == "task_start":
         record = f"\n{prefix} {text}"
     else:
@@ -189,6 +201,23 @@ class RunTrace:
             except Exception as error:
                 # Never replay completed file operations because their logger failed.
                 self.stats.trace_error = type(error).__name__
+
+    def recovery(self, step: int, kind: str, attempt: int, output_limit: int) -> None:
+        action = (
+            "工具参数截断，本轮工具均未执行，正在重新生成"
+            if kind == "tools"
+            else "文字截断，正在续写"
+        )
+        self.stats.recoveries.append(
+            {
+                "step": step,
+                "kind": kind,
+                "attempt": attempt,
+                "max_output_tokens": output_limit,
+                "message": f"{action}（恢复第 {attempt} 次，输出上限 {output_limit} tokens）",
+            }
+        )
+        self.emit("recovery")
 
     def skill_loaded(self, skill, invocation: str) -> None:
         record = {
@@ -297,14 +326,20 @@ class Tracer:
         provider: str = "",
         model: str = "",
         workspace: str = "",
+        session_store=None,
     ):
         self.session_id = session_id or f"session_{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:12]}"
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,120}", self.session_id):
             raise ValueError("Invalid trace session ID")
+        self.run_id = self.session_id
+        self.store = session_store
+        if session_store is not None:
+            self.session_id = session_store.id
         directory = Path(directory)
+        self.directory = directory
         directory.mkdir(parents=True, exist_ok=True)
-        self.text_path = directory / f"{self.session_id}.trace.log"
-        self.jsonl_path = directory / f"{self.session_id}.trace.jsonl"
+        self.text_path = directory / f"{self.run_id}.trace.log"
+        self.jsonl_path = directory / f"{self.run_id}.trace.jsonl"
         self.metadata = {"provider": provider, "model": model, "workspace": workspace}
         self.error: str | None = None
         self._files = []
@@ -316,9 +351,16 @@ class Tracer:
             for path in (self.text_path, self.jsonl_path):
                 fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 self._files.append(os.fdopen(fd, "w", encoding="utf-8"))
+            if self.store is not None:
+                from .session import open_log
+                catalog = self.store.catalog
+                catalog.log_directory(self.session_id, create=True)
+                for kind in ("trace", "jsonl"):
+                    self._files.append(open_log(catalog.log_path(self.session_id, kind), write=True))
             self._write(
                 {"event": "session_start", **self.metadata},
-                f"会话开始: {self.session_id}, {json.dumps(self.metadata, ensure_ascii=False)}",
+                f"会话开始: {self.session_id}, run_id={self.run_id}, "
+                f"{json.dumps(self.metadata, ensure_ascii=False)}",
             )
         except BaseException:
             for output in self._files:
@@ -333,20 +375,43 @@ class Tracer:
             "schema_version": 1,
             "timestamp": datetime.now().astimezone().isoformat(),
             "session_id": self.session_id,
+            "run_id": self.run_id,
             **data,
         }
         try:
-            self._files[0].write(text + "\n")
-            self._files[0].flush()
-            self._files[1].write(json.dumps(record, ensure_ascii=False) + "\n")
-            self._files[1].flush()
+            for position, output in enumerate(self._files):
+                output.write((text if position % 2 == 0 else
+                              json.dumps(record, ensure_ascii=False)) + "\n")
+                output.flush()
         except OSError as error:
             self.error = type(error).__name__
+
+    def switch_session(self):
+        """Rotate this writer in place so Runtime and ModelControl keep their sink."""
+        self.__exit__(None, None, None)
+        old_error = self.error or getattr(self, "previous_error", None)
+        try:
+            self.__init__(self.directory, session_store=self.store, **self.metadata)
+            self.__enter__()
+        except (OSError, ValueError) as error:
+            self.error = type(error).__name__
+        if old_error and self.error is None:
+            self.previous_error = old_error
+
+    def set_model(self, provider: str, model: str) -> None:
+        self.metadata.update(provider=provider, model=model)
+        self._write(
+            {"event": "model_changed", "provider": provider, "model": model},
+            f"切换模型：{provider} / {model}",
+        )
 
     def __call__(self, event: str, stats: RunStats) -> None:
         record = {"event": event, "task_id": stats.task_id, "task_number": stats.task_number}
         if event.startswith("model_"):
+            record.update(provider=self.metadata["provider"], model=self.metadata["model"])
             record["model_call"] = asdict(stats.model_calls[-1])
+        elif event == "recovery":
+            record["recovery"] = stats.recoveries[-1]
         elif event == "skill_loaded":
             record["skill"] = stats.skill_loads[-1]
         elif event.startswith("tool_"):
@@ -359,6 +424,8 @@ class Tracer:
                 tool_calls=len(stats.tool_calls),
                 tool_failures=sum(c.status != "success" for c in stats.tool_calls),
                 skill_loads=stats.skill_loads,
+                recoveries=stats.recoveries,
+                stop_reason=stats.stop_reason,
                 error_type=stats.error_type,
                 usage=_usage_summary(stats),
             )
@@ -407,3 +474,4 @@ class Tracer:
                 output.close()
             except OSError as close_error:
                 self.error = type(close_error).__name__
+        self._files = []

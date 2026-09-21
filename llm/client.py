@@ -27,9 +27,12 @@ from .errors import (
     RateLimitError,
 )
 from .events import RequestEvents
+from .model_limits import fetch_context_limit
 from .providers import get_provider
 from .schemas import LLMRequest, LLMResponse
 from .streaming import StreamAssembler
+from .thinking_profiles import thinking_profile
+from .visible_thinking import has_thinking_state, request_thinking_summary, visible_thinking
 
 
 @dataclass(frozen=True)
@@ -44,6 +47,7 @@ class LLMConfig:
     max_retry_delay: float = 30.0
 
     stream: bool = True
+    include_thinking: bool = False
     connect_timeout: float = 10.0
     write_timeout: float = 30.0
     pool_timeout: float = 10.0
@@ -58,6 +62,8 @@ class LLMConfig:
             value = getattr(self, key)
             if not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
                 raise ConfigurationError(f"{key} must be a finite non-negative number")
+        if type(self.include_thinking) is not bool:
+            raise ConfigurationError("include_thinking must be a boolean")
         if type(self.stream) is not bool:
             raise ConfigurationError("stream must be a boolean")
         for key in ("timeout", "connect_timeout", "write_timeout", "pool_timeout"):
@@ -97,7 +103,8 @@ class _ClientCore:
             raise ConfigurationError(
                 "base_url must be HTTP(S), without credentials, query or fragment"
             )
-        self.url = str(url).rstrip("/") + self.adapter.path()
+        self.base_url = str(url).rstrip("/")
+        self.url = self.base_url + self.adapter.path()
         if config.stream and self.provider.api_format == "gemini":
             self.url = self.url.removesuffix(":generateContent") + ":streamGenerateContent?alt=sse"
         self._timeout = httpx.Timeout(
@@ -117,6 +124,12 @@ class _ClientCore:
     def _body(self, request: LLMRequest) -> dict:
         request.validate()
         body = self.adapter.encode(request)
+        if self.config.include_thinking:
+            request_thinking_summary(
+                body,
+                self.provider.api_format,
+                thinking_profile(self.provider.name, self.config.model, base_url=self.base_url),
+            )
         if self.provider.api_format != "gemini":
             body["stream"] = self.config.stream
         return body
@@ -158,7 +171,7 @@ class _ClientCore:
             self.config.max_retry_delay,
         )
 
-    def _decode(self, response: httpx.Response) -> LLMResponse:
+    def _decode(self, response: httpx.Response, events=None) -> LLMResponse:
         try:
             data = response.json()
             if not isinstance(data, dict):
@@ -172,7 +185,11 @@ class _ClientCore:
                 raise ProviderError(
                     "Provider returned an application error", provider=self.provider.name
                 )
-            return self.adapter.decode(data)
+            result = self.adapter.decode(data)
+            if events is not None and not events.first_thinking:
+                for text in visible_thinking(self.provider.api_format, data):
+                    events.thinking(text)
+            return result
         except ProviderError:
             raise
         except (
@@ -195,6 +212,21 @@ class LLMClient(_ClientCore):
         super().__init__(config)
         self._owned = http_client is None
         self._http = http_client if http_client is not None else httpx.Client()
+        self._context_limit_loaded = False
+        self._context_limit = None
+
+    def get_context_limit(self, *, refresh=False):
+        """Cache optional metadata per client, including unsupported/failed lookups."""
+        if refresh or not self._context_limit_loaded:
+            self._context_limit = fetch_context_limit(
+                self._http,
+                self.base_url,
+                self._headers,
+                self.provider.api_format,
+                self.config.model,
+            )
+            self._context_limit_loaded = True
+        return self._context_limit
 
     def generate(self, request: LLMRequest) -> LLMResponse:
         return self.generate_with_events(request)
@@ -203,10 +235,16 @@ class LLMClient(_ClientCore):
         events = RequestEvents(on_event)
         try:
             result = self._generate(request, events)
+            if not events.first_thinking and (
+                (result.usage and result.usage.reasoning_tokens)
+                or has_thinking_state(self.provider.api_format, result.message.provider_state)
+            ):
+                events.emit("thinking_unavailable")
             if not events.first_text:
                 events.text(result.text)
             return result
         finally:
+            events.end_thinking()
             events.emit("end")
 
     def _generate(self, request: LLMRequest, events: RequestEvents) -> LLMResponse:
@@ -224,7 +262,12 @@ class LLMClient(_ClientCore):
                     error = self._error(response)
                     if error is None:
                         if "text/event-stream" in response.headers.get("content-type", ""):
-                            assembler = StreamAssembler(self.provider.api_format, events.text)
+                            assembler = StreamAssembler(
+                                self.provider.api_format,
+                                events.text,
+                                events.thinking,
+                                events.end_thinking,
+                            )
                             for line in response.iter_lines():
                                 events.data()
                                 assembler.feed(line)
@@ -233,7 +276,7 @@ class LLMClient(_ClientCore):
                             return self._decode(httpx.Response(200, json=assembler.finish()))
                         response.read()
                         events.data()
-                        return self._decode(response)
+                        return self._decode(response, events)
             except httpx.TimeoutException as exc:
                 raise LLMTimeoutError(
                     f"Model {type(exc).__name__}: connection or data wait timed out; not retried",
@@ -272,10 +315,16 @@ class AsyncLLMClient(_ClientCore):
         events = RequestEvents(on_event)
         try:
             result = await self._generate(request, events)
+            if not events.first_thinking and (
+                (result.usage and result.usage.reasoning_tokens)
+                or has_thinking_state(self.provider.api_format, result.message.provider_state)
+            ):
+                events.emit("thinking_unavailable")
             if not events.first_text:
                 events.text(result.text)
             return result
         finally:
+            events.end_thinking()
             events.emit("end")
 
     async def _generate(self, request: LLMRequest, events: RequestEvents) -> LLMResponse:
@@ -293,7 +342,12 @@ class AsyncLLMClient(_ClientCore):
                     error = self._error(response)
                     if error is None:
                         if "text/event-stream" in response.headers.get("content-type", ""):
-                            assembler = StreamAssembler(self.provider.api_format, events.text)
+                            assembler = StreamAssembler(
+                                self.provider.api_format,
+                                events.text,
+                                events.thinking,
+                                events.end_thinking,
+                            )
                             async for line in response.aiter_lines():
                                 events.data()
                                 assembler.feed(line)
@@ -302,7 +356,7 @@ class AsyncLLMClient(_ClientCore):
                             return self._decode(httpx.Response(200, json=assembler.finish()))
                         await response.aread()
                         events.data()
-                        return self._decode(response)
+                        return self._decode(response, events)
             except httpx.TimeoutException as exc:
                 raise LLMTimeoutError(
                     f"Model {type(exc).__name__}: connection or data wait timed out; not retried",

@@ -149,9 +149,10 @@ def test_normal_cli_uses_detected_profile_without_extra_flags(
 ):
     from cli import main as cli
 
+    monkeypatch.setattr("llm.LLMClient.get_context_limit", lambda self, **kw: None)
     policies = []
     monkeypatch.setenv("DEEPSEEK_API_KEY", "mock-key")
-    monkeypatch.setattr("sys.argv", ["repo-agent", "--model", "mock", "--root", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["repo-agent", "--sandbox", "docker", "--model", "mock", "--root", str(tmp_path)])
     monkeypatch.setattr(
         cli,
         "detect_environment",
@@ -161,7 +162,10 @@ def test_normal_cli_uses_detected_profile_without_extra_flags(
 
     def session(root, policy, **kwargs):
         policies.append(policy)
-        return SimpleNamespace(workspace=root, directory=root, tools=lambda: [])
+        def tools(*, writeback_mode):
+            assert writeback_mode == "manual"
+            return []
+        return SimpleNamespace(workspace=root, directory=root, tools=tools)
 
     monkeypatch.setattr(cli, "SandboxSession", session)
     monkeypatch.setattr(cli, "run_interactive", lambda *a, **kw: None)

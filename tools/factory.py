@@ -1,14 +1,16 @@
 """Build the default tool set for a workspace."""
 
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from .base import Tool
 from .execute import (
+    GetExecutionEnvironmentTool,
     RunCommandTool,
     RunPythonTool,
 )
 from .filesystem import (
-    BatchEditFileTool,
     DeleteFileTool,
     EditFileTool,
     FindFileTool,
@@ -25,7 +27,12 @@ from .git_tools import (
     GitStatusTool,
 )
 from .lsp_config import LspRegistry, default_lsp_registry
-from .semantic import GetSymbolsTool
+from .semantic import (
+    FindReferencesTool,
+    GetDiagnosticsTool,
+    GetSymbolsTool,
+    GoToDefinitionsTool,
+)
 
 
 def create_default_tools(
@@ -35,20 +42,27 @@ def create_default_tools(
     lsp_registry: LspRegistry | None = None,
     command_timeout_seconds: int = 120,
     python_timeout_seconds: int = 30,
+    execution_context: Mapping[str, Any] | None = None,
 ) -> list[Tool]:
     """Commands are exposed only by callers providing an isolated environment.
 
     isolated_execution is a trusted application switch, never a model argument.
-    It does not establish isolation itself; only the Docker worker enables it.
+    It does not establish isolation itself; Docker and native workers enable it.
     """
     if type(isolated_execution) is not bool:
         raise ValueError("isolated_execution must be a boolean")
     return [
+        GetExecutionEnvironmentTool(
+            workspace_root,
+            execution_allowed=isolated_execution,
+            execution_context=execution_context,
+            command_timeout_seconds=command_timeout_seconds,
+            python_timeout_seconds=python_timeout_seconds,
+        ),
         # filesystem tools
         ReadFileTool(workspace_root),
         WriteFileTool(workspace_root),
         EditFileTool(workspace_root),
-        BatchEditFileTool(workspace_root),
         ListFileTool(workspace_root),
         FindFileTool(workspace_root),
         SearchFilesTool(workspace_root),
@@ -72,6 +86,27 @@ def create_default_tools(
                     max_timeout_seconds=python_timeout_seconds,
                 ),
                 GetSymbolsTool(
+                    workspace_root,
+                    execution_allowed=True,
+                    lsp_registry=lsp_registry
+                    if lsp_registry is not None
+                    else default_lsp_registry(),
+                ),
+                GoToDefinitionsTool(
+                    workspace_root,
+                    execution_allowed=True,
+                    lsp_registry=lsp_registry
+                    if lsp_registry is not None
+                    else default_lsp_registry(),
+                ),
+                FindReferencesTool(
+                    workspace_root,
+                    execution_allowed=True,
+                    lsp_registry=lsp_registry
+                    if lsp_registry is not None
+                    else default_lsp_registry(),
+                ),
+                GetDiagnosticsTool(
                     workspace_root,
                     execution_allowed=True,
                     lsp_registry=lsp_registry

@@ -10,11 +10,12 @@ requires-python = ">=3.11"
 dependencies = ["httpx>=0.27,<1", "prompt_toolkit>=3.0.50,<4", "PyYAML>=6,<7"]
 
 [project.optional-dependencies]
-lsp = ["python-lsp-server>=1.12,<2"]
+lsp = ["python-lsp-server[pyflakes]>=1.12,<2"]
 dev = ["pytest>=8,<10", "ruff>=0.9,<1"]
 
 [project.scripts]
 repo-agent = "cli.main:main"
+repo-agent-build-sandbox = "sandbox.build:main"
 
 [tool.setuptools.packages.find]
 include = ["llm*", "tools*", "agent*", "cli*", "sandbox*"]

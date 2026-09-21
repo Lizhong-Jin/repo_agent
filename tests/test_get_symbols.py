@@ -171,14 +171,23 @@ def test_invalid_content(tool, raw, code):
     assert peer.text is None
 
 
-def test_limits_and_changed_file(tool, monkeypatch):
+def test_file_size_limit_rejected_before_server(tool):
     instance, peer = tool
     instance.max_file_bytes = 1
-    assert instance.execute({"path": "example.py"}).error_code == "FILE_TOO_LARGE"
-    instance.max_file_bytes = 1000
+    result = instance.execute({"path": "example.py"})
+    assert not result.success
+    assert result.error_code == "FILE_TOO_LARGE"
+    assert peer.text is None
+
+
+def test_output_size_limit(tool):
+    instance, _ = tool
     instance.max_output_chars = 1
     assert instance.execute({"path": "example.py"}).error_code == "OUTPUT_TOO_LARGE"
-    instance.max_output_chars = 20000
+
+
+def test_changed_file_rejects_stale_symbols(tool, monkeypatch):
+    instance, peer = tool
     original = peer.request
 
     def change(*args):
@@ -186,7 +195,11 @@ def test_limits_and_changed_file(tool, monkeypatch):
         return original(*args)
 
     monkeypatch.setattr(peer, "request", change)
-    assert instance.execute({"path": "example.py"}).error_code == "FILE_CHANGED"
+    result = instance.execute({"path": "example.py"})
+    assert not result.success
+    assert result.error_code == "FILE_CHANGED"
+    assert result.data == {}
+    assert peer.closed
 
 
 @pytest.mark.parametrize(

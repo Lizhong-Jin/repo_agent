@@ -116,6 +116,9 @@ def test_tool_preserves_result_contract_when_delegating(tmp_path, monkeypatch):
             duration_ms=7250,
             stdout_truncated=True,
             stderr_truncated=False,
+            status="timed_out",
+            cleanup_status="unknown",
+            output_complete=False,
         )
 
     monkeypatch.setattr(tool.runner, "run", run)
@@ -135,4 +138,10 @@ def test_tool_preserves_result_contract_when_delegating(tmp_path, monkeypatch):
         "duration_ms": 7250,
         "stdout_truncated": True,
         "stderr_truncated": False,
+        "status": "timed_out",
+        "cleanup_status": "unknown",
+        "output_complete": False,
+        "pid": None,
+        "process_group_id": None,
+        "cleanup_diagnostics": [],
     }

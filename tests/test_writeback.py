@@ -36,6 +36,8 @@ def standard_cli_environment(monkeypatch):
     from cli import main as cli
     from sandbox.environment import DockerEnvironment
 
+    monkeypatch.setattr("llm.LLMClient.get_context_limit", lambda self, **kw: None)
+
     monkeypatch.setattr(
         cli, "detect_environment", lambda **kw: DockerEnvironment("standard", "test", "x86_64")
     )
@@ -162,26 +164,25 @@ def test_interrupted_task_does_not_leak_into_later_completed_task(session, monke
             self.count += 1
             if self.count == 1:
                 raise KeyboardInterrupt
-            return SimpleNamespace(status="completed", stats=RunStats(2), text="hi", history=())
+            return SimpleNamespace(
+                status="completed", stats=RunStats(2), text="hi", undisplayed_text="hi", history=()
+            )
 
     run_interactive(Runtime(), sandbox=session, writeback="on-success")
     assert (session.root / "a").read_text() == "before"
 
 
-def test_project_template_adds_mode_without_overwriting_user_setting(tmp_path):
-    from cli.init_project import initialize_project
+def test_user_template_preserves_writeback_setting_on_reinstall(tmp_path, monkeypatch):
+    from cli.setup import configure_user
 
     root = Path(__file__).resolve().parents[1]
-    initialize_project(tmp_path, root)
-    config = tmp_path / ".env"
-    assert "AGENT_SANDBOX_WRITEBACK=manual" in config.read_text()
-    config.write_text(
-        config.read_text().replace(
-            "AGENT_SANDBOX_WRITEBACK=manual", "AGENT_SANDBOX_WRITEBACK=on-success"
-        )
-    )
-    initialize_project(tmp_path, root)
-    assert "AGENT_SANDBOX_WRITEBACK=on-success" in config.read_text()
+    monkeypatch.setenv("AGENT_CONFIG_DIR", str(tmp_path))
+    config = configure_user(root)
+    assert config.read_bytes() == (root / ".env.example").read_bytes()
+    config.write_text("AGENT_SANDBOX_WRITEBACK=on-success\n# user's settings\n")
+    before = config.read_bytes()
+    configure_user(root)
+    assert config.read_bytes() == before
 
 
 @pytest.mark.parametrize(
@@ -199,7 +200,7 @@ def test_cli_config_precedence(
 
     monkeypatch.setenv("AGENT_SANDBOX_WRITEBACK", env)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "mock")
-    monkeypatch.setattr("sys.argv", ["repo-agent", "--model", "test", *flags])
+    monkeypatch.setattr("sys.argv", ["repo-agent", "--sandbox", "docker", "--model", "test", *flags])
     monkeypatch.setattr(cli, "SandboxSession", lambda *a, **kw: session)
     seen = []
     monkeypatch.setattr(cli, "run_interactive", lambda *a, **kw: seen.append(kw["writeback"]))
@@ -211,7 +212,7 @@ def test_invalid_env_mode_fails_before_docker(monkeypatch):
     from cli.main import main
 
     monkeypatch.setenv("AGENT_SANDBOX_WRITEBACK", "invalid")
-    monkeypatch.setattr("sys.argv", ["repo-agent"])
+    monkeypatch.setattr("sys.argv", ["repo-agent", "--sandbox", "docker"])
     with pytest.raises(SystemExit) as error:
         main()
     assert error.value.code == 2
@@ -263,6 +264,8 @@ def test_single_task_cli_applies_after_run_and_signals_failure(
         [
             "repo-agent",
             "task",
+            "--sandbox",
+            "docker",
             "--model",
             "test",
             "--root",
@@ -274,13 +277,19 @@ def test_single_task_cli_applies_after_run_and_signals_failure(
     monkeypatch.setattr(cli, "SandboxSession", lambda *a, **kw: session)
     monkeypatch.setattr(cli, "LLMClient", lambda *a: nullcontext(object()))
 
-    def run(task):
+    def run(task, *, history=()):
+        assert not history
         assert task == "task"
         assert (session.root / "a").read_text() == "before"
         record(session, 1 if failed else 0)
-        return SimpleNamespace(status="completed", stats=RunStats(1), text="done")
+        return SimpleNamespace(
+            status="completed", stats=RunStats(1), text="done", undisplayed_text="done",
+            history=(), response=SimpleNamespace(text="done"),
+        )
 
-    monkeypatch.setattr(cli, "AgentRuntime", lambda *a, **kw: SimpleNamespace(run=run))
+    monkeypatch.setattr(cli, "AgentRuntime", lambda *a, **kw: SimpleNamespace(
+        run=run, llm=a[0], _task_number=0, estimate_context_tokens=lambda history=(): 0,
+    ))
     if failed:
         with pytest.raises(SystemExit) as error:
             cli.main()
@@ -303,7 +312,11 @@ def test_interactive_applies_between_tasks(session, monkeypatch):
                 assert (session.root / "a").read_text() == "after"
                 (session.workspace / "a").write_text("second")
             return SimpleNamespace(
-                status="completed", stats=RunStats(self.count), text="done", history=()
+                status="completed",
+                stats=RunStats(self.count),
+                text="done",
+                undisplayed_text="done",
+                history=(),
             )
 
     run_interactive(Runtime(), sandbox=session, writeback="on-success")
@@ -352,7 +365,13 @@ def test_failed_read_only_task_does_not_poison_next_interactive_edit(session, mo
                 record(session, 2)
                 raise LLMTimeoutError("timeout")
             (session.workspace / "a").write_text("edited")
-            return SimpleNamespace(status="completed", stats=RunStats(2), text="done", history=())
+            return SimpleNamespace(
+                status="completed",
+                stats=RunStats(2),
+                text="done",
+                undisplayed_text="done",
+                history=(),
+            )
 
     run_interactive(Runtime(), sandbox=session, writeback="on-success")
     assert (session.root / "a").read_text() == "edited"
@@ -506,7 +525,7 @@ def test_cli_verification_config_precedence(
 
     monkeypatch.setenv("AGENT_SANDBOX_VERIFY_COMMAND", '["python", "check.py"]')
     monkeypatch.setenv("DEEPSEEK_API_KEY", "mock")
-    monkeypatch.setattr("sys.argv", ["repo-agent", "--model", "test", *flags])
+    monkeypatch.setattr("sys.argv", ["repo-agent", "--sandbox", "docker", "--model", "test", *flags])
     seen = []
 
     def construct(*args, **kwargs):

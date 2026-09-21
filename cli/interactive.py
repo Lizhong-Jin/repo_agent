@@ -3,13 +3,20 @@
 from agent import AgentRuntime, RunResult
 from llm import LLMError, Message
 
+from .sessions_command import new_name, ui_command
 from .live import SessionInput
+from .thinking_display import ThinkingDisplay
 
 HELP = (
-    "输入任务后按回车。/help 查看帮助，/clear 清空上下文，/exit、/quit 或 Ctrl+D 退出。"
+    "输入任务后按回车。/help 查看帮助，/clear 清空上下文，/new [名称] 启动新会话。"
+    "/rename 名称 改名；/sessions 列出会话；/logs [序号] --tail 100 查看日志。"
+    "/exit、/quit 或 Ctrl+D 退出并保存；下次启动默认恢复，--new-session 启动全新会话。"
+    "/model 选择供应商、模型和 API Key，保存并切换。"
     "/skills 查看技能；任务开头用 $技能名 显式指定，也可由模型按需选择。"
-    "/context [窗口上限token数] 查看上下文占用或设置模型上限。"
-    "/thinking [auto|off|on|adaptive] [强度] [budget=整数]；Shift+Tab 在输入时切换思考预设。"
+    "/context [auto|窗口上限token数] 查看占用、自动获取或手动设置上限。"
+    "/thinking list 查看有效档位；/thinking low 等直接切换，history on 保留历史思考，reset 重置。"
+    "Shift+Tab 按模型切换并记住偏好；Ctrl+T 展开/折叠思考。"
+    "/thinking display collapsed|expanded|hidden 设置并保存显示偏好。"
     "Ctrl+C 取消当前输入或中断任务；执行中要退出可先按 Ctrl+C，再输入 /exit。"
 )
 RESET_NOTICE = "上下文已清空；已经执行的文件操作不会撤销。"
@@ -23,36 +30,54 @@ def describe_skills(runtime: AgentRuntime) -> str:
 
 
 def display_result(result: RunResult) -> None:
-    displayed = bool(
-        result.stats
-        and result.stats.model_calls
-        and result.stats.model_calls[-1].first_display_seconds is not None
-    )
-    if result.text and not displayed:
-        print(result.text)
+    if result.undisplayed_text:
+        print(result.undisplayed_text)
     if result.status != "completed":
-        reason = "达到轮数上限" if result.status == "max_steps" else result.response.finish_reason
-        print(f"任务尚未正常完成：{reason}")
+        print(result.notice or f"任务尚未正常完成：{result.status}")
 
 
 def run_interactive(
-    runtime: AgentRuntime, *, sandbox=None, writeback="manual", thinking=None, status=None
+    runtime: AgentRuntime,
+    *,
+    sandbox=None,
+    writeback="manual",
+    thinking=None,
+    status=None,
+    models=None,
+    display=None,
+    conversation=None,
 ) -> None:
-    """Keep successful histories in memory. Discard uncertain turns after failure/cancellation."""
+    """Keep completed/pausable histories; discard uncertain failures and cancellations."""
     import sys
 
+    display = display or ThinkingDisplay()
     if sys.stdin.isatty() and sys.stdout.isatty():
         from .tui import ConversationUI
 
         ConversationUI(
-            runtime, sandbox=sandbox, writeback=writeback, thinking=thinking, status=status
+            runtime,
+            sandbox=sandbox,
+            writeback=writeback,
+            thinking=thinking,
+            status=status,
+            models=models,
+            display=display,
+            conversation=conversation,
         ).run()
         return
-    history: tuple[Message, ...] = ()
+    history: tuple[Message, ...] = conversation.history if conversation else ()
+    if conversation:
+        text = conversation.transcript.render(display.mode)[0]
+        if text:
+            print(text)
     reader = SessionInput(thinking, status=status)
+    if models:
+        print(models.describe())
     if thinking:
         print(thinking.describe())
     while True:
+        if conversation:
+            print(f"当前会话：{conversation.label}")
         if status and reader.session is None:
             print(status.describe())
         print("\n" + INPUT_TOP, flush=True)
@@ -87,27 +112,60 @@ def run_interactive(
                 print("/diff 查看副本变更；/apply 显式回写。退出后副本会保留。")
             print(HELP)
             continue
+        if task.split()[0] in {"/rename", "/sessions", "/logs"} and conversation:
+            try:
+                print(ui_command(conversation, task))
+            except (OSError, ValueError) as error:
+                print(str(error))
+            continue
+        if task.split()[0] == "/new" and conversation:
+            try:
+                print(conversation.new_session(name=new_name(task)))
+                history = conversation.history
+            except (OSError, ValueError) as error:
+                print(str(error))
+            continue
         if task == "/clear":
             history = ()
             if status:
                 status.reset_context()
+            if conversation:
+                conversation.clear()
             print(RESET_NOTICE)
             continue
         if task == "/skills":
             print(describe_skills(runtime))
             continue
+        if task == "/model" and models:
+            from .models import prompt_model
+
+            try:
+                selection = prompt_model(models.wizard())
+                print(models.switch(selection))
+                history = ()
+                if conversation:
+                    conversation.clear()
+            except (KeyboardInterrupt, EOFError):
+                print("模型切换已取消，原模型和上下文保留。")
+            except (LLMError, ValueError, OSError) as error:
+                print(f"模型未切换：{error}")
+            continue
         if task.split()[0] == "/context" and status:
             try:
                 print(status.context_command(task))
-            except (ValueError, LLMError) as error:
+            except (ValueError, OSError, LLMError) as error:
+                print(f"设置未变更：{error}")
+            continue
+        if task.split()[:2] == ["/thinking", "display"]:
+            try:
+                print(display.command(task))
+            except (LLMError, ValueError, OSError) as error:
                 print(f"设置未变更：{error}")
             continue
         if task.split()[0] == "/thinking" and thinking:
             try:
-                thinking.command(task)
-                print(thinking.describe())
-                print("会话设置已更新，下一次请求生效；模型是否支持以服务端为准。")
-            except (LLMError, ValueError) as error:
+                print(thinking.command(task))
+            except (LLMError, ValueError, OSError) as error:
                 print(f"设置未变更：{error}")
             continue
         if task.startswith("/"):
@@ -115,33 +173,38 @@ def run_interactive(
             continue
 
         try:
+            if conversation:
+                conversation.start_task(task)
             if sandbox is not None and writeback == "on-success":
                 sandbox.begin_task()
             result = runtime.run(task, history=history)
         except KeyboardInterrupt:
             if sandbox is not None:
                 sandbox.guard.needs_review = True
-            history = ()
+            history = conversation.fail_task() if conversation else ()
             if status:
                 status.reset_context()
-            print("\n当前任务已中断。" + RESET_NOTICE)
+            notice = "此前完整上下文已保留；继续前请检查文件现状。" if conversation else RESET_NOTICE
+            print("\n当前任务已中断。" + notice)
             continue
         except (LLMError, ValueError, OSError) as error:
             if sandbox is not None:
                 sandbox.guard.needs_review = True
-            history = ()
+            history = conversation.fail_task() if conversation else ()
             if status:
                 status.reset_context()
             print(f"{type(error).__name__}: {error}")
             stats = getattr(runtime, "last_stats", None)
             if stats and any(c.first_display_seconds is not None for c in stats.model_calls):
                 print("上方输出可能不完整，本次任务未完成。")
-            print(RESET_NOTICE)
+            print("此前完整上下文已保留；继续前请检查文件现状。" if conversation else RESET_NOTICE)
             continue
 
         display_result(result)
         finish_writeback(sandbox, result, writeback)
-        if result.status == "stopped":
+        if conversation:
+            history = conversation.finish_task(result)
+        elif result.status == "stopped" and not result.resumable:
             # A truncated/blocked reply may carry incomplete tool calls or provider state.
             history = ()
             if status:

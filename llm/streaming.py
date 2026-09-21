@@ -7,8 +7,12 @@ from .errors import InvalidResponseError, ProviderError
 
 
 class StreamAssembler:
-    def __init__(self, api_format: str, on_text=None) -> None:
+    def __init__(
+        self, api_format: str, on_text=None, on_thinking=None, on_thinking_end=None
+    ) -> None:
         self.on_text = on_text
+        self.on_thinking = on_thinking
+        self.on_thinking_end = on_thinking_end
         self.api_format = api_format
         self.data: dict = {}
         self.lines: list[str] = []
@@ -39,11 +43,76 @@ class StreamAssembler:
                     raise ProviderError("Provider returned a stream application error")
                 self._event(event)
                 fragments = self._text(event)
+                thoughts = self._thinking(event)
+                thinking_ended = self._thinking_ended(event)
             except (ValueError, KeyError, TypeError, IndexError, AttributeError):
                 raise InvalidResponseError("Invalid provider stream event") from None
-            if self.on_text:
-                for fragment in fragments:
-                    self.on_text(fragment)
+            if self.api_format == "gemini":
+                for candidate in event.get("candidates", []):
+                    for part in candidate.get("content", {}).get("parts", []):
+                        if "text" in part:
+                            callback = self.on_thinking if part.get("thought") else self.on_text
+                            if callback:
+                                callback(part["text"])
+                        elif "functionCall" in part and self.on_thinking_end:
+                            self.on_thinking_end()
+            else:
+                if self.on_thinking:
+                    for fragment in thoughts:
+                        if fragment:
+                            self.on_thinking(fragment)
+                if thinking_ended and self.on_thinking_end:
+                    self.on_thinking_end()
+                if self.on_text:
+                    for fragment in fragments:
+                        self.on_text(fragment)
+
+    def _thinking(self, event):
+        if self.api_format == "chat_completions":
+            choices = event.get("choices") or []
+            delta = choices[0].get("delta", {}) if choices else {}
+            # Never render opaque state/signatures; choose one compatible text field.
+            for name in ("reasoning_content", "reasoning", "reasoning_text"):
+                value = delta.get(name)
+                if isinstance(value, str) and value:
+                    return [value]
+        elif self.api_format == "responses":
+            if event.get("type") == "response.reasoning_summary_text.delta":
+                return [event.get("delta", "")]
+        elif self.api_format == "anthropic":
+            if event.get("type") == "content_block_start":
+                block = event["content_block"]
+                return [block.get("thinking", "")] if block["type"] == "thinking" else []
+            if event.get("type") == "content_block_delta":
+                delta = event["delta"]
+                return [delta.get("thinking", "")] if delta["type"] == "thinking_delta" else []
+        elif self.api_format == "gemini":
+            return [
+                part["text"]
+                for candidate in event.get("candidates", [])
+                for part in candidate.get("content", {}).get("parts", [])
+                if "text" in part and part.get("thought")
+            ]
+        return []
+
+    def _thinking_ended(self, event):
+        if self.api_format == "chat_completions":
+            choice = (event.get("choices") or [{}])[0]
+            return bool(choice.get("finish_reason") or choice.get("delta", {}).get("tool_calls"))
+        if self.api_format == "anthropic" and event.get("type") == "content_block_stop":
+            return self.blocks[event["index"]]["type"] == "thinking"
+        if self.api_format == "responses":
+            return event.get("type") in {
+                "response.reasoning_summary_text.done",
+                "response.output_item.done",
+            }
+        if self.api_format == "gemini":
+            return any(
+                "functionCall" in part
+                for candidate in event.get("candidates", [])
+                for part in candidate.get("content", {}).get("parts", [])
+            )
+        return False
 
     def _text(self, event):
         if self.api_format == "chat_completions":
@@ -144,8 +213,8 @@ class StreamAssembler:
                 if index not in self.open_blocks:
                     raise InvalidResponseError("Unexpected content block stop")
                 self.open_blocks.remove(index)
-                if index in self.arguments:
-                    self.blocks[index]["input"] = json.loads(self.arguments.pop(index))
+                # The finish reason arrives later. Defer JSON decoding so a
+                # token-limited tool block can be discarded instead of raising here.
             elif kind == "message_delta":
                 self.data.update(event["delta"])
                 self.data.setdefault("usage", {}).update(event.get("usage", {}))
@@ -182,7 +251,20 @@ class StreamAssembler:
             if self.calls:
                 choice["message"]["tool_calls"] = [self.calls[i] for i in sorted(self.calls)]
         elif self.api_format == "anthropic":
-            if self.open_blocks or self.arguments or not self.data.get("stop_reason"):
+            limited = self.data.get("stop_reason") == "max_tokens"
+            if not self.data.get("stop_reason") or (
+                self.open_blocks
+                and not (
+                    limited and all(self.blocks[i]["type"] == "tool_use" for i in self.open_blocks)
+                )
+            ):
                 raise InvalidResponseError("Stream contains unfinished content")
+            for index, arguments in self.arguments.items():
+                if self.blocks[index]["type"] != "tool_use":
+                    raise InvalidResponseError("Tool arguments outside a tool block")
+                try:
+                    self.blocks[index]["input"] = arguments if limited else json.loads(arguments)
+                except ValueError:
+                    raise InvalidResponseError("Invalid provider tool arguments") from None
             self.data["content"] = [self.blocks[i] for i in sorted(self.blocks)]
         return self.data

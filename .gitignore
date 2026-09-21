@@ -10,3 +10,10 @@ logs/
 .env
 .env.*
 !.env.example
+Project_Architecture.md
+
+# Local installation ownership journal
+.repo-agent-install.json
+
+.repo-agent-operation.lock
+.repo-agent-install-transaction/

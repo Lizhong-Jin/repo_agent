@@ -1,5 +1,5 @@
 from ..errors import InvalidResponseError, ProviderError
-from ..schemas import LLMRequest, LLMResponse, json_string
+from ..schemas import LLMRequest, LLMResponse, Message, json_string
 from .base import Adapter, count, tool_call, usage
 
 
@@ -73,6 +73,11 @@ class OpenAIResponsesAdapter(Adapter):
             raise ProviderError("OpenAI response failed", provider=self.provider)
         if status not in {"completed", "incomplete"}:
             raise InvalidResponseError("Expected a completed or incomplete synchronous response")
+        limited = (
+            status == "incomplete"
+            and (data.get("incomplete_details") or {}).get("reason") == "max_output_tokens"
+        )
+        truncated = False
         output = data["output"]
         texts, calls = [], []
         blocked = False
@@ -87,7 +92,10 @@ class OpenAIResponsesAdapter(Adapter):
                     else:
                         raise InvalidResponseError("Unsupported OpenAI message content")
             elif item["type"] == "function_call":
-                calls.append(tool_call(item["call_id"], item["name"], item["arguments"]))
+                if limited:
+                    truncated = True
+                else:
+                    calls.append(tool_call(item["call_id"], item["name"], item["arguments"]))
             elif item["type"] != "reasoning":
                 raise InvalidResponseError(
                     "Only text, reasoning and custom function tools are supported"
@@ -109,6 +117,9 @@ class OpenAIResponsesAdapter(Adapter):
             cached_input_tokens=count(u.get("input_tokens_details") or {}, "cached_tokens"),
             reasoning_tokens=count(u.get("output_tokens_details") or {}, "reasoning_tokens"),
         )
-        return self.response(
-            data, self.assistant("".join(texts), calls, output), reason, tokens, finish
+        message = (
+            Message("assistant", "".join(texts))
+            if limited
+            else self.assistant("".join(texts), calls, output)
         )
+        return self.response(data, message, reason, tokens, finish, truncated_tool_calls=truncated)

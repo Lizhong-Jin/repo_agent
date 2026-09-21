@@ -139,6 +139,19 @@ def test_probe_reports_devices_and_toolchain(monkeypatch):
     result = compute_probe.collect()
     assert result["operator_environment_ready"]
     assert result["devices"][0]["compute_capability"] == [8, 0]
+    assert result["torch_status"] == result["triton_status"] == result["nvcc_status"] == "available"
+
+
+def test_probe_distinguishes_missing_package_from_broken_dependency(monkeypatch):
+    def missing(name):
+        raise ModuleNotFoundError("missing dependency", name="torch" if name == "torch" else "dependency")
+
+    monkeypatch.setattr(compute_probe.importlib, "import_module", missing)
+    monkeypatch.setattr(compute_probe.shutil, "which", lambda _: None)
+    result = compute_probe.collect()
+    assert result["torch_status"] == "missing"
+    assert result["triton_status"] == "unavailable"
+    assert result["nvcc_status"] == "missing"
 
 
 def test_gpu_smoke_refuses_to_pass_without_gpu(monkeypatch, capsys):

@@ -82,7 +82,7 @@ def test_continuation_keeps_provider_state_without_mutating_input():
 
 def test_reused_tool_id_in_next_task_is_rejected(tmp_path):
     (tmp_path / "a").write_text("a")
-    call = ToolCall("same", "read_file", {"path": "a"})
+    call = ToolCall("same", "read_file", {"reads": [{"path": "a"}]})
     runtime = AgentRuntime(
         Model([reply(calls=[call]), reply(), reply(calls=[call])]), [ReadFileTool(tmp_path)]
     )
@@ -103,7 +103,7 @@ def test_continuous_tasks_share_read_and_write_results(tmp_path, monkeypatch):
     (tmp_path / "source.txt").write_text("source")
     model = Model(
         [
-            reply(calls=[ToolCall("read", "read_file", {"path": "source.txt"})]),
+            reply(calls=[ToolCall("read", "read_file", {"reads": [{"path": "source.txt"}]})]),
             reply("read source"),
             reply(
                 calls=[
@@ -118,7 +118,7 @@ def test_continuous_tasks_share_read_and_write_results(tmp_path, monkeypatch):
     second_task = model.requests[2].messages
     assert second_task[-1].content == "write summary from that"
     tool_result = next(m for m in second_task if m.role == "tool")
-    assert json.loads(tool_result.content)["data"]["content"] == "1: source"
+    assert json.loads(tool_result.content)["data"]["results"][0]["data"]["content"] == "1: source"
     assert (tmp_path / "summary.txt").read_text() == "summary"
 
 
@@ -177,13 +177,18 @@ def test_error_or_interrupt_after_write_resets_context_and_accepts_next_task(
 def test_stopped_reply_does_not_poison_next_task(monkeypatch, finish):
     model = Model([reply(calls=[ToolCall("partial", "x", {})], finish=finish), reply()])
     inputs(monkeypatch, ["first", "second", "/exit"])
-    run_interactive(AgentRuntime(model))
-    assert [m.role for m in model.requests[-1].messages] == ["system", "user"]
+    run_interactive(AgentRuntime(model, max_recoveries=0))
+    if finish == "length":
+        assert any(m.content == "first" for m in model.requests[-1].messages)
+        assert not any(m.tool_calls for m in model.requests[-1].messages)
+        model.requests[-1].validate()
+    else:
+        assert [m.role for m in model.requests[-1].messages] == ["system", "user"]
 
 
 def test_continue_after_step_limit_has_a_fresh_budget(tmp_path, monkeypatch, capsys):
     (tmp_path / "a").write_text("a")
-    model = Model([reply(calls=[ToolCall("read", "read_file", {"path": "a"})]), reply("finished")])
+    model = Model([reply(calls=[ToolCall("read", "read_file", {"reads": [{"path": "a"}]})]), reply("finished")])
     inputs(monkeypatch, ["read", "continue", "/exit"])
     run_interactive(AgentRuntime(model, [ReadFileTool(tmp_path)], max_steps=1))
     assert model.requests[1].messages[-2].role == "tool"
@@ -207,7 +212,9 @@ def test_main_without_task_starts_session_and_closes_client(tmp_path, monkeypatc
 
     client = Client([reply("answer1"), reply("answer2")])
     monkeypatch.setattr(cli, "LLMClient", lambda config: client)
-    monkeypatch.setattr("sys.argv", ["repo-agent", "--sandbox", "local", "--model", "test", "--root", str(tmp_path)])
+    monkeypatch.setattr(
+        "sys.argv", ["repo-agent", "--sandbox", "local", "--model", "test", "--root", str(tmp_path)]
+    )
     inputs(monkeypatch, ["one", "two", "/exit"])
     cli.main()
     assert len(client.requests) == 2

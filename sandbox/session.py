@@ -14,6 +14,7 @@ from pathlib import Path
 
 from tools.base import ToolResult
 from tools.factory import create_default_tools
+from tools.file_policy import runtime_protected_paths
 
 from .docker import DockerBackend, SandboxBackend
 from .policy import SandboxPolicy
@@ -67,7 +68,7 @@ def files(
 
 
 class SandboxedTool:
-    def __init__(self, definition, session):
+    def __init__(self, definition, session, *, writeback_mode=None):
         if definition.name in {"run_command", "run_python"}:
             parameters = deepcopy(definition.parameters)
             parameters["properties"]["check_id"] = {
@@ -80,6 +81,7 @@ class SandboxedTool:
                 "Retain the original assertions; unrelated checks must use different IDs.")
         self.definition = definition
         self.session = session
+        self.writeback_mode = writeback_mode
 
     def execute(self, arguments: dict) -> ToolResult:
         try:
@@ -93,6 +95,15 @@ class SandboxedTool:
             result = self.session.backend.execute(
                 self.session.workspace, self.definition.name, execution_arguments
             )
+            if (
+                self.definition.name == "get_execution_environment"
+                and result.success
+                and "execution" in result.data
+                and self.writeback_mode is not None
+            ):
+                data = deepcopy(result.data)
+                data["execution"]["writeback_mode"] = self.writeback_mode
+                result = replace(result, data=data)
             self.session.guard.record(self.definition.name, arguments, result)
             return result
         except BaseException:
@@ -122,16 +133,10 @@ class SandboxSession:
         self.workspace.mkdir(mode=0o777)
         self.workspace.chmod(0o777)
         self.protected = set()
-        for key in ("AGENT_ENV_FILE", "AGENT_LOG_DIR"):
-            value = os.getenv(key)
-            if value:
-                target = (self.root / value).resolve()
-                if target.is_relative_to(self.root):
-                    relative = target.relative_to(self.root).as_posix()
-                    if target.is_dir():
-                        self.protected.add(relative + "/")
-                    else:
-                        self.protected.add(relative)
+        for target in runtime_protected_paths(self.root):
+            if target.is_relative_to(self.root):
+                relative = target.relative_to(self.root).as_posix()
+                self.protected.add(relative + "/" if target.is_dir() else relative)
         source = files(self.root, self.policy, protected=self.protected)
         self.baseline = {name: fingerprint(*entry) for name, entry in source.items()}
         for name, (data, mode) in source.items():
@@ -186,6 +191,30 @@ class SandboxSession:
         self.protected = set(state["protected"])
         return self
 
+    @classmethod
+    def resume(cls, directory, root, policy, *, verify_command=None, backend=None):
+        """Reconnect to the original copy; never silently discard unpublished changes."""
+        try:
+            self = cls.review(directory)
+            if self.root != Path(root).resolve(strict=True):
+                raise ValueError("沙箱属于其他项目")
+            if self.workspace.is_symlink() or not self.workspace.is_dir():
+                raise ValueError("原工作副本不存在或不是普通目录")
+        except (OSError, ValueError, KeyError, TypeError):
+            raise ValueError(
+                "无法恢复上次会话的沙箱副本；请恢复原副本，或使用 --new-session 开始新会话"
+            ) from None
+        self.policy = policy
+        for target in runtime_protected_paths(self.root):
+            if target.is_relative_to(self.root):
+                relative = target.relative_to(self.root).as_posix()
+                self.protected.add(relative + "/" if target.is_dir() else relative)
+        self.backend = backend or DockerBackend(policy)
+        self.verify_command = list(verify_command) if verify_command else None
+        # review() marks unpublished changes for review. begin_task() clears that
+        # marker only if the copy is clean; restarting must not erase failed checks.
+        return self
+
     def _save(self):
         atomic_json(
             self.directory / "state.json",
@@ -225,9 +254,12 @@ class SandboxSession:
             self.guard.needs_review = True
             raise
 
-    def tools(self):
+    def tools(self, *, writeback_mode=None):
+        if writeback_mode not in {None, "manual", "on-success"}:
+            raise ValueError("writeback_mode must be manual or on-success")
         return [
-            SandboxedTool(tool.definition, self) for tool in create_default_tools(
+            SandboxedTool(tool.definition, self, writeback_mode=writeback_mode)
+            for tool in create_default_tools(
                 self.workspace, isolated_execution=True,
                 command_timeout_seconds=self.policy.command_timeout_seconds,
                 python_timeout_seconds=self.policy.python_timeout_seconds,

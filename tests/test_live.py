@@ -57,6 +57,7 @@ def test_claude_budget_and_native_override():
 
 def test_keyboard_switch_retains_draft_and_updates_payload():
     c = control()
+    c.model = "glm-5.2"
     with create_pipe_input() as pipe:
         reader = SessionInput(c, terminal_input=pipe, terminal_output=DummyOutput())
         pipe.send_text("draft\x1b[Z remainder\r")
@@ -114,7 +115,9 @@ def test_public_deltas_and_timings(provider, events, expected, async_mode):
     assert received[0][0] == "first_data"
     assert received[-1][0] == "end"
     assert [t for _, _, t in received] == sorted(t for _, _, t in received)
-    assert "opaque" not in repr(received) and "思考" not in repr(received)
+    assert "opaque" not in repr(received)
+    thoughts = "".join(text for kind, text, _ in received if kind == "thinking_delta")
+    assert thoughts == ("思考" if provider in {"deepseek", "anthropic"} else "")
 
 
 def test_display_before_stream_finishes_and_no_duplicate(capsys):
@@ -219,7 +222,7 @@ def test_session_token_totals_missing_usage_and_duplicate_events(tmp_path):
     status("model_end", second)
     assert status.calls == 3
     assert status.totals == {"input_tokens": 1500, "output_tokens": 70}
-    assert "输入 1,500（部分已知）" in status.describe()
+    assert "输入 1.5k（部分已知）" in status.describe()
     assert "输出 70（部分已知）" in status.describe()
     assert str(tmp_path.resolve()) in status.describe()
 
@@ -265,6 +268,8 @@ def test_cli_session_clear_keeps_usage_totals(tmp_path, monkeypatch, capsys):
     responses = iter([(10, 2), (20, 3)])
 
     def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": [{"id": "m", "context_length": 1000}]})
         input_tokens, output_tokens = next(responses)
         return httpx.Response(
             200,
@@ -305,6 +310,7 @@ def test_cli_session_clear_keeps_usage_totals(tmp_path, monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "输入 10 · 输出 2" in output
     assert "输入 30 · 输出 5" in output
+    assert "服务端自动获取" in output and "≈2.3%" in output
     assert str(tmp_path.resolve()) in output
     records = [
         json.loads(line)
@@ -367,10 +373,46 @@ def test_context_unknown_limit_and_over_limit_are_explicit(tmp_path):
 
     status = SessionStatus(tmp_path)
     status.context_tokens = 1500
-    assert "上限未设置" in status.describe_context()
+    assert "上限未知" in status.describe_context()
     assert "%" not in status.describe_context()
     status.context_command("/context 1000")
     assert "150.0%" in status.describe_context()
     with pytest.raises(ConfigurationError):
         status.context_command("/context -1")
     assert status.context_window == 1000
+
+
+@pytest.mark.parametrize("model", ["glm-5.3", "glm-5.3-flash"])
+def test_glm_53_shortcuts_use_supported_unique_levels(model):
+    c = control()
+    c.model = model
+    assert "max（服务端默认）" in c.describe()
+    assert c.presets() == [("auto", None, None)] + [
+        ("enabled", level, None) for level in ("low", "high", "max")
+    ]
+    for level in ("low", "high", "max"):
+        c.cycle()
+        assert c.runtime.request_extra["reasoning_effort"] == level
+    c.cycle()
+    assert c.runtime.request_extra == {}
+    c.command("/thinking on medium")
+    assert c.current["effort"] == "high"
+    assert c.runtime.thinking_settings["effort"] == "high"
+    assert c.runtime.request_extra["reasoning_effort"] == "high"
+    before = deepcopy((c.current, c.runtime.request_extra, c.runtime.thinking_settings))
+    with pytest.raises(ConfigurationError, match="不能关闭思考"):
+        c.command("/thinking off")
+    assert (c.current, c.runtime.request_extra, c.runtime.thinking_settings) == before
+
+
+def test_glm_53_initial_alias_display_matches_payload():
+    parser = argparse.ArgumentParser()
+    add_runtime_arguments(parser)
+    args = parser.parse_args(["--thinking", "enabled", "--reasoning-effort", "medium"])
+    args.provider, args.model = "zhipu", "glm-5.3"
+    runtime = AgentRuntime(object(), request_extra=request_options(args))
+    c = ThinkingControl(runtime, args)
+    assert "强度=high" in c.describe()
+    assert (
+        runtime.thinking_settings["effort"] == runtime.request_extra["reasoning_effort"] == "high"
+    )

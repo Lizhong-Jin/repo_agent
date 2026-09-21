@@ -2,42 +2,46 @@
 
 from .base import Tool, ToolResult
 from .errors import ToolErrorCode, tool_error
-from .factory import create_default_tools
-
-from .filesystem import (
-    ReadFileTool,
-    DeleteFileTool,
-    EditFileTool,
-    BatchEditFileTool,
-    ListFileTool,
-    FindFileTool,
-    MakeDirectoryTool,
-    SearchFilesTool,
-    WriteFileTool,
-    MoveFileTool,
-    GetPathInfoTool,
-)
 from .execute import (
+    GetExecutionEnvironmentTool,
     RunCommandTool,
     RunPythonTool,
+)
+from .factory import create_default_tools
+from .filesystem import (
+    DeleteFileTool,
+    EditFileTool,
+    FindFileTool,
+    GetPathInfoTool,
+    ListFileTool,
+    MakeDirectoryTool,
+    MoveFileTool,
+    ReadFileTool,
+    SearchFilesTool,
+    WriteFileTool,
 )
 from .git_tools import (
     GitDiffTool,
     GitStatusTool,
 )
-from .semantic import (
-    GetSymbolsTool
-)
 from .process_runner import ProcessResult, ProcessRunner, ProcessStartError
+from .semantic import (
+    FindReferencesTool,
+    GetDiagnosticsTool,
+    GetSymbolsTool,
+    GoToDefinitionsTool,
+)
 
 __all__ = [
     # code_intelligence tools
     "GetSymbolsTool",
+    "GoToDefinitionsTool",
+    "FindReferencesTool",
+    "GetDiagnosticsTool",
     # filesystem tools
     "ReadFileTool",
     "WriteFileTool",
     "EditFileTool",
-    "BatchEditFileTool",
     "ListFileTool",
     "FindFileTool",
     "SearchFilesTool",
@@ -46,6 +50,7 @@ __all__ = [
     "MoveFileTool",
     "GetPathInfoTool",
     # command tools
+    "GetExecutionEnvironmentTool",
     "RunCommandTool",
     "RunPythonTool",
     # git tools

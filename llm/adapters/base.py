@@ -114,6 +114,8 @@ class Adapter(ABC):
         reason: FinishReason,
         tokens: Usage,
         native_reason: str | None,
+        *,
+        truncated_tool_calls: bool = False,
     ) -> LLMResponse:
         if len({call.id for call in message.tool_calls}) != len(message.tool_calls):
             raise InvalidResponseError("Provider returned duplicate tool call IDs")
@@ -133,4 +135,5 @@ class Adapter(ABC):
             id=data.get("id") or data.get("responseId"),
             provider_finish_reason=native_reason,
             raw=deepcopy(data),
+            truncated_tool_calls=truncated_tool_calls,
         )

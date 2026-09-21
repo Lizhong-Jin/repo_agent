@@ -1,15 +1,82 @@
 """Translate explicit thinking settings into provider request fields.
 
-Model-specific availability is still checked by the provider. No model ID is rewritten.
+Known model constraints are checked locally; other availability is checked by the provider.
+No model ID is rewritten.
 """
 
 from typing import Any
 
 from .errors import ConfigurationError
 from .providers import get_provider
+from .thinking_profiles import EFFORTS, thinking_profile
+
+
+def normalize_settings(profile, *, mode="auto", effort=None, budget=None, history="auto"):
+    if history not in ("auto", "on", "off"):
+        raise ConfigurationError("历史思考保留必须为 auto、on 或 off")
+    if history != "auto" and not profile.history:
+        raise ConfigurationError("当前模型没有适配历史思考保留开关")
+    if effort is not None and effort not in EFFORTS:
+        raise ConfigurationError("无效思考强度；使用 /thinking list 查看可用档位")
+    effort = profile.aliases.get(effort, effort)
+    if profile.known:
+        if (
+            mode in ("enabled", "adaptive")
+            and effort is None
+            and budget is None
+            and profile.efforts
+        ):
+            effort = (
+                profile.default_effort
+                if profile.default_effort in profile.efforts
+                else "medium"
+                if "medium" in profile.efforts
+                else profile.efforts[-1]
+            )
+        if mode == "enabled" and "enabled" not in profile.modes and "adaptive" in profile.modes:
+            mode = "adaptive"
+        if mode not in profile.modes:
+            raise ConfigurationError(
+                "当前模型不能关闭思考" if mode == "disabled" else "当前模型不支持此思考模式"
+            )
+        if effort is not None and effort not in profile.efforts:
+            raise ConfigurationError("当前模型不支持此强度；使用 /thinking list 查看可用档位")
+        if budget is not None:
+            if profile.budget_min is None:
+                raise ConfigurationError("当前模型不支持固定思考预算")
+            if (
+                type(budget) is not int
+                or budget < profile.budget_min
+                or (profile.budget_max is not None and budget > profile.budget_max)
+            ):
+                raise ConfigurationError("思考预算超出模型范围；使用 /thinking list 查看")
+    return {"mode": mode, "effort": effort, "budget": budget, "history": history}
 
 
 def thinking_options(
+    provider,
+    model,
+    *,
+    mode="auto",
+    effort=None,
+    budget=None,
+    max_output_tokens=4096,
+    history="auto",
+    base_url=None,
+    profile=None,
+):
+    capability = thinking_profile(provider, model, base_url=base_url, override=profile)
+    settings = normalize_settings(
+        capability, mode=mode, effort=effort, budget=budget, history=history
+    )
+    settings.pop("history")
+    result = _native_options(provider, model, max_output_tokens=max_output_tokens, **settings)
+    if history != "auto":
+        result.setdefault("thinking", {"type": "enabled"})["clear_thinking"] = history == "off"
+    return result
+
+
+def _native_options(
     provider: str,
     model: str,
     *,
@@ -63,8 +130,6 @@ def thinking_options(
         if effort and budget is not None:
             raise ConfigurationError("Gemini accepts a thinking level or budget, not both")
         if mode == "disabled":
-            if "gemini-3" in model or "gemini-2.5-pro" in model:
-                raise ConfigurationError("This Gemini model cannot fully disable thinking")
             options = {"thinkingBudget": 0}
         elif effort or (mode == "enabled" and "gemini-3" in model and budget is None):
             if effort and effort not in {"minimal", "low", "medium", "high"}:

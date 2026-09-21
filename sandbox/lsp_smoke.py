@@ -5,10 +5,23 @@ entrypoint is unchanged. No project dependencies or network access are needed.
 """
 
 import argparse
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from tools.factory import create_default_tools
+
+FAMILIES = {
+    ".py": "python",
+    ".js": "typescript",
+    ".jsx": "typescript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".go": "go",
+    ".c": "cpp",
+    ".cpp": "cpp",
+    ".cu": "cpp",
+}
 
 SOURCES = {
     "example.py": "def example():\n    return 1\n",
@@ -22,42 +35,86 @@ SOURCES = {
 }
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--cuda", action="store_true", help="Also check CUDA symbols with toolkit installed"
-    )
-    args = parser.parse_args()
+def check_services(*, mode="direct", languages=("python", "typescript", "go", "cpp"), cuda=False):
     sources = dict(SOURCES)
-    if args.cuda:
+    if cuda:
         sources["example.cu"] = (
             "#include <cuda_runtime.h>\n"
             "__global__ void example(float* out) { out[threadIdx.x] = 1.0f; }\n"
         )
-    with TemporaryDirectory(prefix="lsp-smoke-") as directory:
-        root = Path(directory)
+    sources = {
+        name: content
+        for name, content in sources.items()
+        if FAMILIES[Path(name).suffix] in languages
+    }
+    rows = []
+    # Explicit /tmp is writable in both read-only Docker containers and native workers.
+    with TemporaryDirectory(prefix="lsp-smoke-", dir="/tmp") as directory:
+        root = Path(directory).resolve()
         (root / "go.mod").write_text("module example.com/smoke\n\ngo 1.25\n")
         for filename, content in sources.items():
-            # Keep Go's package free of unrelated C/C++ translation units.
             folder = root / Path(filename).suffix[1:]
             folder.mkdir()
             (folder / filename).write_text(content, encoding="utf-8")
-        tool = next(
-            t
-            for t in create_default_tools(root, isolated_execution=True)
-            if t.definition.name == "get_symbols"
-        )
-        for filename in sources:
-            relative = f"{Path(filename).suffix[1:]}/{filename}"
-            result = tool.execute({"path": relative})
-            if not result.success:
-                raise RuntimeError(f"{filename}: {result.error_code}: {result.error}")
-            if not any(s["name"].lower() == "example" for s in result.data["symbols"]):
-                raise RuntimeError(f"{filename}: expected symbol missing: {result.data}")
-            print(
-                f"{filename}: {result.data['language_id']} / {result.data['server_id']} OK",
-                flush=True,
+        backend = None
+        try:
+            if mode == "native":
+                from .native import NativeBackend
+
+                backend = NativeBackend(root)
+                tools = backend.tools()
+            else:
+                tools = create_default_tools(root, isolated_execution=True)
+            tool = next(t for t in tools if t.definition.name == "get_symbols")
+            for filename in sources:
+                relative = f"{Path(filename).suffix[1:]}/{filename}"
+                result = tool.execute({"path": relative})
+                found = result.success and any(
+                    s["name"].lower() == "example" for s in result.data["symbols"]
+                )
+                rows.append(
+                    (
+                        "OK" if found else "ERROR",
+                        filename,
+                        (
+                            "符号查询通过"
+                            if found
+                            else "语言服务无法返回测试符号；请检查依赖及沙箱权限"
+                        ),
+                    )
+                )
+        except (OSError, ValueError, StopIteration):
+            rows.append(
+                (
+                    "ERROR",
+                    "原生沙箱" if mode == "native" else "语言服务",
+                    "无法启动诊断；请检查依赖和系统是否允许沙箱执行",
+                )
             )
+        finally:
+            if backend is not None:
+                backend.close()
+    return rows
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--cuda", action="store_true")
+    parser.add_argument("--mode", choices=["direct", "native"], default="direct")
+    parser.add_argument("--languages", default="python,typescript,go,cpp")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+    languages = args.languages.split(",")
+    if not languages or any(name not in set(FAMILIES.values()) for name in languages):
+        parser.error("不支持的诊断语言")
+    rows = check_services(mode=args.mode, languages=languages, cuda=args.cuda)
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False))
+    else:
+        for level, name, detail in rows:
+            print(f"[{level}] {name}: {detail}", flush=True)
+    if any(row[0] == "ERROR" for row in rows):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

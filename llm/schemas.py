@@ -220,6 +220,9 @@ class LLMResponse:
     id: str | None = None
     provider_finish_reason: str | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
+    # A length-limited response contained tool blocks. They are intentionally not
+    # decoded into executable ToolCalls; even parseable arguments may be incomplete.
+    truncated_tool_calls: bool = False
 
     @property
     def text(self) -> str:
