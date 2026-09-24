@@ -11,7 +11,7 @@
 ```bash
 # 重新解析并更新 Python 版本及带哈希的 pip 清单（默认执行升级）
 python3 scripts/lock_dependencies.py
-# 仅检查 pyproject、uv.lock 与三个 pip 清单是否一致
+# 仅检查 pyproject、uv.lock 与四个 pip 清单是否一致
 python3 scripts/lock_dependencies.py --check
 # 修改 dependencies/node/package.json 后更新 npm 锁文件
 npm install --package-lock-only --ignore-scripts --prefix dependencies/node
@@ -55,3 +55,5 @@ Docker 过滤文件按实际选中的文件生成精确允许列表，新增 `.p
 wheel、sdist、发行包构建及源码模式的镜像重建入口都会检查清单与配置一致性，缺少必需文件或出现符号链接会失败。发行包生成前还会比较实际 wheel、内置 Docker 上下文的文件列表和内容；归档写入完成后再验证归档内容。重复构建会清理旧包构建目录，避免已删除模块残留。源码包也按统一清单过滤文件，并保留 setuptools 元数据。
 
 `tests/test_build_manifest.py` 包含实际 wheel 构建、删除模块后重复构建、sdist 解包后重建 wheel、新增 JSON 资源、生成配置漂移和未声明文件排除等回归；默认使用测试环境中已有的 setuptools/wheel，不联网安装构建工具。
+
+`requirements-dev.lock` 从 `pyproject.toml` 的 `dev` extra 导出，包含 pytest、Ruff 及其依赖；源码安装自动使用该清单，发行版安装不使用它。它随统一构建清单提供，不表示普通用户运行环境会安装开发工具。

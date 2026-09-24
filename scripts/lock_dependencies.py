@@ -12,6 +12,7 @@ def export_locks(root, uv, *, check=False):
     for kind, options in (
         ("core", ["--no-default-groups"]),
         ("lsp", ["--no-default-groups", "--extra", "lsp"]),
+        ("dev", ["--no-default-groups", "--extra", "dev"]),
         ("build", ["--only-group", "build"]),
     ):
         content = subprocess.run(

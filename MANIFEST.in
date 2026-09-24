@@ -9,6 +9,7 @@ include dependencies/node/package.json
 include pyproject.toml
 include requirements-build.lock
 include requirements-core.lock
+include requirements-dev.lock
 include requirements-lsp.lock
 include uv.lock
 recursive-include agent *.py

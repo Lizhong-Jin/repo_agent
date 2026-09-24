@@ -218,6 +218,9 @@ def test_native_install_adds_lsp_and_rolls_back_failures(installation, monkeypat
         assert not (root / ".venv/old-marker").exists()
         assert load_record(root)["mode"] == "native"
         assert not load_record(root)["uses_default_image"]
+    locked = next(command for command in commands if "--require-hashes" in command)
+    assert str(root / "requirements-dev.lock") in locked
+    assert str(root / "requirements-build.lock") in locked
     assert all(not call["docker"] for call in checks)
     assert any(str(root) + "[lsp]" in command for command in commands)
     assert any(command[1:] == ["-m", "pip", "check"] for command in commands)

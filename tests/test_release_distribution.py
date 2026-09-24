@@ -262,6 +262,14 @@ def test_real_release_survives_download_removal(tmp_path, monkeypatch):
         )
     )
     assert Path(origin).is_relative_to(root / ".venv")
+    run(
+        [
+            root / ".venv/bin/python",
+            "-I",
+            "-c",
+            "import importlib.util; assert importlib.util.find_spec('pytest') is None; assert importlib.util.find_spec('ruff') is None",
+        ]
+    )
     run([command, "config", "show"])
     run([command, "config", "reset"])
     config = tmp_path / "config/repo-agent/.env"
@@ -334,6 +342,7 @@ def test_release_dependency_failure_preserves_old_command_and_config(tmp_path, m
 
     def fail(command, **kwargs):
         assert "--require-hashes" in command
+        assert not any(str(part).endswith("requirements-dev.lock") for part in command)
         raise ValueError("simulated dependency download failure")
 
     monkeypatch.setattr(release_install.setup, "run_download", fail)

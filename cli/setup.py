@@ -391,7 +391,13 @@ def main(argv=None, *, approved_commands=None) -> None:
                         str(lock),
                     ]
                     if not args.wheel:
-                        locked += ["-r", str(agent_home / "requirements-build.lock")]
+                        locked += [
+                            "-r",
+                            str(agent_home / "requirements-build.lock"),
+                            "-r",
+                            str(agent_home / "requirements-dev.lock"),
+                        ]
+                        print("源码安装：自动准备开发依赖（pytest、Ruff）。", flush=True)
                     run_download(locked, label="安装固定版本依赖", cwd=agent_home)
                     if args.wheel:
                         run_download(

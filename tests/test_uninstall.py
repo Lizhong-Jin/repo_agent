@@ -457,6 +457,7 @@ def test_bootstrap_confirms_once_before_creating_environment(installations, tmp_
                 events.append("smoke")
                 return
             if "--require-hashes" in command:
+                assert str(new / "requirements-dev.lock") in command
                 events.append("locked")
                 return
             assert command[:5] == [str(new / ".venv/bin/python"), "-m", "pip", "install", "-e"]

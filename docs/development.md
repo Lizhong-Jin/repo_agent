@@ -6,10 +6,10 @@
 
 ## 开发环境与验证
 
-先按[安装说明](installation.md)建立源码安装，再安装开发依赖：
+源码安装现在自动安装 `dev` 依赖组中的 pytest、Ruff 及固定的构建依赖。先按[安装说明](installation.md)运行 `./install.sh`；已有安装也可以只补齐开发依赖：
 
 ```bash
-.venv/bin/python -m pip install -e '.[dev]'
+.venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
 .venv/bin/python -m pip install --require-hashes -r requirements-build.lock
 .venv/bin/python -m pytest -q
 .venv/bin/ruff check agent cli llm tools sandbox scripts examples tests build_support.py build_manifest.py
@@ -18,7 +18,7 @@ python3 build_manifest.py
 python3 scripts/lock_dependencies.py --check
 ```
 
-开发依赖安装可能联网；锁文件检查需要 uv。Ruff 命令表示建议覆盖范围，不表示当前仓库已经通过全部规则。默认测试使用模拟模型，不消耗在线推理额度；安装入口测试需要仓库 `.venv/bin/repo-agent` 可运行。构建清单测试使用已有的 setuptools/wheel，因此上方同时安装锁定的构建依赖。
+开发依赖安装可能联网；锁文件检查需要 uv。Ruff 命令表示建议覆盖范围，不表示当前仓库已经通过全部规则。默认测试使用模拟模型，不消耗在线推理额度；安装入口测试需要仓库 `.venv/bin/repo-agent` 可运行。构建清单测试使用已有的 setuptools/wheel，因此旧安装补齐时上方也安装锁定的构建依赖。独立发行版不安装开发依赖。
 
 将以下验证分别记录，不能用默认测试通过替代真实环境验收：
 

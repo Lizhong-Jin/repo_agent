@@ -61,7 +61,7 @@ repo-agent uninstall
 ./install.sh
 ```
 
-安装创建专用 `.venv`，将模板复制到用户配置，并把 `repo-agent`、`repo-agent-build-sandbox` 安装到 `~/.local/bin`。默认补充 Bash / Zsh 的 PATH；打开新终端或执行安装结尾打印的命令。其他 shell 自行配置 PATH。源码和安装目录需要保留，命令依赖其中的虚拟环境。
+源码安装创建专用 `.venv`，自动安装开发依赖 pytest、Ruff 和构建工具，将模板复制到用户配置，并把 `repo-agent`、`repo-agent-build-sandbox` 安装到 `~/.local/bin`。默认补充 Bash / Zsh 的 PATH；打开新终端或执行安装结尾打印的命令。其他 shell 自行配置 PATH。源码和安装目录需要保留，命令依赖其中的虚拟环境。
 
 首次在目标项目运行 `repo-agent` 时，若缺少模型或 Key，交互终端会引导设置；也可先运行 `repo-agent config model`。安装本身无需模型信息。已有用户配置不会被覆盖，新模板与内置默认值的区别见[配置参考](configuration.md#模板与内置默认值)。
 
@@ -239,7 +239,7 @@ Python 依赖、`gopls` 和 npm 的 JS/TS 语言服务位于本安装 `.venv` �
 
 ## 依赖锁定
 
-`uv.lock` 是 Python 依赖的统一版本来源；`requirements-core.lock`、`requirements-lsp.lock`、`requirements-build.lock` 是带哈希的 pip 安装清单，分别用于核心运行、包含 Python 语言服务的运行环境和源码构建。源码安装和发行版安装均使用锁文件，不在安装时重新解析范围依赖。发行版安装 wheel 时不触发构建或隐式安装依赖；源码安装在固定构建依赖下保留 editable 模式。
+`uv.lock` 是 Python 依赖的统一版本来源；`requirements-core.lock`、`requirements-lsp.lock`、`requirements-build.lock`、`requirements-dev.lock` 是带哈希的 pip 安装清单，分别用于核心运行、包含 Python 语言服务的运行环境、源码构建和开发测试。源码安装自动安装开发测试依赖（pytest、Ruff）；独立发行版只安装运行所需依赖。源码安装和发行版安装均使用锁文件，不在安装时重新解析范围依赖。发行版安装 wheel 时不触发构建或隐式安装依赖；源码安装在固定构建依赖下保留 editable 模式。
 
 Python 安装启用 `--require-hashes --only-binary=:all:`，平台/Python 版本没有匹配 wheel 时会明确失败，不静默回退到本地编译。可选语言服务失败仍不阻断核心安装，网络代理、证书提示、重试及事务恢复机制继续有效。
 

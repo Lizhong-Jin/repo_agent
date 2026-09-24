@@ -102,6 +102,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !pyproject.toml
 !requirements-build.lock
 !requirements-core.lock
+!requirements-dev.lock
 !requirements-lsp.lock
 !sandbox/Dockerfile
 !sandbox/__init__.py

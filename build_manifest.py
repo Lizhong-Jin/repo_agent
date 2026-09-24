@@ -14,7 +14,7 @@ import zipfile
 from pathlib import Path
 
 PACKAGES = ("agent", "cli", "llm", "sandbox", "tools")
-LOCK_FILES = tuple(f"requirements-{kind}.lock" for kind in ("core", "lsp", "build"))
+LOCK_FILES = tuple(f"requirements-{kind}.lock" for kind in ("core", "lsp", "build", "dev"))
 # Files installed in cli/resources, with explicit source -> wheel destination mapping.
 RESOURCE_FILES = (
     (".env.example", "cli/resources/default.env"),

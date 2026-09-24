@@ -27,7 +27,7 @@ exclude = ["*..git", "*..git.*", "*..venv", "*..venv.*", "*.venv", "*.venv.*", "
 
 [tool.setuptools.package-data]
 "agent" = ["skills/builtin/*/SKILL.md"]
-"cli" = ["resources/default.env", "resources/dependencies/node/package-lock.json", "resources/dependencies/node/package.json", "resources/docker-context.tar.gz", "resources/requirements-build.lock", "resources/requirements-core.lock", "resources/requirements-lsp.lock"]
+"cli" = ["resources/default.env", "resources/dependencies/node/package-lock.json", "resources/dependencies/node/package.json", "resources/docker-context.tar.gz", "resources/requirements-build.lock", "resources/requirements-core.lock", "resources/requirements-dev.lock", "resources/requirements-lsp.lock"]
 "sandbox" = ["Dockerfile"]
 
 [tool.setuptools.cmdclass]
