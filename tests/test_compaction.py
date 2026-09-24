@@ -78,7 +78,7 @@ def conversation(tmp_path):
             model.config,
             status,
             compaction_settings=settings
-            or CompactionSettings(auto=False, keep_tokens=512, summary_tokens=1500),
+            or CompactionSettings(auto=False, threshold=.55, target=.20, keep_tokens=512),
         )
         conv.checkpoint(strict=True)
         return conv
@@ -175,7 +175,7 @@ def test_save_failure_keeps_working_history_and_archive(conversation, monkeypatc
 
 def test_automatic_compacts_during_tool_loop_and_preserves_pending_task(conversation):
     conv = conversation(
-        settings=CompactionSettings(auto=True, keep_tokens=512, summary_tokens=1500)
+        settings=CompactionSettings(auto=True, keep_tokens=512)
     )
 
     class LargeTool:
@@ -287,7 +287,7 @@ def test_large_user_constraints_are_never_silently_dropped(conversation):
         dict(target=0.8),
         dict(threshold=float("nan")),
         dict(keep_tokens=1),
-        dict(summary_tokens=0),
+        dict(max_refinements=5),
         dict(auto="yes"),
     ],
 )
@@ -530,212 +530,488 @@ def test_streaming_cancel_at_usage_still_counts_completed_call(conversation, mon
     assert conv.history == large_history()
 
 
-def test_summary_inherits_generation_budget_and_live_thinking_changes(conversation):
-    import argparse
+
+def set_summary_sizes(conv, monkeypatch, sizes):
+    """Supply summary lengths while using the actual archive references and estimator."""
+    generate = conv.runtime.llm.generate
+    sizes = iter(sizes)
+    def response(request):
+        result = generate(request)
+        size = next(sizes)
+        if isinstance(size, BaseException):
+            raise size
+        summary = json.loads(result.text)
+        summary["progress"][0]["text"] = "detail " * size
+        return replace(result, message=Message("assistant", json.dumps(summary)))
+    monkeypatch.setattr(conv.runtime.llm, "generate", response)
+
+
+def test_catalog_policy_ignores_session_settings_and_tracks_usage(conversation):
     from copy import deepcopy
-
-    from cli.live import ThinkingControl
-    from cli.settings import add_runtime_arguments, request_options
-
-    conv = conversation(window=300000)
-    parser = argparse.ArgumentParser()
-    add_runtime_arguments(parser)
-    args = parser.parse_args(["--max-output-tokens", "51200", "--thinking-recall", "false"])
-    args.provider, args.model = "deepseek", "test"
-    runtime = conv.runtime
-    runtime.max_output_tokens = args.max_output_tokens
-    runtime.temperature = 0.4
-    runtime.request_extra = request_options(args)
-    thinking = ThinkingControl(runtime, args)
-    events = []
-
-    def on_event(event, stats):
-        conv.status(event, stats)
-        if event == "model_end":
-            events.append(deepcopy(stats.model_calls[-1]))
-
-    runtime.on_event = on_event
-    for command, expected in [
-        ("/thinking on high", {"thinking": {"type": "enabled"}, "reasoning_effort": "high"}),
-        ("/thinking off", {"thinking": {"type": "disabled"}}),
-        ("/thinking auto", {}),
-    ]:
-        thinking.command(command)
-        conv.history = large_history()
-        conv.compaction_state = None
-        conv.compact()
-        request = runtime.llm.requests[-1]
-        assert request.max_output_tokens == 51200
-        assert request.extra == expected and request.temperature == 0.4
-        assert json.loads(request.messages[-1].content)["summary_token_target"] == 1500
-        assert not request.tools and request.tool_choice == "none"
-        assert events[-1].thinking == runtime.thinking_settings
-        assert events[-1].max_output_tokens == 51200
-    assert conv.status.calls == 3
-
-
-@pytest.mark.parametrize(
-    "provider,format_name,native",
-    [
-        ("deepseek", "chat_completions", {"thinking": {"type": "disabled"}}),
-        (
-            "deepseek",
-            "chat_completions",
-            {"thinking": {"type": "enabled"}, "reasoning_effort": "high"},
-        ),
-        ("anthropic", "anthropic", {"thinking": {"type": "enabled", "budget_tokens": 8192}}),
-        (
-            "anthropic",
-            "anthropic",
-            {"thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}},
-        ),
-        ("openai", "responses", {"reasoning": {"effort": "high", "summary": "auto"}}),
-        ("google", "gemini", {"generationConfig": {"thinkingConfig": {"thinkingBudget": 8192}}}),
-        ("qwen", "chat_completions", {"enable_thinking": True, "thinking_budget": 8192}),
-    ],
-)
-def test_native_thinking_controls_reach_provider_payload(
-    conversation, provider, format_name, native
-):
-    from copy import deepcopy
-
-    from llm.adapters import ADAPTERS
-
     conv = conversation(window=300000)
     runtime = conv.runtime
+    runtime.llm.config = LLMConfig("deepseek", "deepseek-flash", api_key="fake")
     runtime.max_output_tokens = 51200
-    runtime.request_extra = deepcopy(native)
-    runtime.request_extra.update(response_format={"type": "json_schema", "schema": {}}, stop=["}"])
-    if "generationConfig" in runtime.request_extra:
-        runtime.request_extra["generationConfig"].update(responseSchema={}, stopSequences=["}"])
-    if "output_config" in runtime.request_extra:
-        runtime.request_extra["output_config"]["format"] = {"type": "json_schema", "schema": {}}
-    before = deepcopy(runtime.request_extra)
+    runtime.temperature = .4
+    runtime.request_extra = {"thinking": {"type": "enabled"}, "reasoning_effort": "max",
+                             "stop": ["}"], "response_format": {"type": "json_object"}}
+    previous = deepcopy(runtime.request_extra)
+    records = []
+    def event(name, stats):
+        conv.status(name, stats)
+        if name == "model_end":
+            records.append(deepcopy(stats.model_calls[-1]))
+    runtime.on_event = event
     conv.history = large_history()
     conv.compact()
     request = runtime.llm.requests[-1]
-    assert request.extra == native
-    body = ADAPTERS[format_name](provider, "test").encode(request)
-    for key, value in native.items():
-        if key == "generationConfig":
-            assert body[key]["thinkingConfig"] == value["thinkingConfig"]
-            assert body[key]["maxOutputTokens"] == 51200
-        else:
-            assert body[key] == value
-    assert runtime.request_extra == before
-    # Provider encoding and request consumers must not mutate live settings.
-    request.extra.clear()
-    assert runtime.request_extra == before
+    assert request.max_output_tokens == 32768
+    assert request.extra == {"thinking": {"type": "enabled"}, "reasoning_effort": "low"}
+    assert request.temperature is None and not request.tools and request.tool_choice == "none"
+    assert runtime.request_extra == previous and runtime.max_output_tokens == 51200
+    assert records[-1].thinking == {"mode": "enabled", "effort": "low"}
+    assert records[-1].max_output_tokens == 32768
+    assert conv.status.totals == {"input_tokens": 100, "output_tokens": 20}
 
 
-def test_reasoning_can_exceed_summary_target_without_truncating_request(conversation, monkeypatch):
-    conv = conversation(window=300000)
+@pytest.mark.parametrize("truncate_count", [1, 3, 99])
+def test_truncation_increases_catalog_budget_with_bounded_retries(
+    conversation, monkeypatch, truncate_count
+):
+    conv = conversation(window=1000000)
+    conv.runtime.llm.config = LLMConfig("deepseek", "deepseek-flash", api_key="fake")
     conv.history = large_history()
-    conv.runtime.max_output_tokens = 51200
-    conv.runtime.request_extra = {"thinking": {"type": "enabled"}}
     generate = conv.runtime.llm.generate
-
-    def with_reasoning(request):
+    def generate_truncated(request):
         response = generate(request)
-        if request.max_output_tokens <= 3000:
-            return replace(
-                response,
-                message=Message("assistant", ""),
-                finish_reason="length",
-                usage=Usage(81161, 3000, reasoning_tokens=3000),
-            )
-        return replace(response, usage=Usage(81161, 4200, reasoning_tokens=4000))
+        if len(conv.runtime.llm.requests) <= truncate_count:
+            return replace(response, finish_reason="length", message=Message("assistant", ""),
+                           usage=Usage(100, request.max_output_tokens,
+                                       reasoning_tokens=request.max_output_tokens))
+        return response
+    monkeypatch.setattr(conv.runtime.llm, "generate", generate_truncated)
+    if truncate_count == 99:
+        with pytest.raises(ValueError, match="摘要输出截断"):
+            conv.compact()
+        assert conv.history == large_history()
+    else:
+        conv.compact()
+    requests = conv.runtime.llm.requests
+    expected = [32768, 65536, 131072, 262144, 393216][:min(truncate_count + 1, 5)]
+    assert [r.max_output_tokens for r in requests] == expected
+    assert conv.status.calls == len(expected)
+    assert conv.status.totals["output_tokens"] == sum(expected[:truncate_count]) + (
+        20 if truncate_count < len(expected) else 0)
 
-    monkeypatch.setattr(conv.runtime.llm, "generate", with_reasoning)
-    conv.compact()
-    assert conv.compaction_state is not None
-    assert conv.status.totals == {"input_tokens": 81161, "output_tokens": 4200}
 
-
-def test_length_error_reports_actual_limit_and_reasoning_usage(conversation, monkeypatch):
+def test_unknown_output_cap_is_not_increased(conversation, monkeypatch):
     conv = conversation()
     conv.history = large_history()
-    original = conv.history
     generate = conv.runtime.llm.generate
-
-    def limited(request):
-        response = generate(request)
-        return replace(
-            response,
-            message=Message("assistant", ""),
-            finish_reason="length",
-            usage=Usage(100, 999, reasoning_tokens=999),
-        )
-
-    monkeypatch.setattr(conv.runtime.llm, "generate", limited)
-    with pytest.raises(ValueError, match=r"1000 tokens; reported output=999, reasoning=999"):
+    def truncated(request):
+        return replace(generate(request), finish_reason="length", usage=Usage(100, 999,
+                                                                             reasoning_tokens=999))
+    monkeypatch.setattr(conv.runtime.llm, "generate", truncated)
+    with pytest.raises(ValueError, match="8192 tokens.*输出=999.*思考=999"):
         conv.compact()
-    assert conv.history == original and len(conv.runtime.llm.requests) == 1
+    assert len(conv.runtime.llm.requests) == 1 and conv.history == large_history()
     assert conv.status.totals["output_tokens"] == 999
 
 
-def test_summary_input_reserves_configured_output_and_chunks_fit(conversation):
+@pytest.mark.parametrize("kind,window", [("context", 20000), ("context", 8000), ("input", 20000)])
+def test_independent_requests_fit_window_and_ignore_session_output(conversation, kind, window):
     from llm.token_estimation import estimate_context_tokens
-
-    conv = conversation(window=20000)
-    conv.runtime.max_output_tokens = 8192
+    conv = conversation(window=window)
+    conv.status.context_limit_kind = kind
+    conv.runtime.max_output_tokens = 51200 if kind == "input" else 1000
     conv.history = large_history()
     conv.compact()
-    assert len(conv.runtime.llm.requests) > 1
     for request in conv.runtime.llm.requests:
-        assert request.max_output_tokens == 8192
-        assert estimate_context_tokens(request.messages) + request.max_output_tokens <= 20000
-        assert json.loads(request.messages[-1].content)["summary_token_target"] < 1500
+        occupied = estimate_context_tokens(request.messages)
+        if kind == "context":
+            occupied += request.max_output_tokens
+        assert occupied <= window - conv.compactor.headroom(window)
 
 
-def test_large_output_allowance_does_not_relax_final_summary_size(conversation, monkeypatch):
+def test_large_summary_has_no_independent_hard_limit(conversation, monkeypatch):
     conv = conversation(window=300000)
     conv.history = large_history()
-    original = conv.history
-    conv.runtime.max_output_tokens = 51200
-    generate = conv.runtime.llm.generate
+    set_summary_sizes(conv, monkeypatch, [2500])
+    conv.compact()
+    assert conv.compaction_state["after"] > 3000
+    assert conv.compaction_state["target_met"]
+    assert len(conv.runtime.llm.requests) == 1
 
-    def verbose(request):
-        response = generate(request)
-        summary = json.loads(response.text)
-        summary["progress"][0]["text"] = "too much detail " * 1200
-        return replace(response, message=Message("assistant", json.dumps(summary)))
 
-    monkeypatch.setattr(conv.runtime.llm, "generate", verbose)
-    with pytest.raises(ValueError, match="exceeds AGENT_COMPACT_SUMMARY_TOKENS"):
+@pytest.mark.parametrize("sizes,expected_calls,target_met", [
+    ([3000, 100], 2, True),
+    ([3000, 3000, 3000], 3, False),
+    ([3000, 4000, 5000], 3, False),
+    ([3000, ValueError("invalid summary")], 2, False),
+])
+def test_bounded_refinement_adopts_best_safe_result(
+    conversation, monkeypatch, sizes, expected_calls, target_met
+):
+    conv = conversation()
+    conv.history = large_history()
+    set_summary_sizes(conv, monkeypatch, sizes)
+    notice = conv.compact()
+    state = conv.compaction_state
+    assert state["target_met"] is target_met
+    assert state["after"] < state["before"] and state["after"] <= state["safety_limit"]
+    assert len(conv.runtime.llm.requests) == expected_calls
+    assert ("未达到目标" in notice) is not target_met
+    summary = json.loads(conv.history[2].content.split("\n", 1)[1])
+    assert len(summary["progress"][0]["text"]) == (100 if target_met else 3000) * 7
+    for request in conv.runtime.llm.requests[1:]:
+        payload = json.loads(request.messages[-1].content)
+        assert payload["refining"]
+        conv.archive.validate_refs([item["ref"] for item in payload["records"]])
+
+
+@pytest.mark.parametrize("size", [18000, 5850])
+def test_rejects_unsafe_or_insufficient_reduction(conversation, monkeypatch, size):
+    conv = conversation(settings=CompactionSettings(auto=False, keep_tokens=512,
+                                                   max_refinements=0))
+    conv.history = large_history()
+    set_summary_sizes(conv, monkeypatch, [size])
+    with pytest.raises(ValueError, match="无法采用压缩结果"):
         conv.compact()
-    assert conv.history == original
+    assert conv.history == large_history() and conv.compaction_state is None
+    assert conv.archive.search("ORIGINAL_MARKER")["matches"]
+
+
+def test_cancel_during_refinement_preserves_original_and_usage(conversation, monkeypatch):
+    conv = conversation()
+    conv.history = large_history()
+    set_summary_sizes(conv, monkeypatch, [3000, KeyboardInterrupt()])
+    with pytest.raises(KeyboardInterrupt):
+        conv.compact()
+    assert conv.history == large_history() and conv.compaction_state is None
+    assert conv.status.totals["output_tokens"] == 20
+
+
+def test_over_target_state_restores_and_delays_auto_compaction(conversation, monkeypatch):
+    settings = CompactionSettings(auto=True, target=.05, threshold=.1, keep_tokens=512,
+                                  max_refinements=0)
+    conv = conversation(settings=settings)
+    conv.history = large_history()
+    set_summary_sizes(conv, monkeypatch, [2000])
+    conv.compact()
+    state = conv.compaction_state.copy()
+    conv.store.close()
+    restored = conversation(settings=settings)
+    assert restored.compaction_state == json.loads(json.dumps(state)) and not state["target_met"]
+    assert restored.compactor.before_request(restored.history, 1000) is restored.history
+    assert restored.runtime.llm.requests == []
+    grown = [*restored.history, Message("assistant", "more " * 2000)]
+    restored.compactor.before_request(grown, 1000)
+    assert restored.runtime.llm.requests
+
+
+def test_auto_delay_never_bypasses_safety_limit(conversation, monkeypatch):
+    conv = conversation(settings=CompactionSettings(auto=True, target=.05, threshold=.1,
+                                                   keep_tokens=512, max_refinements=0))
+    conv.history = large_history()
+    conv.compact()
+    conv.compaction_state["auto_retry_at"] = 1000000
+    called = []
+    monkeypatch.setattr(conv.compactor, "compact", lambda *a, **k: called.append(True))
+    conv.compactor.before_request([*conv.history, Message("assistant", "data " * 20000)], 1000)
+    assert called
+
+
+def test_old_summary_configuration_is_ignored():
+    import argparse
+
+    from cli.config_command import validate_values
+    from cli.settings import add_runtime_arguments
+    parser = argparse.ArgumentParser()
+    add_runtime_arguments(parser)
+    args = parser.parse_args(["--compact-summary-tokens", "1", "--compact-max-refinements", "0"])
+    assert args.compact_max_refinements == 0
+    validate_values({"AGENT_COMPACT_SUMMARY_TOKENS": "1", "AGENT_COMPACT_MAX_REFINEMENTS": "0"})
+    with pytest.raises(ValueError):
+        validate_values({"AGENT_COMPACT_MAX_REFINEMENTS": "5"})
 
 
 def test_compaction_follows_model_switch_without_old_provider_options(conversation):
     from cli.models import ModelControl, ModelSelection
-
+    from llm.independent import IndependentRequestPolicy
     conv = conversation(window=300000)
     old_model = conv.runtime.llm
     conv.runtime.request_extra = {"thinking": {"type": "enabled"}, "reasoning_effort": "high"}
-
     def factory(config):
         model = Model()
         model.config = config
         return model
-
     control = ModelControl(conv.runtime, old_model.config, client_factory=factory)
     control.switch(ModelSelection("qwen", "qwen-plus", "synthetic-key"))
     conv.history = large_history()
     conv.compact()
-    assert old_model.requests == []
-    assert conv.runtime.llm.config.provider == "qwen"
-    assert conv.runtime.llm.requests[-1].extra == {}
+    request = conv.runtime.llm.requests[-1]
+    policy = IndependentRequestPolicy.from_config(conv.runtime.llm.config)
+    assert not old_model.requests and request.extra == policy.extras(request.max_output_tokens)
 
 
-def test_summary_uses_input_only_window_without_subtracting_output(conversation):
-    from llm.token_estimation import estimate_context_tokens
+def test_retry_respects_reported_input_and_leaves_window_headroom(conversation, monkeypatch):
+    conv = conversation(window=100000)
+    conv.runtime.llm.config = LLMConfig("deepseek", "deepseek-flash", api_key="fake")
+    conv.history = large_history()
+    generate = conv.runtime.llm.generate
+    def truncated_once(request):
+        response = generate(request)
+        return replace(response, usage=Usage(50000, 50),
+                       finish_reason="length" if len(conv.runtime.llm.requests) == 1 else "stop")
+    monkeypatch.setattr(conv.runtime.llm, "generate", truncated_once)
+    conv.compact()
+    assert [r.max_output_tokens for r in conv.runtime.llm.requests] == [32768, 45000]
+    assert conv.status.totals["input_tokens"] == 100000
 
-    conv = conversation(window=20000)
-    conv.status.context_limit_kind = "input"
-    conv.runtime.max_output_tokens = 51200
+
+def test_legacy_compaction_state_is_valid_and_new_fields_are_checked(conversation):
+    from agent.session import validate_compaction
+    conv = conversation()
     conv.history = large_history()
     conv.compact()
-    for request in conv.runtime.llm.requests:
-        assert request.max_output_tokens == 51200
-        assert estimate_context_tokens(request.messages) <= 20000
+    state = conv.compaction_state
+    history = [m.to_dict() for m in conv.history]
+    legacy = {key: state[key] for key in ("snapshot", "pins", "prefix", "before", "after")}
+    validate_compaction(legacy, history)
+    for update in [{"target_met": not state["target_met"]}, {"safety_limit": state["after"] - 1},
+                   {"auto_retry_at": state["after"]}, {"target": True}]:
+        with pytest.raises(ValueError, match="压缩元数据"):
+            validate_compaction({**state, **update}, history)
+
+
+def test_compaction_trace_contains_target_adoption_and_policy(conversation, tmp_path, monkeypatch):
+    from agent.Tracing import Tracer
+    conv = conversation(settings=CompactionSettings(auto=False, target=.1, keep_tokens=512,
+                                                   max_refinements=0))
+    conv.history = large_history()
+    set_summary_sizes(conv, monkeypatch, [3000])
+    logs = tmp_path / "traces"
+    with Tracer(logs, provider="deepseek", model="test") as tracer:
+        def event(name, stats):
+            conv.status(name, stats)
+            tracer(name, stats)
+        conv.runtime.on_event = event
+        conv.compact()
+    entries = [json.loads(line) for path in logs.glob("*.jsonl")
+               for line in path.read_text().splitlines()]
+    completed = next(e["compaction"] for e in entries if e["event"] == "compaction_end")
+    assert not completed["target_met"] and completed["after"] > completed["target"]
+    call = next(e["model_call"] for e in entries if e["event"] == "model_end")
+    assert call["thinking"] == {"mode": "auto"} and call["max_output_tokens"] == 8192
+
+
+def test_safety_check_overrides_a_high_automatic_threshold(conversation, monkeypatch):
+    conv = conversation(settings=CompactionSettings(auto=True, threshold=.99))
+    budget = conv.compactor.input_budget(1000)
+    monkeypatch.setattr(conv.runtime, "estimate_context_tokens",
+                        lambda _: budget - conv.compactor.headroom(budget) + 1)
+    called = []
+    monkeypatch.setattr(conv.compactor, "compact", lambda *a, **k: called.append(True))
+    conv.compactor.before_request(large_history(), 1000)
+    assert called
+
+
+# Review F2: content deduplication must not deduplicate user-turn occurrences.
+def correction_history(*instructions):
+    messages = [Message("system", "你是编码助手")]
+    for instruction in instructions:
+        messages.extend((Message("user", instruction),
+                         Message("assistant", "history line\n" * 1000)))
+    messages.extend((Message("user", "继续验证"), Message("assistant", "近期状态")))
+    return tuple(messages)
+
+
+def correction_pins(conv):
+    return [p for p in conv.compaction_state["pins"]
+            if p["text"] in {"使用中文回答", "改用英文回答"}]
+
+
+def test_repeated_user_correction_keeps_occurrences_and_order(conversation):
+    conv = conversation()
+    conv.history = correction_history("使用中文回答", "改用英文回答", "使用中文回答")
+    conv.compact()
+    pins = correction_pins(conv)
+    assert [p["text"] for p in pins] == ["使用中文回答", "改用英文回答", "使用中文回答"]
+    assert pins[0]["ref"] == pins[2]["ref"]
+    assert len({p["occurrence"] for p in pins}) == 3
+    with conv.archive.connect() as db:
+        for pin in pins:
+            snapshot, position = pin["occurrence"].split(":")
+            ids = json.loads(db.execute("SELECT message_ids FROM snapshots WHERE id=?",
+                                        (snapshot,)).fetchone()[0])
+            assert conv.archive.ref(ids[int(position)]) == pin["ref"]
+    originals = json.loads(conv.history[1].content.split("\n", 1)[1])["user_originals"]
+    assert [p["text"] for p in originals][:3] == [p["text"] for p in pins]
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_new_repeated_correction_survives_multiple_compactions(conversation, restart):
+    conv = conversation()
+    conv.history = correction_history("使用中文回答", "改用英文回答")
+    conv.compact()
+    original = [p.copy() for p in correction_pins(conv)]
+    if restart:
+        conv.store.close()
+        conv = conversation()
+    conv.history += correction_history("使用中文回答")[1:]
+    conv.compact()
+    pins = correction_pins(conv)
+    assert pins[:2] == original
+    assert [p["text"] for p in pins] == ["使用中文回答", "改用英文回答", "使用中文回答"]
+    assert pins[0]["ref"] == pins[2]["ref"]
+    assert len({p["occurrence"] for p in pins}) == 3
+    # Another compaction must not append the already pinned occurrences again.
+    conv.history += (Message("assistant", "another result\n" * 2000), Message("assistant", "近期"))
+    conv.compact()
+    assert correction_pins(conv) == pins
+
+
+def test_oversized_tail_does_not_pin_retained_user_twice(conversation):
+    conv = conversation()
+    long_reply = Message("assistant", "large result\n" * 3000)
+    conv.history = (Message("system", "你是编码助手"), Message("user", "使用中文回答"), long_reply)
+    conv.compact()
+    assert conv.compaction_state["pins"] == []
+    assert conv.history[-1] == Message("user", "使用中文回答")
+    conv.store.close()
+    conv = conversation()
+    conv.history += (long_reply,)
+    conv.compact()
+    assert conv.compaction_state["pins"] == []
+    conv.history += (Message("user", "改用英文回答"), long_reply)
+    conv.compact()
+    assert [p["text"] for p in correction_pins(conv)] == ["使用中文回答"]
+    conv.history += (Message("user", "使用中文回答"), long_reply)
+    conv.compact()
+    assert [p["text"] for p in correction_pins(conv)] == ["使用中文回答", "改用英文回答"]
+    assert conv.history[-1] == Message("user", "使用中文回答")
+
+
+def test_pin_occurrences_validate_and_legacy_pins_remain_readable(conversation):
+    from copy import deepcopy
+
+    from agent.session import validate_compaction
+    conv = conversation()
+    conv.history = correction_history("使用中文回答", "改用英文回答", "使用中文回答")
+    conv.compact()
+    history = [m.to_dict() for m in conv.history]
+    state = conv.compaction_state
+    for occurrence in (None, "bad:1", "a" * 32 + ":-1", "a" * 32 + ":01",
+                       state["pins"][1]["occurrence"]):
+        broken = deepcopy(state)
+        broken["pins"][0]["occurrence"] = occurrence
+        with pytest.raises(ValueError, match="压缩元数据"):
+            validate_compaction(broken, history)
+    legacy = deepcopy(state)
+    for pin in legacy["pins"]:
+        del pin["occurrence"]
+    validate_compaction(legacy, history)
+
+
+# Review F3: crossing a compaction threshold is not the same as exceeding capacity.
+@pytest.mark.parametrize("threshold", [.55, .75])
+def test_first_long_input_runs_without_a_summary_when_it_fits(conversation, threshold):
+    settings = CompactionSettings(auto=True, threshold=threshold)
+    conv = conversation(settings=settings)
+    task = "long input " * 6500
+    original = (Message("system", conv.runtime.system_prompt), Message("user", task))
+    size = conv.runtime.estimate_context_tokens(original)
+    budget = conv.compactor.input_budget()
+    assert budget * threshold < size <= budget - conv.compactor.headroom(budget)
+    conv.start_task(task)
+    result = conv.runtime.run(task, history=conv.history)
+    conv.finish_task(result)
+    assert result.status == "completed"
+    assert len(conv.runtime.llm.requests) == 1
+    assert conv.runtime.llm.requests[0].tool_choice != "none"
+    assert conv.runtime.llm.requests[0].messages[-1].content == task
+    assert conv.compaction_state is None and not conv.archive.path.exists()
+    assert conv.history[-2].content == task
+
+
+def test_first_input_over_safety_budget_gets_actionable_error(conversation):
+    conv = conversation(settings=CompactionSettings(auto=True))
+    task = "long input " * 8500
+    conv.start_task(task)
+    with pytest.raises(ValueError, match="超过安全输入上限.*没有可压缩.*拆分输入"):
+        conv.runtime.run(task, history=conv.history)
+    assert not conv.runtime.llm.requests
+    assert conv.history[-1].content == task
+
+
+def test_auto_keeps_recent_history_when_there_is_nothing_to_summarize(conversation):
+    conv = conversation(settings=CompactionSettings(auto=True, threshold=.1, target=.05))
+    messages = (Message("system", "fixed instructions " * 600),
+                Message("user", "任务"), Message("assistant", "回复"))
+    assert conv.compactor.before_request(messages, 1000) is messages
+    assert not conv.runtime.llm.requests
+
+
+@pytest.mark.parametrize("failure", [ValueError("corrupt archive"), OSError("disk full")])
+def test_auto_does_not_hide_archive_or_storage_errors(conversation, monkeypatch, failure):
+    conv = conversation(settings=CompactionSettings(auto=True, threshold=.3, target=.2))
+    def fail(_):
+        raise failure
+    monkeypatch.setattr(conv.archive, "archive", fail)
+    with pytest.raises(type(failure), match=str(failure)):
+        conv.compactor.before_request(large_history(), 1000)
+    assert not conv.runtime.llm.requests and conv.history == large_history()
+
+
+def test_manual_noop_is_explicit_and_does_not_reuse_previous_success(conversation):
+    from agent.compaction import CompactionNotNeeded
+    conv = conversation()
+    conv.history = (Message("user", "任务"),)
+    with pytest.raises(CompactionNotNeeded, match="无需压缩"):
+        conv.compact()
+    assert conv.compaction_state is None and not conv.runtime.llm.requests
+
+
+def test_cli_compaction_defaults_come_from_compaction_settings():
+    from cli.settings import RUNTIME_OPTIONS
+    defaults = CompactionSettings()
+    fields = {"auto-compact": "auto", "compact-threshold": "threshold", "compact-target": "target",
+              "compact-keep-tokens": "keep_tokens", "compact-max-refinements": "max_refinements"}
+    for flag, _key, value, _kind in RUNTIME_OPTIONS:
+        if flag in fields:
+            assert value == getattr(defaults, fields[flag])
+    assert defaults.threshold == .75 and defaults.target == .45
+
+
+def test_legacy_pins_restore_and_accept_a_new_identical_correction(conversation):
+    from agent.history import encoded
+    conv = conversation()
+    conv.history = correction_history("使用中文回答", "改用英文回答")
+    conv.compact()
+    # Construct the old on-disk representation, including its matching prefix.
+    state = conv.compaction_state
+    for pin in state["pins"]:
+        del pin["occurrence"]
+    heading = conv.history[1].content.split("\n", 1)[0]
+    intro = Message("user", heading + "\n" + encoded({"user_originals": state["pins"]}))
+    conv.history = (conv.history[0], intro, *conv.history[2:])
+    state["prefix"][0] = intro.to_dict()
+    conv.checkpoint(strict=True)
+    conv.store.close()
+    restored = conversation()
+    restored.history += correction_history("使用中文回答")[1:]
+    restored.compact()
+    pins = correction_pins(restored)
+    assert [p["text"] for p in pins] == ["使用中文回答", "改用英文回答", "使用中文回答"]
+    assert "occurrence" not in pins[0] and "occurrence" in pins[-1]
+
+
+def test_auto_noop_does_not_suppress_checkpoint_failure(conversation, monkeypatch):
+    conv = conversation(settings=CompactionSettings(auto=True))
+    def fail(_):
+        raise OSError("cannot persist input")
+    monkeypatch.setattr(conv.store, "save", fail)
+    with pytest.raises(OSError, match="会话保存失败"):
+        # The session layer wraps the storage error; automatic compaction must propagate it.
+        conv.runtime.run("long input " * 6500)
+    assert not conv.runtime.llm.requests

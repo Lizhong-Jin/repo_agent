@@ -5,6 +5,7 @@ import json
 import os
 from typing import Any
 
+from agent.compaction import CompactionSettings
 from llm import ConfigurationError
 from llm.thinking import thinking_options
 
@@ -60,12 +61,15 @@ class ThinkingArgument(argparse.Action):
         namespace.thinking_explicit = True
 
 
+_COMPACTION_DEFAULTS = CompactionSettings()
 RUNTIME_OPTIONS = (
-    ("auto-compact", "AGENT_AUTO_COMPACT", True, stream_value),
-    ("compact-threshold", "AGENT_COMPACT_THRESHOLD", .75, float),
-    ("compact-target", "AGENT_COMPACT_TARGET", .45, float),
-    ("compact-keep-tokens", "AGENT_COMPACT_KEEP_TOKENS", 6000, positive_int),
-    ("compact-summary-tokens", "AGENT_COMPACT_SUMMARY_TOKENS", 3000, positive_int),
+    ("auto-compact", "AGENT_AUTO_COMPACT", _COMPACTION_DEFAULTS.auto, stream_value),
+    ("compact-threshold", "AGENT_COMPACT_THRESHOLD", _COMPACTION_DEFAULTS.threshold, float),
+    ("compact-target", "AGENT_COMPACT_TARGET", _COMPACTION_DEFAULTS.target, float),
+    ("compact-keep-tokens", "AGENT_COMPACT_KEEP_TOKENS",
+     _COMPACTION_DEFAULTS.keep_tokens, positive_int),
+    ("compact-max-refinements", "AGENT_COMPACT_MAX_REFINEMENTS",
+     _COMPACTION_DEFAULTS.max_refinements, step_limit),
     ("thinking-display", "AGENT_THINKING_DISPLAY", "collapsed", display_mode),
     ("max-steps", "AGENT_MAX_STEPS", 8, step_limit),
     ("max-output-tokens", "AGENT_MAX_OUTPUT_TOKENS", 4096, int),
@@ -93,6 +97,8 @@ RUNTIME_OPTIONS = (
 
 
 def add_runtime_arguments(parser: argparse.ArgumentParser) -> None:
+    # Kept only to allow existing startup scripts to migrate without failure.
+    parser.add_argument("--compact-summary-tokens", default=None, help=argparse.SUPPRESS)
     for flag, env, default, kind in RUNTIME_OPTIONS:
         parser.add_argument(
             f"--{flag}",

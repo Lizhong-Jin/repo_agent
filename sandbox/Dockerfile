@@ -32,13 +32,8 @@ ENV PATH="/opt/lsp/node_modules/.bin:/usr/local/go/bin:/usr/local/cuda/bin:${PAT
     GOPATH=/tmp/go GOCACHE=/tmp/go-build GOMODCACHE=/tmp/go-mod \
     GOTOOLCHAIN=local GOTELEMETRY=off GOPROXY=off GOSUMDB=off GOMAXPROCS=2
 WORKDIR /opt/agent
-COPY pyproject.toml build_support.py MANIFEST.in .env.example .dockerignore uv.lock requirements-*.lock ./
-COPY dependencies ./dependencies
-COPY llm ./llm
-COPY tools ./tools
-COPY agent ./agent
-COPY cli ./cli
-COPY sandbox ./sandbox
+# .dockerignore is generated from build_manifest.py's explicit allowlist.
+COPY . ./
 RUN python -m pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements-build.lock -r requirements-lsp.lock \
     && python -m pip install --no-cache-dir --no-build-isolation --no-deps . \
     && git config --system --add safe.directory /workspace \

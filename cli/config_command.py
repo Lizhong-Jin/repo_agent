@@ -60,6 +60,8 @@ def safe_value(key, value, values):
 
 
 def fallback(key, values, root):
+    if key == "AGENT_COMPACT_SUMMARY_TOKENS":
+        return "（已弃用，忽略；使用 AGENT_COMPACT_TARGET）"
     if key == "LLM_BASE_URL":
         try:
             return get_provider(values.get("LLM_PROVIDER") or "deepseek").base_url
@@ -87,6 +89,8 @@ def show(root, *, user_only=False):
             value = fallback(key, values, root)
             if key in sources and value:
                 source += "（空值，采用默认行为）"
+        if key == "AGENT_COMPACT_SUMMARY_TOKENS":
+            source += "；已弃用，此值不再生效"
         print(f"{key} = {safe_value(key, value, values)}    [{source}]")
     if not user_only:
         print("优先级：启动参数 > 非空环境变量 > 项目配置 > 用户配置 > 内置默认。")
@@ -124,7 +128,12 @@ def validate_value(key, value):
         elif key in {"AGENT_COMPACT_THRESHOLD", "AGENT_COMPACT_TARGET"}:
             if not 0 < float(value) < 1:
                 raise ValueError
-        elif key in {"AGENT_COMPACT_KEEP_TOKENS", "AGENT_COMPACT_SUMMARY_TOKENS"}:
+        elif key == "AGENT_COMPACT_MAX_REFINEMENTS":
+            if not 0 <= int(value) <= 4:
+                raise ValueError
+        elif key == "AGENT_COMPACT_SUMMARY_TOKENS":
+            pass  # Legacy value is ignored, including during configuration validation.
+        elif key == "AGENT_COMPACT_KEEP_TOKENS":
             if int(value) < 256:
                 raise ValueError
         elif key in {
@@ -201,7 +210,7 @@ def validate_values(values):
     CompactionSettings(
         auto=options["auto_compact"], threshold=options["compact_threshold"],
         target=options["compact_target"], keep_tokens=options["compact_keep_tokens"],
-        summary_tokens=options["compact_summary_tokens"],
+        max_refinements=options["compact_max_refinements"],
     )
     ceiling = options["recovery_max_output_tokens"]
     if ceiling is not None and ceiling < options["max_output_tokens"]:

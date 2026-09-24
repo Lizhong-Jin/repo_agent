@@ -30,7 +30,7 @@ repo-agent
 ```bash
 repo-agent --sandbox native                      # macOS / Linux 原生沙箱
 repo-agent --sandbox native --sandbox-profile standard # 强制关闭 GPU；Linux / WSL2 默认自动检测
-repo-agent --sandbox local                       # 仅文件/Git 工具，不执行命令
+repo-agent --sandbox local                       # 文件/Git 工具，不注册通用命令工具
 repo-agent-build-sandbox                         # Docker 模式首次使用前构建
 repo-agent --sandbox docker --sandbox-writeback manual
 ```
@@ -44,7 +44,7 @@ Docker 会话可使用 `/diff` 查看副本变更、`/apply` 回写原项目；l
 | 模型接入 | 9 个厂商预设，支持 Chat Completions、OpenAI Responses、Anthropic Messages、Gemini generateContent；[供应商列表](docs/llm.md#接入模型) |
 | 对话界面 | 流式回复、可滚动历史、思考内容显示、模型切换、累计用量与上下文占比 |
 | 会话管理 | 按项目保存，默认恢复最后一次会话；支持命名、改名、列表和日志跟随 |
-| 上下文管理 | `/compact` 手动压缩、按预算自动压缩、原始消息归档及只读历史回查；[使用说明](docs/context-compaction.md) |
+| 上下文管理 | `/compact` 手动/自动压缩、独立思考策略与有限精简、原始消息归档及只读历史回查；[使用说明](docs/context-compaction.md) |
 | 文件与检索 | 文件读写、局部编辑、多文件严格补丁、目录操作、文件查找、内容搜索、Git 状态与差异 |
 | 隔离执行 | macOS / Linux 原生沙箱直接运行本机工具；Docker 使用工作副本，支持回写、冲突检查与备份恢复 |
 | 代码语义 | Python、JS/TS、Go、C/C++、CUDA 文件的符号、定义、引用、诊断、悬浮信息和工作区符号查询；具体能力取决于语言服务器 |
@@ -81,6 +81,7 @@ repo-agent doctor                               # 按安装模式诊断依赖和
 | `/rename 名称` 或 F2 | 修改当前会话名称 |
 | `/sessions`、`/logs --tail 100` | 查看会话列表、日志 |
 | `/clear` | 清空模型上下文，保留显示历史和累计用量 |
+| `/compact` | 压缩工作上下文，先归档原文，再保留摘要及近期消息 |
 | `/model` | 设置并切换模型 |
 | `/thinking`、`/context` | 查看思考设置、上下文占用 |
 | `/skills` | 查看可用技能 |
@@ -99,26 +100,19 @@ repo-agent doctor                               # 按安装模式诊断依赖和
 
 Docker 失败不会自动切换为 local。每次工具调用使用独立容器：工作副本文件保留，进程和 `/tmp` 不跨调用保留。Docker GPU 模式需要可用的 NVIDIA 驱动和 NVIDIA Container Toolkit；Linux / WSL2 native GPU 使用本机驱动及已准备的框架/Toolkit，无需 Docker。两者均需在实际执行环境核验依赖，详见[GPU 算子开发](docs/gpu-operators.md)。
 
+local 的 Git 工具仍会启动 Git 子进程；发现外部 clean/process 过滤器配置时拒绝查询，需使用 native/Docker。子模块查询及并发配置限制见 [Git 执行边界](docs/tools.md#git-工具的执行边界)。
+
 `get_execution_environment` 在各模式均可用，local 不启动环境探测子进程。可选 `web_search` / `web_fetch` 由主进程联网，独立于上表的命令、Python 和语言服务器权限。
 
-当前支持文本和自定义函数工具；尚无多模态输入、自动上下文压缩、跨会话知识记忆、多 Agent 协作、并行工具执行或整项任务的费用预算。保存会话用于延续对话，不会自动提炼长期知识。模型正常结束回答不等于验证通过，应结合实际测试和工具结果判断。
+当前支持文本和自定义函数工具；尚无多模态输入、跨会话知识记忆、多 Agent 协作、并行工具执行或整项任务的费用预算。保存会话用于延续对话，不会自动提炼长期知识。模型正常结束回答不等于验证通过，应结合实际测试和工具结果判断。
 
 ## 文档导航
 
-| 文档 | 内容 |
-| --- | --- |
-| [安装与卸载](docs/installation.md) | 首次安装、升级、切换安装目录、诊断、卸载与恢复 |
-| [macOS / Linux 原生沙箱](docs/native-sandbox.md) | 本机执行、权限策略、依赖及隔离限制 |
-| [启动、交互与上下文](docs/usage.md) | 启动方式、完整命令表、快捷键、任务状态、上下文估算 |
-| [会话管理](docs/sessions.md) | 命名、恢复、保存位置、兼容和沙箱关系 |
-| [配置参考](docs/configuration.md) | 配置优先级、模板与内置默认值、修改及备份恢复 |
-| [思考设置](docs/thinking.md) | 模型档位、可见思考、偏好与能力覆盖 |
-| [日志与文件保护](docs/logging.md) | cat / tail / 跟随、两类日志、统计口径与文件保护 |
-| [Sandbox](sandbox/README.md) | 副本、执行策略、自动回写、冲突与备份恢复 |
-| [GPU 算子开发](docs/gpu-operators.md) | 环境检测、GPU 配置、CUDA / Triton 自检 |
-| [Skills](docs/skills.md) | 内置及项目技能、发现和加载规则 |
-| [项目架构](Project_Architecture.md) | 当前模块、调用流程与状态归属 |
-| [统一模型接口](docs/llm.md) | Python API、协议适配、原生消息状态、错误与流式事件 |
-| [开发指南](docs/development.md) | Runtime、工具扩展、语言服务器与测试 |
+完整目录见 [文档首页](docs/index.md)。常用入口：
 
-默认测试使用模拟模型响应。真实 Docker、多语言和 CUDA 验证需要相应环境及显式开关，命令见[开发与验证](docs/development.md#开发环境与验证)。
+- 开始使用：[安装与升级](docs/installation.md)、[命令与快捷键](docs/usage.md)、[配置参考](docs/configuration.md)。
+- 管理对话：[会话恢复](docs/sessions.md)、[上下文压缩](docs/context-compaction.md)、[思考设置](docs/thinking.md)、[日志](docs/logging.md)。
+- 执行任务：[原生沙箱](docs/native-sandbox.md)、[Docker 与回写](sandbox/README.md)、[GPU 开发](docs/gpu-operators.md)、[Skills](docs/skills.md)、[Web 搜索](docs/web-search.md)、[网页读取](docs/web-fetch.md)。
+- 参与开发：[项目架构](Project_Architecture.md)、[开发与验证](docs/development.md)、[工具开发](docs/tools.md)、[模型接口](docs/llm.md)、[模型目录](docs/model-catalog.md)、[构建与分发](docs/distribution.md)。
+
+默认测试使用模拟模型响应。真实 native、Docker、多语言、GPU 和发行安装验证需要相应环境及显式开关，见[验证矩阵](docs/development.md#开发环境与验证)。

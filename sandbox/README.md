@@ -1,19 +1,18 @@
 # Docker 沙箱与回写
 
-[返回 README](../README.md) · [会话管理](../docs/sessions.md)
+[文档首页](../docs/index.md) · [项目首页](../README.md) · [会话管理](../docs/sessions.md)
 
-CLI 首次默认使用 macOS / Linux native；本文描述显式选择 `--sandbox docker` 的行为。macOS / Linux 也支持直接修改原项目的 [native 后端](../docs/native-sandbox.md)。Docker 模式下，宿主机只运行模型循环、持有密钥、保存日志并管理容器；文件、命令、Python 和 Git 工具均在容器中执行。Python 库直接调用 `create_default_tools` 提供本地文件、Git 和不启动探测子进程的基础环境查询；需要命令执行和隔离时使用 `SandboxSession(root).tools()`。
+CLI 首次默认使用 macOS / Linux native；本文描述显式选择 `--sandbox docker` 的行为。macOS / Linux 也支持直接修改原项目的 [native 后端](../docs/native-sandbox.md)。Docker 模式下，宿主机运行模型循环、管理密钥/会话/日志/容器，并提供技能加载、历史回查及可选 Web 工具；文件、命令、Python 和 Git 工具均在容器中执行。Python 库直接调用 `create_default_tools` 提供本地文件、Git 和不启动探测子进程的基础环境查询；需要命令执行和隔离时使用 `SandboxSession(root).tools()`。
 
 ## 准备与使用
 
-在 Agent 安装目录中更新安装、构建镜像（此步骤需要网络与运行中的 Docker）：
+先按[安装说明](../docs/installation.md)安装 Agent。源码首次选择 Docker 可运行 `./install.sh --mode docker`，其中包含镜像构建；已有安装只需执行以下构建入口（需要网络及运行中的 Docker，独立发行版也可用）：
 
 ```bash
-.venv/bin/python -m pip install -e .
 repo-agent-build-sandbox
 ```
 
-构建只复制 Agent 包，不复制 `.env` 或整个项目工作目录。镜像包含 Python/pylsp、Node.js/TypeScript Language Server、Go/gopls、clangd、C/C++ 工具链、Git 和 Agent 自身依赖；项目需要的测试框架和依赖应加入受信任的派生镜像，再使用 `--sandbox-image IMAGE` 指定。工具执行不开放网络，不提供模型可调用的提权接口。
+构建按 [统一分发清单](../docs/distribution.md#统一分发清单)复制源码、构建配置与公开资源，包括 `.env.example` 模板；不复制真实 `.env`、日志或整个任务项目。镜像包含 Python/pylsp、Node.js/TypeScript Language Server、Go/gopls、clangd、C/C++ 工具链、Git 和 Agent 自身依赖；项目需要的测试框架和依赖应加入受信任的派生镜像，再使用 `--sandbox-image IMAGE` 指定。工具执行不开放网络，不提供模型可调用的提权接口。
 
 随后在任务项目目录启动：
 
@@ -22,7 +21,7 @@ repo-agent --sandbox docker
 ```
 
 - `/diff`：查看副本与当前宿主机文件的差异（有输出长度限制）。
-- `/apply`：明确要求回写新增、修改和删除的普通文件；遇到宿主机改动会拒绝。
+- `/apply`：明确要求回写新增、修改和删除的普通文件；待回写路径与宿主机基线冲突时拒绝。
 - `/clear`：清空模型上下文并保存，保留副本。
 - `/new`：保存旧会话并开始全新对话，保留当前副本和文件修改。
 
@@ -37,9 +36,9 @@ repo-agent --sandbox-review /absolute/session-directory
 repo-agent --sandbox-review /absolute/session-directory --apply
 ```
 
-会话目录位于系统临时目录，包含宿主机维护的 `state.json` 和 `workspace/`。它不会挂载整个会话目录，只挂载 `workspace/`。临时目录可能被系统清理，需要长期保存时应备份整个沙箱目录。自动恢复依赖快照中记录的原路径；移动目录不会自动更新该路径，移动后可用 `--sandbox-review` 显式查看新位置。无需保留时手动删除该会话目录。不要编辑 `state.json`。
+会话目录位于系统临时目录，包含宿主机维护的 `state.json` 和 `workspace/`。会话目录中只挂载 `workspace/`，不暴露 `state.json` 或备份；每次调用另行挂载只读请求文件，并创建容器临时文件系统。临时目录可能被系统清理，需要长期保存时应备份整个沙箱目录。自动恢复依赖快照中记录的原路径；移动目录不会自动更新该路径，移动后可用 `--sandbox-review` 显式查看新位置。无需保留时手动删除该会话目录。不要编辑 `state.json`。
 
-默认 native 通过原生沙箱直接编辑原项目；也可显式使用 `--sandbox local`：文件和 Git 工具在宿主机运行，不具有 Docker 隔离；任意命令与 Python 工具不注册。需要执行测试或脚本时使用 Docker 或 macOS / Linux native 模式。Docker 缺失、镜像缺失、启动失败均不会自动转为 local。
+默认 native 通过原生沙箱直接编辑原项目；也可显式使用 `--sandbox local`：文件和 Git 工具在宿主机运行，不具有 Docker 隔离；通用命令与 Python 工具不注册；Git 子进程仍会运行，但拒绝外部 clean/process 过滤器配置，见 [Git 执行边界](../docs/tools.md#git-工具的执行边界)。需要执行测试或脚本时使用 Docker 或 macOS / Linux native 模式。Docker 缺失、镜像缺失、启动失败均不会自动转为 local。
 
 更新工具保护规则后，请重新构建镜像，让容器使用同一版本：`repo-agent-build-sandbox`。凭据及元数据保护规则共用 `tools/_internal/file_policy.py`，额外的缓存和依赖排除规则位于 `sandbox/policy.py`。
 
@@ -110,7 +109,7 @@ repo-agent --sandbox-review /absolute/session-directory --restore-backup 32位�
 
 ```bash
 .venv/bin/python -m pytest -q
-RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py
+RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py tests/test_writeback.py tests/test_multilang_sandbox.py
 ```
 
 默认测试包括副本筛选、回写、冲突、符号链接/硬链接/FIFO 拒绝、全部工具代理、缺失 Docker 时关闭执行、容器参数和中断清理。真实容器测试仅在显式设置 `RUN_SANDBOX_DOCKER_TESTS=1` 时运行，需要预先构建镜像，验证跨工具文件可见性、宿主机路径与密钥不可见、网络禁用、Git 与显式回写。

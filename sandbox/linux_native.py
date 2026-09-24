@@ -72,18 +72,18 @@ class LinuxNativeBackend(NativeBackend):
         return tuple(sorted((p for p in paths if p.exists()), key=str))
 
     def _check_workspace(self):
-        super()._check_workspace()
         for path in self.read_paths:
             if self.workspace.is_relative_to(path):
                 raise ValueError("Linux native 工作区不能位于只读系统或解释器目录内")
         for path in (Path("/proc"), Path("/dev"), Path("/sys")):
             if self.workspace.is_relative_to(path) or path.is_relative_to(self.workspace):
                 raise ValueError("Linux native 工作区与系统虚拟文件系统冲突")
-        for directory, _, names in os.walk(self.workspace, followlinks=False):
-            for name in names:
-                mode = (Path(directory) / name).lstat().st_mode
-                if not (stat.S_ISREG(mode) or stat.S_ISLNK(mode)):
-                    raise ValueError("Linux native 工作区含 socket/FIFO/设备等特殊文件，拒绝执行")
+        super()._check_workspace()
+
+    def _check_workspace_file(self, path: str, info: os.stat_result):
+        super()._check_workspace_file(path, info)
+        if not (stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)):
+            raise ValueError("Linux native 工作区含 socket/FIFO/设备等特殊文件，拒绝执行")
 
     def _mount_policy(self, read_paths, *, git_read):
         masks, git_paths = [], []

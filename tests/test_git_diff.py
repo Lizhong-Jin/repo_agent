@@ -172,11 +172,13 @@ def test_process_start_failure_mapping(tmp_path, monkeypatch, stage, cause, expe
         calls.append(command)
         if stage == "diff" and len(calls) == 1:
             return process_result(stdout=str(tmp_path.resolve()) + "\n")
+        if stage == "diff" and "config" in command:
+            return process_result(exit_code=1)
         raise ProcessStartError(cause)
 
     monkeypatch.setattr(tool.runner, "run", run)
     assert tool.execute({}).error_code == expected_code
-    assert len(calls) == (1 if stage == "detection" else 2)
+    assert len(calls) == (1 if stage == "detection" else 3)
 
 
 @pytest.mark.parametrize("stage", ["detection", "diff"])
@@ -188,11 +190,13 @@ def test_timeout_result_is_handled_before_exit_code(tmp_path, monkeypatch, stage
         calls.append(command)
         if stage == "diff" and len(calls) == 1:
             return process_result(stdout=str(tmp_path.resolve()) + "\n")
+        if stage == "diff" and "config" in command:
+            return process_result(exit_code=1)
         return process_result(exit_code=None, timed_out=True)
 
     monkeypatch.setattr(tool.runner, "run", run)
     assert tool.execute({}).error_code == "GIT_TIMEOUT"
-    assert len(calls) == (1 if stage == "detection" else 2)
+    assert len(calls) == (1 if stage == "detection" else 3)
 
 
 def test_non_repository_is_distinct_from_timeout(tmp_path, monkeypatch):

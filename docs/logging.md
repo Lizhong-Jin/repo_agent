@@ -1,6 +1,6 @@
 # 日志与文件保护
 
-[返回 README](../README.md) · [会话管理](sessions.md)
+[文档首页](index.md) · [项目首页](../README.md) · [会话管理](sessions.md)
 
 ## 查看日志
 
@@ -57,14 +57,14 @@ session_时间_随机标识.trace.jsonl
 
 ## 事件与统计口径
 
-追踪实现位于 [agent/Tracing.py](../agent/Tracing.py)：`RunTrace` 记录一次任务的模型及工具调用，`Tracer` 写入文件和运行片段汇总。CLI 管理创建、关闭及 `/new` 时的切换。
+追踪实现位于 [agent/Tracing.py](../agent/Tracing.py)：`RunTrace` 记录一段执行的模型及工具调用（任务和压缩分别创建实例），`Tracer` 写入文件和运行片段汇总。CLI 管理创建、关闭及 `/new` 时的切换。
 
-JSONL 包含 `schema_version`、带时区的 `timestamp`、`session_id`、`run_id` 及任务事件的唯一 `task_id`。主要事件包括 `session_start/end`、`task_start/end`、`model_start/end`、`tool_start/end`、`model_changed`、`recovery` 和 `skill_loaded`。
+JSONL 包含 `schema_version`、带时区的 `timestamp`、`session_id`、`run_id` 及任务事件的唯一 `task_id`。主要事件包括 `session_start/end`、`task_start/end`、`model_start/end`、`tool_start/end`、`model_changed`、`recovery`、`skill_loaded` 及 `compaction_start/progress/end`。
 
-- **模型调用**：开始、结束、耗时、结束原因及 token 用量。模型次数是 Runtime 调用模型接口的尝试次数，包括失败和中断；底层 HTTP 重试不另算一次 Runtime 调用。
+- **模型调用**：开始、结束、耗时、结束原因及 token 用量。按调用模型接口的尝试计数，包括失败和中断；底层 HTTP 重试不另算。记录中的 `purpose=task` / `compaction` 区分普通任务与摘要请求。
 - **工具调用**：模型轮次、名称、调用 ID、路径与参数摘要、成功/失败/中断状态、错误码和耗时。命令另记录 `exit_code`、`timed_out`、`cleanup_failed`；工具调用成功不等于命令退出码为零。
-- **任务汇总**：模型和工具次数、失败/中断、用量、总耗时。每条自然语言输入是一项任务，管理命令与空输入不算任务。
-- **片段汇总**：任务数量与状态分布、累计用量、任务执行总耗时，以及包含输入等待的片段总耗时。
+- **执行记录汇总**：每个 `RunTrace` 的模型和工具次数、状态、用量和耗时。普通自然语言任务和压缩各自产生 `task_start/end`；压缩可沿用当前任务序号，但有独立 `task_id`。手动 `/compact` 也可能产生这类记录。
+- **运行片段汇总**：`tasks` 与状态分布统计收到的 `task_end`，因此可能包含压缩，不能直接当作用户输入次数。`task_elapsed_seconds` 是这些记录耗时之和；自动压缩嵌套在任务内，时间可能重叠，不能当作实际经过时间。`elapsed_seconds` 才是含等待在内的运行片段总时长。
 
 工具参数只保留路径、小型选项及正文长度，不重复记录文件正文、编辑片段或工具返回正文。追踪元数据不记录 Key、系统提示词和完整模型请求；`skill_loaded` 记录技能名、来源、SHA-256 和加载方式。
 
@@ -72,13 +72,13 @@ JSONL 包含 `schema_version`、带时区的 `timestamp`、`session_id`、`run_i
 
 未返回的用量显示“未返回”；仅部分请求有用量时，显示已知小计和覆盖次数，不按零补齐，也不等同于实际费用。详细计时字段见[流式事件与计时](llm.md#流式事件与计时)。
 
-日志写入失败不会重试或撤销已执行的文件操作。对话日志错误在检查点提示，追踪错误在退出时提示。强制结束或断电可能缺少结束事件，最后一个完整任务之后的内容不保证全部保留；恢复依据会话快照。
+日志写入失败不会重试或撤销已执行的文件操作。对话日志错误在检查点提示，追踪错误在退出时提示。强制结束或断电可能缺少结束事件，最后一次成功保存检查点之后的上下文不保证全部保留；恢复依据会话快照及其引用的原文档案。
 
 ## 文件保护边界
 
 文件工具与 Docker 导入/回写共用 [tools/_internal/file_policy.py](../tools/_internal/file_policy.py)。受保护项包括任意层级的 `.env` / `.env.*`、`.git`、安装元数据、`.codex`、`.agents`、`logs`、常见凭据目录与文件、私钥扩展名，以及 `AGENT_ENV_FILE`、`AGENT_LOG_DIR` 指定路径和用户会话状态目录。
 
-文件工具检查符号链接原名和目标，拒绝多硬链接普通文件；列表和搜索过滤受保护项。Git diff 先筛选路径，再读取差异，并禁用重命名检测，避免引用受保护来源。Docker 副本额外排除虚拟环境、依赖目录和缓存，见 [Sandbox](../sandbox/README.md#工作副本与-git-语义)。
+文件工具检查符号链接原名和目标，拒绝多硬链接普通文件；列表和搜索过滤受保护项。Git diff 先筛选路径，再读取差异，并禁用重命名检测，避免引用受保护来源。local diff/status 还拒绝外部 clean/process 过滤器；完整范围与并发限制见 [Git 执行边界](tools.md#git-工具的执行边界)。Docker 副本额外排除虚拟环境、依赖目录和缓存，见 [Sandbox](../sandbox/README.md#工作副本与-git-语义)。
 
 native 不导入工作副本；原项目和只读解释器目录按平台规则映射，已有受保护路径会被拒绝或遮蔽，详见[原生沙箱](native-sandbox.md)。
 

@@ -15,8 +15,24 @@ from pathlib import Path
 
 from lock_dependencies import export_locks
 
+# This policy module is stdlib-only; setuptools is installed later in the build venv.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from build_manifest import (  # noqa: E402
+    CONTEXT_ARCHIVE,
+    RESOURCE_FILES,
+    bootstrap_files,
+    check_configuration,
+    copy_files,
+    source_files,
+    verify_release_archive,
+    verify_wheel,
+)
+
 
 def build(root, output, uv):
+    check_configuration(root)
+    sources = source_files(root)
+    bootstrap = bootstrap_files(root)
     export_locks(root, uv, check=True)
     node = root / "dependencies/node"
     declared = json.loads((node / "package.json").read_text())["dependencies"]
@@ -35,34 +51,10 @@ def build(root, output, uv):
         work = Path(temporary)
         stage = work / "source"
         stage.mkdir()
-        # Only tracked-purpose sources/resources; never package a venv, user config, or logs.
-        top = (
-            "pyproject.toml",
-            "build_support.py",
-            "MANIFEST.in",
-            ".env.example",
-            ".dockerignore",
-            "uv.lock",
-            "requirements-core.lock",
-            "requirements-lsp.lock",
-            "requirements-build.lock",
-        )
-        for name in top:
-            shutil.copy2(root / name, stage / name)
-        for package in ("agent", "cli", "llm", "sandbox", "tools"):
-            for path in (root / package).rglob("*"):
-                if (
-                    path.is_file()
-                    and not path.is_symlink()
-                    and (path.suffix == ".py" or path.name in {"SKILL.md", "Dockerfile"})
-                ):
-                    target = stage / path.relative_to(root)
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(path, target)
-        for name in ("package.json", "package-lock.json"):
-            target = stage / "dependencies/node" / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(root / "dependencies/node" / name, target)
+        copy_files(root, stage, sources)
+        bundle = work / "bundle"
+        bundle.mkdir()
+        copy_files(root, bundle, bootstrap)
         environment = work / "build-env"
         subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
         python = str(environment / "bin/python")
@@ -93,31 +85,14 @@ def build(root, output, uv):
             check=True,
         )
         (wheel,) = (work / "wheels").glob("*.whl")
-        bundle = work / "bundle"
-        (bundle / "wheels").mkdir(parents=True)
+        verify_wheel(wheel, stage)
+        (bundle / "wheels").mkdir()
         shutil.copy2(wheel, bundle / "wheels" / wheel.name)
-        for name in (
-            "install.sh",
-            "install-release.sh",
-            "uninstall.sh",
-            ".env.example",
-            "pyproject.toml",
-            "uv.lock",
-            "requirements-core.lock",
-            "requirements-lsp.lock",
-            "requirements-build.lock",
-        ):
-            shutil.copy2(root / name, bundle / name)
-        # Bootstrap and recovery remain usable even if the installed venv is unavailable.
-        (bundle / "cli").mkdir()
-        for path in (stage / "cli").glob("*.py"):
-            shutil.copy2(path, bundle / "cli" / path.name)
         with zipfile.ZipFile(wheel) as archive:
-            for name in archive.namelist():
-                if name.startswith("cli/resources/") and not name.endswith("/"):
-                    target = bundle / name
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_bytes(archive.read(name))
+            for name in [*(target for _, target in RESOURCE_FILES), CONTEXT_ARCHIVE]:
+                target = bundle / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(archive.read(name))
         files = {
             str(path.relative_to(bundle)): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in sorted(bundle.rglob("*"))
@@ -142,6 +117,7 @@ def build(root, output, uv):
                 for path in sorted(bundle.rglob("*")):
                     if path.is_file():
                         archive.add(path, arcname=str(path.relative_to(bundle)), recursive=False)
+            verify_release_archive(Path(temporary_archive), bundle)
             os.replace(temporary_archive, target)
         finally:
             Path(temporary_archive).unlink(missing_ok=True)

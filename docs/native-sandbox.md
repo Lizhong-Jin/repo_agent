@@ -1,6 +1,6 @@
 # macOS / Linux 原生沙箱
 
-[返回 README](../README.md) · [Docker 沙箱](../sandbox/README.md)
+[文档首页](index.md) · [项目首页](../README.md) · [Docker 沙箱](../sandbox/README.md)
 
 首次安装默认使用 `native`（已显式安装其他模式时，以安装记录为准）：通过 macOS Seatbelt 或 Linux Bubblewrap + seccomp 执行文件/Git 工具、命令、Python 和语言服务器，直接修改原项目。首次默认的 `repo-agent` 等同于 `repo-agent --sandbox native`：
 
@@ -84,7 +84,7 @@ repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all
 
 文件保护、禁止联网、独立进程 namespace 和 seccomp 保持生效。`get_execution_environment` 的 execution 部分报告 `gpu_access`（请求的 profile、实际 profile、授权设备、启动探测结果和无显存配额），gpu 部分仍报告框架依赖及实际可用性。GPU 驱动由宿主机共享，native 不提供显存/算力配额、独占访问或恶意 GPU 程序之间的强隔离；单卡设备映射与 CUDA_VISIBLE_DEVICES 不等价于多租户安全边界。MIG、NVSwitch/Fabric Manager、MPS、ROCm/AMD 及分布式网络通信不在当前支持范围；需要这些环境时保持失败并单独适配，不开放整个 `/dev`、`/sys` 或宿主机 socket。
 
-当前开发机没有 NVIDIA GPU；单元测试和普通 Linux namespace 回归不能替代真实 Linux/WSL2 驱动验证。真实硬件测试入口见本文末尾。
+单元测试和普通 Linux namespace 回归不能替代真实 Linux/WSL2 驱动验证。真实硬件测试入口见本文末尾。
 
 ## macOS 实现与权限
 
@@ -117,6 +117,10 @@ repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all
 系统读取白名单还包括 `/usr`、`/bin`、`/sbin`、`/opt/homebrew`、部分 `/Library` 和 `/System` 子目录、`/private/etc` 及必要的系统数据库目录；具体列表见 `NativeBackend._read_paths()`。这意味着隔离规则不是“只能读取项目”，也不保证隐藏白名单外的文件元数据。当前没有按命令临时追加任意目录权限的 CLI 开关。
 
 保护规则按路径和文件名执行，不扫描内容判断是否含密钥。普通源码里硬编码的密钥仍可能被读到。符号链接不能扩大目标权限；已有普通文件硬链接会让工作区检查失败，新建硬链接也被禁止。
+
+## 每次调用的工作区检查
+
+工作区检查仍在每次工具调用前执行，不按 `.gitignore`、`.venv` 或日志目录剪枝，也不跨调用缓存。Linux 的硬链接和特殊文件检查共享一次遍历、每个条目的一份新鲜元数据。Linux 的保护路径挂载策略仍另行扫描工作区及只读依赖树，不复用旧扫描结果。可运行 `python3 scripts/benchmark_native_scan.py --workspace . --repeats 7` 对比旧版两遍检查与当前实现；测量范围和本机数据见 [扫描基准](native-scan-benchmark-2026-09-24.md)。
 
 ## 文件、会话与限制
 
@@ -153,10 +157,10 @@ Apple 将 `sandbox-exec` 标记为弃用；不同 macOS 版本和外层沙箱可
 
 ## 验证
 
-常规测试验证平台分派、缺失依赖时拒绝执行、挂载策略、CLI 默认值、配置兼容和会话模式。真实 macOS 测试：
+以下命令在已安装开发依赖的源码目录运行，见[开发环境](development.md#开发环境与验证)。常规测试验证平台分派、缺失依赖时拒绝执行、挂载策略、CLI 默认值、配置兼容和会话模式。真实 macOS 测试：
 
 ```bash
-RUN_SANDBOX_NATIVE_TESTS=1 python -m pytest tests/test_native_sandbox.py -q
+RUN_SANDBOX_NATIVE_TESTS=1 .venv/bin/python -m pytest tests/test_native_sandbox.py tests/test_git_execution_policy.py tests/test_apply_patch.py -q
 ```
 
 测试在临时目录验证直接写入、脚本执行、凭据保护、目录越界、符号链接、硬链接、网络限制、子进程继承、Git 查询、超时输出保留、脱离会话的子进程清理及故障后的只读诊断，不调用真实模型。
@@ -164,7 +168,7 @@ RUN_SANDBOX_NATIVE_TESTS=1 python -m pytest tests/test_native_sandbox.py -q
 真实 Linux 测试（建议以普通用户执行）：
 
 ```bash
-RUN_SANDBOX_LINUX_TESTS=1 python -m pytest tests/test_linux_native.py tests/test_linux_process_supervisor.py tests/test_process_supervisor.py tests/test_process_runner.py tests/test_run_command.py -q
+RUN_SANDBOX_LINUX_TESTS=1 .venv/bin/python -m pytest tests/test_linux_native.py tests/test_linux_process_supervisor.py tests/test_process_supervisor.py tests/test_process_runner.py tests/test_run_command.py tests/test_git_execution_policy.py tests/test_apply_patch.py -q
 ```
 
 Linux 测试检查文件与网络隔离、符号链接、已有硬链接、敏感路径每次调用重新遮蔽、保护目录祖先禁止移动、只读 Git、Python 语言服务（已安装时）、脱离会话且忽略 TERM 的子进程清理、正常退出后的双重 fork 后台进程清理、持续输出下的总超时与双流截断、取消后的恢复、非 UTF-8 进程名，以及默认 CLI 会话保存。无需 Linux 的单元测试还覆盖 PID 复用、pidfd 句柄关闭、旧内核回退及权限失败。
@@ -174,11 +178,11 @@ Linux 在 macOS 上可借助临时 Linux 虚拟机或容器进行验证；嵌套
 真实 NVIDIA Linux / WSL2（缺少硬件或 CUDA 不可用时失败，不跳过或回退 CPU）：
 
 ```bash
-RUN_NATIVE_GPU_TESTS=1 python -m pytest tests/test_linux_native_gpu.py -q
+RUN_NATIVE_GPU_TESTS=1 .venv/bin/python -m pytest tests/test_linux_native_gpu.py -q
 # Linux 单卡验证；WSL2 仅支持 all
-RUN_NATIVE_GPU_TESTS=1 NATIVE_TEST_GPUS=0 python -m pytest tests/test_linux_native_gpu.py -q
+RUN_NATIVE_GPU_TESTS=1 NATIVE_TEST_GPUS=0 .venv/bin/python -m pytest tests/test_linux_native_gpu.py -q
 # 同时验证 CUDA 扩展、PyTorch 和 Triton；需预装这些依赖及 Toolkit
-RUN_NATIVE_GPU_TESTS=1 RUN_NATIVE_GPU_OPERATORS=1 python -m pytest tests/test_linux_native_gpu.py -q
+RUN_NATIVE_GPU_TESTS=1 RUN_NATIVE_GPU_OPERATORS=1 .venv/bin/python -m pytest tests/test_linux_native_gpu.py -q
 ```
 
 硬件测试验证默认 auto 启用 GPU、实际 kernel、子进程 GPU 访问、GPU 启用时仍禁止目录越界/凭据读取/网络，以及显式 standard 不暴露 GPU。可选算子测试复用 `sandbox.operator_smoke` 的 CUDA 扩展和 Triton 计算正确性检查。

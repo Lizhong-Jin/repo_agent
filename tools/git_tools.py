@@ -15,8 +15,52 @@ from ._internal.file_policy import is_credential_path
 from ._internal.process_runner import ProcessRunner, ProcessStartError
 
 
+class _GitFilterPolicy:
+    """Shared gate for Git commands that can inspect worktree content."""
+
+    def _check_external_filters(self, repo_root: Path) -> ToolResult | None:
+        """Fail closed before Git can normalize any worktree file.
+
+        Check the effective configuration, including include/includeIf and worktree
+        config. Refuse even currently unused drivers: attributes can select them
+        without changing config. This is a preflight check, not an OS sandbox or
+        an atomic guarantee against concurrent host edits to Git configuration.
+        """
+        if self.execution_allowed:
+            return None
+        result = self.runner.run(
+            [
+                "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+                "config", "--includes", "--null", "--get-regexp",
+                r"^filter\..*\.(clean|process)$",
+            ],
+            cwd=repo_root,
+            timeout_seconds=self.timeout_seconds,
+        )
+        if result.timed_out:
+            return tool_error("GIT_TIMEOUT", "Git filter configuration check timed out.")
+        if result.cleanup_error or result.stdout_truncated or result.stderr_truncated:
+            return tool_error("GIT_CONFIG_CHECK_FAILED", "Cannot fully verify Git filter configuration.")
+        if result.exit_code == 1 and not result.stdout:
+            return None  # git config reports no matching keys with exit status 1.
+        if result.exit_code != 0:
+            return tool_error("GIT_CONFIG_CHECK_FAILED", "Cannot verify Git filter configuration.")
+        # --null encodes each entry as key LF value NUL; never expose commands.
+        entries = result.stdout.split("\0")
+        if not result.stdout.endswith("\0") or any("\n" not in item for item in entries[:-1]):
+            return tool_error("GIT_CONFIG_CHECK_FAILED", "Invalid Git filter configuration response.")
+        # Do not strip: Unicode whitespace can still be a shell command name.
+        if any(item.partition("\n")[2] for item in entries[:-1]):
+            return tool_error(
+                "GIT_EXTERNAL_FILTER_REQUIRES_SANDBOX",
+                "Repository clean/process filters may execute commands. "
+                "Local Git tools refuse this configuration; use native or Docker isolation.",
+            )
+        return None
+
+
 # GitDiffTool
-class GitDiffTool:
+class GitDiffTool(_GitFilterPolicy):
     """Show bounded Git diffs inside a workspace repository."""
 
     def __init__(
@@ -27,6 +71,7 @@ class GitDiffTool:
         max_context_lines: int = 20,
         max_output_bytes: int = 64 * 1024,
         timeout_seconds: int = 30,
+        execution_allowed: bool = False,
     ) -> None:
         self.workspace_root = Path(workspace_root).resolve(strict=True)
         if not self.workspace_root.is_dir():
@@ -43,6 +88,11 @@ class GitDiffTool:
         self.max_context_lines = max_context_lines
         self.max_output_bytes = max_output_bytes
         self.timeout_seconds = timeout_seconds
+        if type(execution_allowed) is not bool:
+            raise ValueError("execution_allowed must be a boolean")
+        # Trusted host setting, never a model argument. The caller must establish
+        # isolation before allowing repository-configured subprocesses.
+        self.execution_allowed = execution_allowed
         self.git_env = self._git_environment()
         self.git_env.update({
             "GIT_CONFIG_COUNT": "1",
@@ -60,8 +110,10 @@ class GitDiffTool:
                 "mode='working' shows unstaged tracked changes, "
                 "mode='staged' shows staged changes, and "
                 "mode='head' shows tracked changes relative to HEAD. "
-                "Untracked files are not included. "
+                "Untracked files and submodule worktree dirtiness are not included; "
+                "submodule commit changes are shown in short format. "
                 "External diff programs and text conversion are disabled. "
+                "Repositories with external clean/process filters require isolated execution. "
                 "If output is truncated, retry with paths to narrow the diff."
             ),
             parameters={
@@ -244,6 +296,8 @@ class GitDiffTool:
             "diff",
             "--no-ext-diff",
             "--no-textconv",
+            "--submodule=short",
+            "--ignore-submodules=dirty",
             "--no-color",
             f"--unified={context_lines}",
         ]
@@ -255,6 +309,9 @@ class GitDiffTool:
             command.append("--")
             command.extend(git_paths)
         try:
+            failure = self._check_external_filters(repo_root)
+            if failure is not None:
+                return failure
             # Enumerate without patch content first, including deleted paths.
             # Disable renames so an allowed destination cannot reveal a protected
             # source's historical content through rename/copy detection.
@@ -281,6 +338,10 @@ class GitDiffTool:
                         return tool_error("GIT_ERROR", "Unable to check changed paths.")
                     safe_paths.append(name)
                 if safe_paths:
+                    # Re-read config before the second Git invocation as well.
+                    failure = self._check_external_filters(repo_root)
+                    if failure is not None:
+                        return failure
                     # Replace directory selectors with the verified literal files.
                     prefix = command[:command.index("--")] if "--" in command else command
                     result = self.runner.run(
@@ -354,7 +415,7 @@ _STATUS_MAP = {
     "C": "copied",
     "U": "unmerged",
 }
-class GitStatusTool:
+class GitStatusTool(_GitFilterPolicy):
     """Return structured Git working-tree status."""
 
     def __init__(
@@ -365,6 +426,7 @@ class GitStatusTool:
         max_entries: int = 500,
         max_output_bytes: int = 64 * 1024,
         timeout_seconds: int = 30,
+        execution_allowed: bool = False,
     ) -> None:
         self.workspace_root = Path(workspace_root).resolve(strict=True)
         if not self.workspace_root.is_dir():
@@ -381,6 +443,9 @@ class GitStatusTool:
         self.max_entries = max_entries
         self.max_output_bytes = max_output_bytes
         self.timeout_seconds = timeout_seconds
+        if type(execution_allowed) is not bool:
+            raise ValueError("execution_allowed must be a boolean")
+        self.execution_allowed = execution_allowed
         self.git_env = self._git_environment()
         self.git_env.update({
             "GIT_CONFIG_COUNT": "1",
@@ -397,6 +462,8 @@ class GitStatusTool:
                 "Show structured Git working-tree status for a repository "
                 "inside the workspace. Reports staged, unstaged, renamed, "
                 "deleted, conflicted, and untracked paths. "
+                "Submodule worktree dirtiness is ignored; commit changes are still reported. "
+                "External clean/process filters require isolated execution. "
                 "All returned paths are workspace-relative; untracked files are listed "
                 "individually. Credential paths, including either side of a rename, are "
                 "excluded. scope_clean only describes visible changes in the returned "
@@ -573,12 +640,16 @@ class GitStatusTool:
             "--porcelain=v2",
             "-z",
             "--branch",
+            "--ignore-submodules=dirty",
             ("--untracked-files=all" if include_untracked else "--untracked-files=no"),
         ]
         if git_paths:
             command.append("--")
             command.extend(git_paths)
         try:
+            failure = self._check_external_filters(repo_root)
+            if failure is not None:
+                return failure
             result = self.runner.run(
                 command,
                 cwd=repo_root,
@@ -847,4 +918,3 @@ class GitStatusTool:
             return "Git command failed."
         # Avoid returning arbitrarily large infrastructure errors.
         return message[:2000]
-

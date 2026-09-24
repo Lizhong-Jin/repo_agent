@@ -1,6 +1,6 @@
 # 项目架构
 
-[返回 README](README.md) · [开发指南](docs/development.md)
+[文档首页](docs/index.md) · [项目首页](README.md) · [开发指南](docs/development.md)
 
 本文描述当前代码结构。入口是 `repo-agent`，模型请求和会话管理运行在宿主机；默认使用 macOS / Linux native 后端直接编辑项目，可显式选择 local 或 Docker。
 
@@ -15,13 +15,15 @@
 | Agent 循环 | [agent/runtime.py](agent/runtime.py) | 构造请求、顺序执行工具、截断恢复、返回有效历史 |
 | Skills | [agent/skills/registry.py](agent/skills/registry.py)、[agent/skills/tool.py](agent/skills/tool.py) | 发现并校验技能，显式或按需加载正文 |
 | 模型层 | [llm/client.py](llm/client.py)、[llm/schemas.py](llm/schemas.py)、[llm/adapters/](llm/adapters/) | 同步/异步调用、流式解析、协议转换、原生状态和错误 |
-| 模型能力 | [llm/model_limits.py](llm/model_limits.py)、[llm/thinking_profiles.py](llm/thinking_profiles.py)、[llm/thinking_catalog.py](llm/thinking_catalog.py) | 上下文元数据查询、思考能力匹配与校验 |
+| 上下文压缩 | [agent/compaction.py](agent/compaction.py)、[agent/history.py](agent/history.py)、[llm/independent.py](llm/independent.py) | 请求前自动检查、手动压缩、独立摘要请求、原文归档与只读回查 |
+| 模型能力 | [llm/model_limits.py](llm/model_limits.py)、[llm/thinking_profiles.py](llm/thinking_profiles.py)、[llm/model_catalog.py](llm/model_catalog.py) | 上下文元数据查询、思考能力匹配与校验 |
 | 工具 | [tools/factory.py](tools/factory.py)、[tools/](tools/) | 文件、补丁、搜索、Git、环境查询、隔离命令、Python 和语言服务器工具 |
 | Web 工具 | [tools/web_tools.py](tools/web_tools.py)、[tools/_internal/](tools/_internal/) | 主进程受控搜索、网页抓取和分页缓存，按配置启用 |
 | 系统提示词 | [agent/prompt.py](agent/prompt.py) | 通用任务规则；代码工作流程由 `coding` 等技能按需补充 |
 | 原生沙箱 | [sandbox/native.py](sandbox/native.py)、[sandbox/linux_native.py](sandbox/linux_native.py)、[sandbox/linux_gpu.py](sandbox/linux_gpu.py) | 平台隔离、原项目执行、Linux/WSL2 GPU 授权与驱动自检 |
 | Docker 沙箱 | [sandbox/session.py](sandbox/session.py)、[sandbox/docker.py](sandbox/docker.py)、[sandbox/writeback.py](sandbox/writeback.py) | 工作副本、容器、回写检查、备份与恢复 |
 | 追踪 | [agent/Tracing.py](agent/Tracing.py) | 模型/工具事件、计时、任务与运行片段统计 |
+| 构建与分发 | [build_manifest.py](build_manifest.py)、[build_support.py](build_support.py)、[scripts/build_release.py](scripts/build_release.py) | 统一文件清单、生成构建配置、校验 wheel / sdist / Docker 上下文与发行包 |
 | 配置与安装 | [cli/config.py](cli/config.py)、[cli/config_command.py](cli/config_command.py)、[cli/setup.py](cli/setup.py)、[cli/uninstall.py](cli/uninstall.py) | 配置加载及备份、安装、诊断、归属清理 |
 
 ## 一次任务的流程
@@ -31,7 +33,10 @@ flowchart TD
     A[启动] --> B[CLI 恢复会话与选择执行环境]
     B --> R[用户任务与当前历史]
     R --> C[Runtime 构造模型请求]
-    C --> D[LLM 客户端与协议适配器]
+    C --> K{CLI 接入的压缩检查}
+    K -->|需要压缩| L[先归档原文，再摘要与保存工作上下文]
+    K -->|无需压缩或无旧历史且输入安全| D[LLM 客户端与协议适配器]
+    L --> D
     D --> E{模型返回}
     E -->|完整工具调用| F[按原顺序执行工具]
     F --> G[将工具结果加入历史]
@@ -43,23 +48,26 @@ flowchart TD
     F -.事件.-> J
 ```
 
-显式选择 local 模式时，直接创建文件、Git 和不启动子进程的基础环境查询工具，不注册命令、Python 或语言服务器工具。Docker 工具代理为每次调用创建独立容器，只挂载工作副本。`sandbox/native.py` 根据平台选择后端：macOS 使用 Seatbelt，Linux 的 `sandbox/linux_native.py` 使用 Bubblewrap namespace 和只读/遮蔽挂载，`sandbox/linux_exec.py` 在执行前加载 seccomp。命令和 worker 都直接操作原项目，复用工具协议，不使用副本回写。模型请求在宿主机发送，隔离 worker 不持有模型凭证。可选 Web 工具也在主进程单独注册，不进入沙箱工具工厂；Web 联网不改变命令断网策略。
+显式选择 local 模式时，直接创建文件、Git 和不启动子进程的基础环境查询工具，不注册命令、Python 或语言服务器工具。Docker 工具代理为每次调用创建独立容器；会话目录中只开放工作副本，另以只读文件传入本次调用请求。`sandbox/native.py` 根据平台选择后端：macOS 使用 Seatbelt，Linux 的 `sandbox/linux_native.py` 使用 Bubblewrap namespace 和只读/遮蔽挂载，`sandbox/linux_exec.py` 在执行前加载 seccomp。命令和 worker 都直接操作原项目，复用工具协议，不使用副本回写。模型请求在宿主机发送，隔离 worker 不持有模型凭证。可选 Web 工具也在主进程单独注册，不进入沙箱工具工厂；Web 联网不改变命令断网策略。
 
 ## 上下文构造
 
 1. `AgentRuntime.run(task, history=...)` 复制调用方传入的历史，空历史时加入系统提示词，再加入本次用户任务。
 2. 启用 Skills 时，请求中临时注入技能目录；显式指定或 `load_skill` 成功后，技能正文进入消息历史。
 3. 模型的完整 assistant 消息通过 `to_message()` 保留原生状态；工具结果按调用顺序追加，然后再次请求模型。
-4. CLI 在任务边界保存有效历史；重启恢复时更新系统提示词并按模型身份处理原生状态，再传回 Runtime。Runtime 库本身不自动创建磁盘会话。
+4. CLI 的 `SavedConversation` 将 `ContextCompactor.before_request` 接入 Runtime，每次正常模型请求前检查完整输入预算（含工具、技能），必要时先归档原文，再以摘要、用户原文和近期消息替换工作上下文。也可用 `/compact` 手动触发。没有可压缩旧历史且输入仍在安全预算内时，自动检查直接放行。
+5. CLI 在任务边界、自动压缩前的检查点及压缩提交时保存有效历史；重启恢复时更新系统提示词并按模型身份处理原生状态，再传回 Runtime。Runtime 库本身只提供 `before_request` 回调，不自动装配压缩器或创建磁盘会话。
 
-当前没有自动摘要或压缩。界面累计用量是多次请求用量之和；上下文占用在请求前可使用本地粗估，收到服务端用量后按最近一次请求估算，两者不是同一个数值，见[上下文占用估算](docs/usage.md#上下文占用估算)。
+默认自动触发比例为 0.75，压缩目标为 0.45，均相对于可用输入预算；CLI 从 `CompactionSettings` 读取同一套默认值。摘要采用目录的独立思考设置和输出额度策略；完整流程见[上下文压缩与历史回查](docs/context-compaction.md)。界面累计用量是多次请求用量之和；上下文占用在请求前可使用本地粗估，收到服务端用量后按最近一次请求估算，两者不是同一个数值，见[上下文占用估算](docs/usage.md#上下文占用估算)。
 
 ## 状态与文件归属
 
 | 数据 | 所在位置 | 更新方式 |
 | --- | --- | --- |
 | 用户配置、思考偏好 | 用户配置目录中的 `.env`、`thinking.json` | 配置命令或交互设置保存 |
-| 会话恢复状态 | 用户状态目录中的 `<项目哈希>/<会话ID>.json` | 任务边界原子替换快照 |
+| 会话恢复状态 | 用户状态目录中的 `<项目哈希>/<会话ID>.json` | 任务边界、自动压缩前及压缩提交时原子替换；含工作上下文、压缩元数据与累计用量 |
+| 压缩原文归档 | 同项目状态目录下的 `history.sqlite3` | 压缩前提交完整有序快照；内容可去重，消息出现顺序保留 |
+| 用户原文出现记录 | 会话压缩元数据 `pins` | 按出现顺序保存原文引用和 `occurrence`（快照 ID＋位置）；相同文本的再次更正仍保留 |
 | 名称和序号 | 同项目目录下的 `index` | 独立短时锁保护；外部改名不会被旧快照覆盖 |
 | 默认恢复目标 | 同项目目录下的 `latest.json` | 指向最近保存的会话 |
 | 连续会话日志 | `<项目哈希>/<会话ID>/` | `chat.log`、`trace.log`、`trace.jsonl` 持续追加 |

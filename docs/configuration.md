@@ -1,6 +1,6 @@
 # 配置参考
 
-[返回 README](../README.md)
+[文档首页](index.md) · [项目首页](../README.md)
 
 `repo-agent config` 可在任务项目目录执行；`--root` 指定用于计算生效配置的项目。
 
@@ -44,7 +44,6 @@ repo-agent config model                # 选择供应商、填写模型和 Key�
 | --- | --- | --- |
 | `AGENT_MAX_STEPS` | `50` | `8` |
 | `AGENT_MAX_OUTPUT_TOKENS` | `51200` | `4096` |
-| `AGENT_SANDBOX_WRITEBACK` | `manual` | `manual` |
 
 这些值不是模型能力声明；输出上限仍需符合实际模型限制。已有配置可能与两列都不同，使用 `repo-agent config show` 查看生效值和来源。模板变更不会自动同步到已有用户配置。
 
@@ -68,7 +67,7 @@ repo-agent --configure-model
 
 ## 配置参考
 
-所有已接入的运行设置都列在安装目录的 `.env.example` 中。首次安装将模板复制为用户配置；重复安装保留文件内容。升级后可对照模板手动补充新增选项，未配置的选项使用内置默认值。项目 `.env` 是可选覆盖文件，只需填写与默认配置不同的选项。配置在启动时读取，修改后需要退出并重新启动；不是会话内热更新。
+常用运行设置列在安装目录的 `.env.example` 中；启动前设置的数据目录变量见文末，已弃用的兼容选项见压缩说明。首次安装将模板复制为用户配置；重复安装保留文件内容。升级后可对照模板手动补充新增选项，未配置的选项使用内置默认值。项目 `.env` 是可选覆盖文件，只需填写与默认配置不同的选项。配置在启动时读取，修改后需要退出并重新启动；不是会话内热更新。
 
 | 配置项 | 内置默认值（未配置时） | 作用 |
 | --- | --- | --- |
@@ -78,10 +77,10 @@ repo-agent --configure-model
 | `AGENT_MAX_STEPS` | `8` | 每条用户任务最多调用模型的轮数；`0` 表示无上限 |
 | `AGENT_AUTO_COMPACT` | `true` | 每次正常模型请求前检查输入预算并按需压缩；`false` 关闭自动压缩，仍可 `/compact` |
 | `AGENT_COMPACT_THRESHOLD` | `0.75` | 自动触发比例，相对于预留输出后的可用输入预算 |
-| `AGENT_COMPACT_TARGET` | `0.45` | 压缩后目标比例；必须满足 `0 < target < threshold < 1` |
-| `AGENT_COMPACT_KEEP_TOKENS` | `6000` | 近期完整消息组预算上限，实际不超过目标预算的约三分之一；至少 256 |
-| `AGENT_COMPACT_SUMMARY_TOKENS` | `3000` | 最终摘要正文目标预算，受剩余目标空间约束；至少 256。摘要请求输出额度沿用 `AGENT_MAX_OUTPUT_TOKENS`，思考设置沿用当前有效配置 |
-| `AGENT_MAX_OUTPUT_TOKENS` | `4096` | 每次模型请求的输出 token 上限 |
+| `AGENT_COMPACT_TARGET` | `0.45` | 整个新上下文的软目标比例；必须满足 `0 < target < threshold < 1` |
+| `AGENT_COMPACT_KEEP_TOKENS` | `6000` | 近期完整消息组预算上限；实际预算为 min(此值, max(256, 目标预算 // 3)) |
+| `AGENT_COMPACT_MAX_REFINEMENTS` | `2` | 超过目标后的额外精简轮数（0～4）；明显缩小且安全的超目标结果也可采纳 |
+| `AGENT_MAX_OUTPUT_TOKENS` | `4096` | 普通任务请求的输出 token 上限；压缩摘要使用独立策略 |
 | `AGENT_MAX_RECOVERIES` | `2` | 连续输出截断的额外恢复次数，文字/工具共享计数；0 关闭；正常工具轮完成后重置 |
 | `AGENT_RECOVERY_MAX_OUTPUT_TOKENS` | 留空 | 工具参数重生成时的输出额度上限；每次翻倍至此值。留空沿用原额度；显式值须不低于原额度且符合模型限制 |
 | `LLM_TEMPERATURE` | 空 | 不传温度，使用模型默认行为；显式值需符合模型限制 |
@@ -109,11 +108,7 @@ repo-agent --configure-model
 | `AGENT_SANDBOX_VERIFY_COMMAND` | 空 | on-success 回写前的最终验证命令，使用 JSON 参数数组 |
 | `LLM_EXTRA_JSON` | `{}` | 高级厂商原生请求参数，须为 JSON 对象，不允许覆盖统一字段或与显式思考配置冲突 |
 
-内置系统提示词位于 `agent/prompt.py`，只规定通用的目标理解、任务推进、工具使用、事实核验、技能选择和回复方式，并保留网页资料与外发搜索词的处理规则。它不再限定代码仓库角色，也不对论文、分析等任务套用代码修改后的回复格式。
-
-代码相关要求集中在内置 `coding` 技能（`check_id` 仅在工具 schema 支持时使用，当前 native 不支持）：仓库理解与编辑、代码参数完整性、测试选择、稳定的 `check_id`、预期失败的退出码验证，以及修改后通常用 3 到 6 行汇报且不重复粘贴完整实现的约定。用户明确要求完整代码或详细解释时仍按要求展开。编程任务可由模型按描述选择，也可在任务开头显式使用 `$coding`；`debug-and-fix` 和 `gpu-kernel-development` 会指导模型先加载 `coding` 再执行各自的专用流程，加载依赖由模型完成，不是运行时自动展开。
-
-将 `AGENT_SYSTEM_PROMPT` 留空即可使用通用默认提示词；自定义值只替换基础提示词，技能目录和按需加载机制仍然可用。修改配置或升级提示词、技能后重启。CLI 恢复会话时会替换为当前系统提示词；旧技能正文仍可能留在恢复的用户/工具消息中，需要用 `/clear` 或新建会话清除旧模型上下文，再加载新技能。
+`AGENT_SYSTEM_PROMPT` 留空使用 [agent/prompt.py](../agent/prompt.py) 的通用提示词；非空只替换基础提示词，技能发现和按需加载仍可用。代码工作流程由内置 `coding` 技能提供，依赖加载及升级后的旧正文处理见 [Skills](skills.md#系统提示词与技能分工)。
 
 普通设置遵循上文优先级。例如下面的临时参数会覆盖项目及用户 `.env`：
 
@@ -164,4 +159,6 @@ repo-agent config reset                 # 恢复安装目录 .env.example 模板
 
 配置目录和状态目录变量在启动前设置，不属于 `.env` 中的运行参数。`--new-session`、`--name`、`--root` 是启动选项；会话名称和上下文保存在会话状态中，不写入模型配置。完整存储结构见[会话管理](sessions.md#保存位置)。
 
-压缩配置也可通过 `--auto-compact false`、`--compact-threshold 0.8`、`--compact-target 0.5`、`--compact-keep-tokens 4000` 和 `--compact-summary-tokens 3000` 覆盖。详见[上下文压缩与历史回查](context-compaction.md)。
+压缩配置也可通过 `--auto-compact false`、`--compact-threshold 0.8`、`--compact-target 0.5`、`--compact-keep-tokens 4000` 和 `--compact-max-refinements 2` 覆盖。详见[上下文压缩与历史回查](context-compaction.md)。
+
+压缩请求的思考配置来自 `llm/model_catalog.py` 的 `independent_thinking`，输出额度按目录最大输出的 25% 起步（初始通常为 8192～32768），截断时有限增加，不沿用当前会话的生成参数。旧 `AGENT_COMPACT_SUMMARY_TOKENS` / `--compact-summary-tokens` 仅兼容读取并忽略；可删除旧值。

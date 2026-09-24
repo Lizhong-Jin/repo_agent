@@ -31,6 +31,8 @@ class ModelInfo:
     selectable: bool = True
     dated_snapshots: bool = False
     always_thinking: bool = False
+    # Per-model policy for compaction and other standalone internal requests.
+    independent_thinking: dict = field(default_factory=lambda: {"mode": "auto"})
 
     @property
     def min_thinking(self) -> str:
@@ -62,12 +64,13 @@ class ModelInfo:
 MODEL_CATALOG: dict[str, dict[str, ModelInfo]] = {}
 
 
-def _register(provider, rows, *, thinking, source, **metadata):
+def _register(provider, rows, *, thinking, independent_thinking, source, **metadata):
     for model, context, output in rows:
         sources = (source,) if isinstance(source, str) else source
         urls = tuple(url.format(model=model, slug=model.replace(".", "-")) for url in sources)
         MODEL_CATALOG.setdefault(provider, {})[model.lower()] = ModelInfo(
-            provider, model, deepcopy(thinking), context, output, sources=urls, **metadata
+            provider, model, deepcopy(thinking), context, output, sources=urls,
+            independent_thinking=deepcopy(independent_thinking), **metadata
         )
 
 
@@ -82,6 +85,7 @@ _register(
         "efforts": ("minimal", "low", "medium", "high"),
         "default_effort": "medium",
     },
+    independent_thinking={"mode": "enabled", "effort": "minimal"},
     source="https://developers.openai.com/api/docs/models/{model}",
     dated_snapshots=True,
 )
@@ -90,6 +94,7 @@ _register(
     "openai",
     [("gpt-5.1", 400000, 128000)],
     thinking={"modes": ("auto", "disabled", "enabled"), "efforts": ("low", "medium", "high")},
+    independent_thinking={"mode": "enabled", "effort": "low"},
     source="https://developers.openai.com/api/docs/models/{model}",
     dated_snapshots=True,
 )
@@ -101,6 +106,7 @@ _register(
         "modes": ("auto", "disabled", "enabled"),
         "efforts": ("low", "medium", "high", "xhigh"),
     },
+    independent_thinking={"mode": "enabled", "effort": "low"},
     source="https://developers.openai.com/api/docs/models/{model}",
     dated_snapshots=True,
 )
@@ -113,6 +119,7 @@ _register(
         "efforts": ("low", "medium", "high"),
         "default_effort": "medium",
     },
+    independent_thinking={"mode": "enabled", "effort": "low"},
     source="https://developers.openai.com/api/docs/models/{model}",
     dated_snapshots=True,
 )
@@ -126,6 +133,7 @@ _register(
         ("gpt-4o-mini", 128000, 16384),
     ],
     thinking={"modes": ("auto",)},
+    independent_thinking={"mode": "auto"},
     source="https://developers.openai.com/api/docs/models/{model}",
     dated_snapshots=True,
 )
@@ -142,6 +150,7 @@ _register(
         "effort_mode": "adaptive",
         "default_effort": "high",
     },
+    independent_thinking={"mode": "adaptive", "effort": "low"},
     source="https://platform.claude.com/docs/en/models/opus-4-6/overview",
     dated_snapshots=True,
 )
@@ -155,6 +164,7 @@ _register(
         "effort_mode": "adaptive",
         "default_effort": "high",
     },
+    independent_thinking={"mode": "adaptive", "effort": "low"},
     source="https://platform.claude.com/docs/en/models/sonnet-4-6/overview",
     dated_snapshots=True,
 )
@@ -163,6 +173,7 @@ _register(
     "anthropic",
     [("claude-sonnet-4-5", 200000, 64000)],
     thinking={"modes": ("auto", "disabled", "enabled"), "budget_min": 1024},
+    independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://platform.claude.com/docs/de/models/sonnet-4-5/overview",
     dated_snapshots=True,
 )
@@ -171,6 +182,7 @@ _register(
     "anthropic",
     [("claude-haiku-4-5", 200000, 64000)],
     thinking={"modes": ("auto", "disabled", "enabled"), "budget_min": 1024},
+    independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://platform.claude.com/docs/en/models/haiku-4-5/overview",
     dated_snapshots=True,
 )
@@ -179,6 +191,7 @@ _register(
     "anthropic",
     [("claude-sonnet-4-0", None, None)],
     thinking={"modes": ("auto", "disabled", "enabled"), "budget_min": 1024},
+    independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://platform.claude.com/docs/en/models/sonnet-4/overview",
     dated_snapshots=True,
     notes="旧型号；本次未核实标准 API 长度限制，保留既有思考适配。",
@@ -188,6 +201,7 @@ _register(
     "anthropic",
     [("claude-opus-4-0", None, None)],
     thinking={"modes": ("auto", "disabled", "enabled"), "budget_min": 1024},
+    independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://platform.claude.com/docs/en/models/opus-4/overview",
     dated_snapshots=True,
     notes="旧型号；本次未核实标准 API 长度限制，保留既有思考适配。",
@@ -197,6 +211,7 @@ _register(
     "anthropic",
     [("claude-opus-4-1", None, None)],
     thinking={"modes": ("auto", "disabled", "enabled"), "budget_min": 1024},
+    independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://platform.claude.com/docs/en/models/opus-4-1/overview",
     dated_snapshots=True,
     notes="旧型号；本次未核实标准 API 长度限制，保留既有思考适配。",
@@ -209,6 +224,7 @@ _register(
     "gemini",
     [("gemini-3-pro-preview", 1048576, 65536)],
     thinking={"modes": ("auto", "enabled"), "efforts": ("low", "high"), "default_effort": "high"},
+    independent_thinking={"mode": "enabled", "effort": "low"},
     source="https://ai.google.dev/gemini-api/docs/models/{model}",
     context_kind="input",
     notes="Google 公布的是输入上限，不是输入与输出之和。 官方已于 2026-03-09 下线；仅保留历史配置解析。",
@@ -223,6 +239,7 @@ _register(
         "efforts": ("minimal", "low", "medium", "high"),
         "default_effort": "high",
     },
+    independent_thinking={"mode": "enabled", "effort": "minimal"},
     source="https://ai.google.dev/gemini-api/docs/models/{model}",
     context_kind="input",
     notes="Google 公布的是输入上限，不是输入与输出之和。",
@@ -236,6 +253,7 @@ _register(
         "efforts": ("low", "medium", "high"),
         "default_effort": "high",
     },
+    independent_thinking={"mode": "enabled", "effort": "low"},
     source="https://ai.google.dev/gemini-api/docs/models/{model}",
     context_kind="input",
     notes="Google 公布的是输入上限，不是输入与输出之和。",
@@ -245,6 +263,7 @@ _register(
     "gemini",
     [("gemini-2.5-pro", 1048576, 65536)],
     thinking={"modes": ("auto", "enabled"), "budget_min": 128, "budget_max": 32768},
+    independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://ai.google.dev/gemini-api/docs/models/{model}",
     context_kind="input",
     notes="Google 公布的是输入上限，不是输入与输出之和。",
@@ -254,6 +273,7 @@ _register(
     "gemini",
     [("gemini-2.5-flash", 1048576, 65536)],
     thinking={"modes": ("auto", "disabled", "enabled"), "budget_min": 1, "budget_max": 24576},
+    independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://ai.google.dev/gemini-api/docs/models/{model}",
     context_kind="input",
     notes="Google 公布的是输入上限，不是输入与输出之和。",
@@ -263,6 +283,7 @@ _register(
     "gemini",
     [("gemini-2.5-flash-lite", 1048576, 65536)],
     thinking={"modes": ("auto", "disabled", "enabled"), "budget_min": 512, "budget_max": 24576},
+    independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://ai.google.dev/gemini-api/docs/models/{model}",
     context_kind="input",
     notes="Google 公布的是输入上限，不是输入与输出之和。",
@@ -279,6 +300,7 @@ _register(
         ("qwen3.5-flash", 1000000, 65536),
     ],
     thinking={"modes": ("auto", "disabled", "enabled"), "budget_min": 1, "budget_max": 81920},
+    independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://help.aliyun.com/zh/model-studio/{slug}",
 )
 
@@ -293,6 +315,7 @@ _register(
         ("qwen3-30b-a3b", 131072, 8192),
     ],
     thinking={"modes": ("auto", "disabled", "enabled"), "budget_min": 1},
+    independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://help.aliyun.com/zh/model-studio/{slug}",
 )
 
@@ -300,6 +323,7 @@ _register(
     "qwen",
     [("qwen3-235b-a22b", 131072, 16384)],
     thinking={"modes": ("auto", "disabled", "enabled"), "budget_min": 1, "budget_max": 38912},
+    independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://help.aliyun.com/zh/model-studio/{slug}",
 )
 
@@ -307,6 +331,7 @@ _register(
     "qwen",
     [("qwen3.8-max", 1000000, 131072), ("qwen3.8-flash", 1000000, 131072)],
     thinking={"modes": ("auto", "disabled", "enabled"), "budget_min": 1, "budget_max": 262144},
+    independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://help.aliyun.com/zh/model-studio/{slug}",
 )
 
@@ -314,6 +339,7 @@ _register(
     "qwen",
     [("qwen3-next-80b-a3b-thinking", 131072, 32768)],
     thinking={"modes": ("auto", "enabled"), "budget_min": 1},
+    independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://help.aliyun.com/zh/model-studio/{slug}",
 )
 
@@ -321,6 +347,7 @@ _register(
     "qwen",
     [("qwen3-235b-a22b-thinking-2507", 131072, 32768)],
     thinking={"modes": ("auto", "enabled"), "budget_min": 1, "budget_max": 81920},
+    independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://help.aliyun.com/zh/model-studio/{slug}",
 )
 
@@ -328,6 +355,7 @@ _register(
     "qwen",
     [("qwen3-30b-a3b-thinking-2507", 81920, 32768)],
     thinking={"modes": ("auto", "enabled"), "budget_min": 1},
+    independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://help.aliyun.com/zh/model-studio/{slug}",
     notes="官方页面上下文 81920 小于其列出的最大输入 126976; 暂取明确上下文字段，服务端元数据优先。",
 )
@@ -345,6 +373,7 @@ _register(
         "default_effort": "max",
         "aliases": {"minimal": "low", "medium": "high", "xhigh": "max"},
     },
+    independent_thinking={"mode": "enabled", "effort": "low"},
     source="https://docs.bigmodel.cn/cn/guide/models/text/{model}",
 )
 
@@ -362,6 +391,7 @@ _register(
         "default_effort": "max",
         "aliases": {"minimal": "low", "medium": "high", "xhigh": "max"},
     },
+    independent_thinking={"mode": "enabled", "effort": "low"},
     source="https://docs.bigmodel.cn/cn/guide/models/text/glm-5.3",
     notes="保留项目已有思考适配；此变体未核实独立长度规格，不继承同系列上限。",
 )
@@ -376,6 +406,7 @@ _register(
         "default_effort": "max",
         "aliases": {"low": "high", "medium": "high", "xhigh": "max"},
     },
+    independent_thinking={"mode": "enabled", "effort": "high"},
     source="https://docs.bigmodel.cn/cn/guide/models/text/{model}",
 )
 
@@ -389,6 +420,7 @@ _register(
         "default_effort": "max",
         "aliases": {"low": "high", "medium": "high", "xhigh": "max"},
     },
+    independent_thinking={"mode": "enabled", "effort": "high"},
     source="https://docs.bigmodel.cn/cn/guide/models/text/glm-5.2",
     notes="保留项目已有思考适配；此变体未核实独立长度规格，不继承同系列上限。",
 )
@@ -397,6 +429,7 @@ _register(
     "zhipu",
     [("glm-4.7", 200000, 131072), ("glm-5", 200000, 131072), ("glm-5.1", 200000, 131072)],
     thinking={"modes": ("auto", "disabled", "enabled"), "history": True},
+    independent_thinking={"mode": "disabled"},
     source="https://docs.bigmodel.cn/cn/guide/models/text/{model}",
 )
 
@@ -404,6 +437,7 @@ _register(
     "zhipu",
     [("glm-5-turbo", None, None)],
     thinking={"modes": ("auto", "disabled", "enabled"), "history": True},
+    independent_thinking={"mode": "disabled"},
     source="https://docs.bigmodel.cn/cn/guide/models/text/glm-5",
     notes="保留项目已有思考适配; 此变体未核实独立长度规格，不继承同系列上限。",
 )
@@ -420,6 +454,7 @@ _register(
         "default_effort": "high",
         "aliases": {"minimal": "low", "medium": "high", "xhigh": "high"},
     },
+    independent_thinking={"mode": "enabled", "effort": "low"},
     source=(
         "https://api-docs.deepseek.com/api/create-chat-completion/",
         "https://api-docs.deepseek.com/quick_start/pricing/",
@@ -435,6 +470,7 @@ _register(
     "moonshot",
     [("kimi-k2.6", 262144, None)],
     thinking={"modes": ("auto", "disabled", "enabled")},
+    independent_thinking={"mode": "disabled"},
     source=(
         "https://platform.kimi.com/docs/guide/kimi-k2-6-quickstart",
         "https://platform.kimi.com/docs/models",
@@ -456,6 +492,7 @@ _register(
     ],
     thinking={"modes": ("auto",)},
     always_thinking=True,
+    independent_thinking={"mode": "auto"},
     source="https://platform.minimax.cn/docs/api-reference/text-anthropic-api",
     notes="M2 系列始终思考；当前 OpenAI 兼容适配只使用默认行为。最大输出尚未核实。",
 )

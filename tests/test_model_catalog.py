@@ -45,7 +45,7 @@ def test_thinking_bounds_preserve_off_mandatory_reasoning_and_unknown_budget():
     assert model_info("anthropic", "claude-sonnet-4-5").max_thinking == "budget:unknown"
     assert model_info("minimax", "MiniMax-M2.5").min_thinking == "enabled"
     assert model_info("minimax", "MiniMax-M2.5").max_output_tokens is None
-    assert model_info("zhipu", "glm-5.3-flash").context_window is None
+    assert model_info("zhipu", "glm-5.3-flash").context_window == 1000000
 
 
 def test_exact_lookup_aliases_case_and_snapshot_limits():

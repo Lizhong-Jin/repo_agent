@@ -227,6 +227,8 @@ def test_process_start_failures(tmp_path, monkeypatch, stage, cause, expected_co
     def run(command, **kwargs):
         if stage == "status" and "rev-parse" in command:
             return process_result(stdout=str(tmp_path.resolve()) + "\n")
+        if stage == "status" and "config" in command:
+            return process_result(exit_code=1)
         raise ProcessStartError(cause)
 
     monkeypatch.setattr(tool.runner, "run", run)
@@ -241,6 +243,8 @@ def test_runner_timeout_and_truncation(tmp_path, monkeypatch, stage, failure):
     def run(command, **kwargs):
         if stage == "status" and "rev-parse" in command:
             return process_result(stdout=str(tmp_path.resolve()) + "\n")
+        if stage == "status" and "config" in command:
+            return process_result(exit_code=1)
         if failure == "timeout":
             return process_result(exit_code=None, timed_out=True)
         return process_result(stdout="incomplete", stdout_truncated=True)

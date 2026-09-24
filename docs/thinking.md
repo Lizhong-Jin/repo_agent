@@ -1,6 +1,6 @@
 # 按模型设置思考
 
-[返回 README](../README.md) · [配置参考](configuration.md)
+[文档首页](index.md) · [项目首页](../README.md) · [配置参考](configuration.md)
 
 输入 `/thinking` 或 `/thinking list` 查看当前模型的档位、预算范围、别名、历史思考保留方式和能力规则来源。只查看不会调用模型 API、修改偏好或发送探测请求。
 
@@ -15,7 +15,7 @@
 /thinking reset               # 所有思考设置恢复默认，并忘记当前模型的已保存偏好
 ```
 
-**Shift+Tab** 循环模型的合法预设，保留输入草稿。运行中的任务沿用原设置，结束后可切换。`auto` 不是“低强度”：GLM-5.3 默认强度为 max。固定预算和强度是不同控制方式，不能强行给每个模型提供相同的低/中/高档位。
+**Shift+Tab** 循环模型的合法预设，保留输入草稿。运行中的任务沿用原设置，结束后可切换。`auto` 不是“低强度”：仓库目录为 GLM-5.3 记录的默认强度是 max；实际请求仍由服务端处理。固定预算和强度是不同控制方式，不能强行给每个模型提供相同的低/中/高档位。
 
 ## 显示思考内容
 
@@ -66,7 +66,8 @@ CLI 为已登记且适用的模型请求可读摘要：OpenAI 添加 `reasoning.
 | GPT-5.2 | auto、off、low、medium、high、xhigh |
 | Claude Sonnet 4.6 / Opus 4.6 | auto、off、自适应强度；Opus 提供 max；固定预算不可用 |
 | Claude Sonnet 4.5 等手动思考模型 | auto、off、预算预设；预算至少 1024 且小于输出上限 |
-| Gemini 3 Pro Preview / 3 Flash Preview | 分别提供 low/high 与 minimal/low/medium/high；不能关闭思考 |
+| Gemini 3 Pro Preview（仅保留历史规则，目录不可选） | low/high；不能关闭思考 |
+| Gemini 3 Flash Preview | minimal/low/medium/high；不能关闭思考 |
 | Gemini 2.5、已登记的 Qwen 混合思考模型 | 预算预设，按各模型的预算范围、输出上限及开关能力过滤 |
 | 未登记模型 | 快捷键仅 auto；手动命令仍可使用厂商通用映射，也可显式声明能力 |
 
@@ -80,11 +81,13 @@ CLI 为已登记且适用的模型请求可读摘要：OpenAI 添加 `reasoning.
 
 `dated_snapshots=True` 为历史配置保留 `-YYYY-MM-DD` 和 `-YYYYMMDD` 后缀的思考规则匹配，精确登记优先。未单独登记的日期快照不继承长度限制，也不会出现在选择列表中。用户能力覆盖仍优先，偏好继续保存在用户配置目录的 `thinking.json`。新增供应商协议仍需实现对应适配器。
 
+压缩等独立请求使用目录中的 `independent_thinking`，不读取上述会话思考偏好或能力覆盖。修改方式见[上下文压缩](context-compaction.md#独立请求参数)。
+
 ## 历史思考保留
 
 GLM 的 `/thinking history on` 发送 `thinking.clear_thinking=false`，`off` 发送 `true`，`auto` 不发送该字段。项目完整保留并回传原生思考内容，不重排、不修改，不把思考正文混入用户可见回复。
 
-普通智谱 API 默认不启用跨轮思考保留，Coding Plan 默认启用；自定义接口显示“由接口决定”。保留思考可能减少后续用户轮次重复推理，但会增加保留的上下文，不保证加速，也不能消除全新任务第一次调用的长思考。历史保留开关与思考强度独立，切换强度不会重置它。
+项目对已识别端点的提示规则是：普通智谱 API 默认不启用跨轮思考保留，Coding Plan 默认启用；自定义接口显示“由接口决定”。这只是本地能力提示，`history auto` 不发送开关，最终行为由服务端决定。保留思考可能减少后续用户轮次重复推理，但会增加保留的上下文，不保证加速，也不能消除全新任务第一次调用的长思考。历史保留开关与思考强度独立，切换强度不会重置它。
 
 ## 保存和优先级
 

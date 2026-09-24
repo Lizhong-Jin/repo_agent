@@ -4,12 +4,11 @@ import hashlib
 from dataclasses import replace
 from uuid import uuid4
 
+from agent.compaction import CompactionSettings, ContextCompactor, compaction_notice
+from agent.history import HistoryArchive
+from agent.session import validate_name
 from llm import Message
 from llm.providers import get_provider
-
-from agent.session import validate_name
-from agent.compaction import CompactionSettings, ContextCompactor
-from agent.history import HistoryArchive
 
 from .transcript import Transcript
 
@@ -204,7 +203,7 @@ class SavedConversation:
             self.status.reset_context()
             self.status.initialize_context(self.runtime, old_history)
             raise
-        self._chat(f"[上下文已压缩：≈{state['before']} → ≈{state['after']} tokens；原文已归档]\n")
+        self._chat(f"[{compaction_notice(state)}]\n")
 
     def compact(self):
         try:
@@ -213,7 +212,7 @@ class SavedConversation:
             # Account for successful API calls even if validation/cancellation failed.
             self.checkpoint()
         state = self.compaction_state
-        return f"上下文已压缩：≈{state['before']} → ≈{state['after']} tokens；原文已归档"
+        return compaction_notice(state)
 
     def clear(self, *, transcript=None, emit=print):
         self.compaction_state = None

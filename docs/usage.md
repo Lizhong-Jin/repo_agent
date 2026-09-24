@@ -1,6 +1,6 @@
 # 启动、交互与上下文
 
-[返回 README](../README.md) · [会话管理](sessions.md) · [配置参考](configuration.md)
+[文档首页](index.md) · [项目首页](../README.md) · [会话管理](sessions.md) · [配置参考](configuration.md)
 
 ## 启动与项目目录
 
@@ -20,6 +20,8 @@ repo-agent --max-steps 12 --max-output-tokens 8192 # 临时覆盖任务轮数和
 
 Linux / WSL2 native 默认自动检测 NVIDIA CUDA GPU：发现后启用全部 GPU，没有则使用普通环境；发现设备但驱动或 CUDA 自检失败时明确报错。`--sandbox-profile standard` 强制关闭 GPU，`--sandbox-profile cuda` 强制要求 GPU。Linux 可通过 `--sandbox-gpus` 指定索引或完整 GPU UUID 选择单卡，WSL2 仅支持 `all`。需要宿主机预装 NVIDIA 驱动和计算依赖，启动会实际执行 CUDA kernel 自检；详见[原生 GPU 说明](native-sandbox.md#linux--wsl2-原生-gpu)。
 
+local 的 `git_diff` / `git_status` 会拒绝配置了外部 clean/process 过滤器的仓库，并返回 `GIT_EXTERNAL_FILTER_REQUIRES_SANDBOX`；这类仓库请使用 native 或 Docker。Git 工具只报告子模块提交变化，不递归检查子模块内未提交的修改；需要内部状态或差异时，通过 `cwd` 明确选择子模块。
+
 ## 会话命令与快捷键
 
 | 输入 | 行为 |
@@ -36,7 +38,8 @@ Linux / WSL2 native 默认自动检测 NVIDIA CUDA GPU：发现后启用全部 G
 | `/thinking low`、`/thinking budget 2048` | 为支持对应能力的模型设置强度或预算 |
 | `/thinking display expanded` | 展开可见思考；另有 `collapsed` / `hidden` |
 | `/context` | 查看上下文估算、上限及来源 |
-| `/context auto`、`/context 131072` | 自动查询或手动覆盖显示上限 |
+| `/context auto`、`/context 131072` | 自动查询或手动覆盖上下文上限，同时影响显示和压缩预算 |
+| `/compact` | 手动压缩工作上下文，保留原文归档；见[压缩说明](context-compaction.md) |
 | `/diff`、`/apply` | Docker 副本变更、回写原项目 |
 | `/exit`、`/quit` | 保存并退出 |
 
@@ -78,7 +81,7 @@ Linux / WSL2 native 默认自动检测 NVIDIA CUDA GPU：发现后启用全部 G
 
 工具重生成默认沿用原输出额度；确认模型支持更大额度后，可设置 `--recovery-max-output-tokens` / `AGENT_RECOVERY_MAX_OUTPUT_TOKENS`，每次恢复逐次翻倍至该上限。该值不得低于原输出额度；恢复成功后后续普通轮次恢复原配置。不自动推测模型容量，也不提高思考预算。
 
-文字和工具截断共享连续恢复计数，完整工具轮执行后重置；所有请求始终受本次任务总轮数限制。连续截断超限、重复续写、没有可续写正文或恢复请求失败时停止并解释原因，保留有效上下文供“继续”。若服务端拒绝更大的输出额度，需要先调整配置。自动续写提示属于程序事件，不显示为用户输入；每次请求分别统计耗时和 token。网络超时、取消、拒绝和未知结束原因不会触发截断重试；恢复阶段之外的模型异常、中断或非正常回复保留此前完整上下文，并添加需要核实文件现状的说明。已经执行的文件操作不会撤销，也不会自动重试整个任务。
+文字和工具截断共享连续恢复计数，完整工具轮执行后重置；普通任务生成和截断恢复请求始终受本次任务总轮数限制。连续截断超限、重复续写、没有可续写正文或恢复请求失败时停止并解释原因，保留有效上下文供“继续”。若服务端拒绝更大的输出额度，需要先调整配置。自动续写提示属于程序事件，不显示为用户输入；每次请求分别统计耗时和 token。网络超时、取消、拒绝和未知结束原因不会触发截断重试；恢复阶段之外的模型异常、中断或非正常回复保留此前完整上下文，并添加需要核实文件现状的说明。已经执行的文件操作不会撤销，也不会自动重试整个任务。
 
 摘要请求单独统计，计入会话累计调用次数与 token，但不消耗任务的 `--max-steps` 轮数，也不显示摘要正文。
 
@@ -100,9 +103,11 @@ Linux / WSL2 native 默认自动检测 NVIDIA CUDA GPU：发现后启用全部 G
 
 | 接口类型 | 查询与计算口径 |
 | --- | --- |
-| Gemini | `GET /models/{model}` 的 `inputTokenLimit`；显示“输入上下文”，仅用最近一轮输入 token 计算比例 |
-| Anthropic | `GET /models/{model}` 的 `max_input_tokens`；显示“输入上下文”，仅用最近一轮输入 token 计算比例 |
-| 其他兼容接口 | `GET /models` 精确匹配模型 ID，读取 `context_length`、`context_window` 或 `max_model_len`；如只提供 `max_input_tokens`，改用输入口径 |
+| Gemini | `GET /models/{model}`，校验返回的模型名称；输入上限字段为 `inputTokenLimit` |
+| Anthropic | `GET /models/{model}`，允许接口将别名解析为版本 ID；输入上限字段为 `max_input_tokens` |
+| 其他兼容接口 | `GET /models`，要求列表中恰好一个 ID 精确匹配；输入上限字段为 `max_input_tokens` |
+
+所有接口的解析器都先依次读取有效的 `context_length`、`context_window`、`max_model_len` 作为完整窗口；这些字段均缺失或无效时，才读取表中的输入上限字段。输入口径显示“输入上下文”，仅用最近一轮输入 token 计算比例。
 
 完整窗口仍采用上述输入＋输出估算；输入口径缺少输入用量时显示未知，输出用量缺失不会妨碍输入比例。不会把 `max_tokens`、`outputTokenLimit` 当作上下文上限，也不会简单将输入和输出上限相加。目录保留相同的输入/完整窗口区分。上限优先级为：手动设置 > 当前地址服务端元数据 > 内置模型目录；目录数据不代表账户权限或自定义网关的实际容量。
 

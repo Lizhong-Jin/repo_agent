@@ -71,6 +71,13 @@ def extract_files(archive, destination):
 def docker_build_context():
     source = code_root()
     if (source / "pyproject.toml").is_file() and (source / "sandbox/Dockerfile").is_file():
+        # A stale Docker allowlist could otherwise silently omit a newly added module.
+        # Load the stdlib policy from this trusted checkout; wheels use their archive below.
+        from runpy import run_path
+
+        policy = run_path(str(source / "build_manifest.py"))
+        policy["check_configuration"](source)
+        policy["source_files"](source)
         yield source
     else:
         with tempfile.TemporaryDirectory(prefix="repo-agent-build-") as temporary:

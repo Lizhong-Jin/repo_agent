@@ -7,9 +7,9 @@ import sys
 from pathlib import Path
 
 from agent import AgentRuntime
-from agent.session import SessionStore
-from agent.history import HistoryArchive, HistoryTool
 from agent.compaction import CompactionSettings
+from agent.history import HistoryArchive, HistoryTool
+from agent.session import SessionStore
 from agent.skills import SkillRegistry
 from agent.Tracing import Tracer
 from llm import ConfigurationError, LLMClient, LLMConfig, LLMError
@@ -160,6 +160,8 @@ def _main() -> None:
     parser.add_argument("--restore-backup", help="与 --sandbox-review 一起使用，恢复备份 ID")
     add_runtime_arguments(parser)
     args = parser.parse_args()
+    if args.compact_summary_tokens is not None or os.getenv("AGENT_COMPACT_SUMMARY_TOKENS"):
+        print("提示：compact-summary-tokens 已弃用并忽略；压缩大小由 compact-target 指导。")
     if args.sandbox_review:
         try:
             session = SandboxSession.review(args.sandbox_review)
@@ -378,7 +380,7 @@ def _main() -> None:
                 compaction_settings=CompactionSettings(
                     auto=args.auto_compact, threshold=args.compact_threshold,
                     target=args.compact_target, keep_tokens=args.compact_keep_tokens,
-                    summary_tokens=args.compact_summary_tokens,
+                    max_refinements=args.compact_max_refinements,
                 ),
             )
             conversation.checkpoint(strict=True)

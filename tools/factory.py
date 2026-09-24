@@ -136,6 +136,6 @@ def create_default_tools(
             else []
         ),
         # git tools
-        GitDiffTool(workspace_root),
-        GitStatusTool(workspace_root),
+        GitDiffTool(workspace_root, execution_allowed=isolated_execution),
+        GitStatusTool(workspace_root, execution_allowed=isolated_execution),
     ]

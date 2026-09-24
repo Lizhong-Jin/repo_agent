@@ -417,6 +417,8 @@ class Tracer:
         if event.startswith("model_"):
             record.update(provider=self.metadata["provider"], model=self.metadata["model"])
             record["model_call"] = asdict(stats.model_calls[-1])
+        elif event.startswith("compaction_"):
+            record["compaction"] = dict(stats.compaction)
         elif event == "recovery":
             record["recovery"] = stats.recoveries[-1]
         elif event == "skill_loaded":

@@ -1,6 +1,6 @@
 # 统一模型接口
 
-[返回 README](../README.md)
+[文档首页](index.md) · [项目首页](../README.md)
 
 本文中的命令默认在 Agent 安装目录执行；任务项目目录会单独注明。
 
@@ -30,7 +30,7 @@
 
 这里的 `chatgpt` 是 OpenAI API 的别名，使用独立的 API Key，不是 ChatGPT 网页会话或订阅登录。
 
-模型 ID 由调用方填写，不自动替换；内置思考能力字典会对已登记模型进行参数校验。填写你账号实际可用且支持文本／工具调用的模型 ID；豆包也可按账号要求填写推理接入点 ID。厂商和具体模型的参数支持范围仍以官方接口为准。
+低层客户端及显式 CLI 配置允许调用方填写模型 ID，不自动替换；交互模型向导只允许选择[模型目录](model-catalog.md)中的可选条目。内置思考能力字典会对已登记模型进行参数校验。填写你账号实际可用且支持文本／工具调用的模型 ID；豆包也可按账号要求填写推理接入点 ID。厂商和具体模型的参数支持范围仍以官方接口为准。
 
 ```bash
 export DEEPSEEK_API_KEY='你的 API Key'
@@ -124,7 +124,7 @@ with LLMClient(LLMConfig("deepseek", "你的模型 ID")) as client:
 | `tools` | 空 | 自定义函数工具，参数使用 object JSON Schema |
 | `max_output_tokens` | 4096 | 映射到各厂商的输出 token 上限；思考 token 的消耗依模型定义 |
 | `temperature` | `None` | 未设置时不发送，采用模型默认值 |
-| `tool_choice` | `auto` | `auto`、`none`、`required`；智谱预设目前仅支持 `auto` |
+| `tool_choice` | `auto` | `auto`、`none`、`required`；智谱预设在携带工具定义时仅支持 `auto` |
 | `extra` | `{}` | 厂商原生选项，不能覆盖公共字段或切换成流式、后台、多候选模式 |
 
 不同模型对 temperature、思考预算、工具选择和 JSON Schema 的支持有差异。本层保留明确的错误，不偷偷删除参数或改用另一模型。
@@ -148,7 +148,7 @@ MiniMax 预设默认开启 `reasoning_split=True`，用于将思考内容从正�
 
 统一异常包括 `ConfigurationError`、`InvalidRequestError`、`AuthenticationError`、`RateLimitError`、`ProviderError`、`LLMTimeoutError`、`LLMConnectionError` 和 `InvalidResponseError`。
 
-默认连接超时 10 秒、读取超时 300 秒、写入超时 30 秒、连接池等待超时 10 秒。读取超时限制相邻网络数据间隔，不限制整次响应的总时长；对 429、500、502、503、504、529 最多重试两次，参考 Retry-After，最长单次等待 30 秒。超时／连接异常不自动重试，避免不确定状态下重复推理；异常响应、非法工具 JSON 也不重试。整个 Agent 的任务时间和成本预算由上层负责。HTTP 错误对象保留状态码和 request ID，不把响应正文或凭证写进异常消息。
+默认连接超时 10 秒、读取超时 300 秒、写入超时 30 秒、连接池等待超时 10 秒。读取超时限制相邻网络数据间隔，不限制整次响应的总时长；对 429、500、502、503、504、529 最多重试两次，参考 Retry-After，最长单次等待 30 秒。超时／连接异常不自动重试，避免不确定状态下重复推理；异常响应、非法工具 JSON 也不重试。库调用方需自行实现整项任务的时间和成本预算；本项目 Runtime 当前没有这两类总预算。HTTP 错误对象保留状态码和 request ID，不把响应正文或凭证写进异常消息。
 
 ## 流式事件与计时
 
@@ -190,7 +190,8 @@ llm/
 ├── model_limits.py            # 模型上下文元数据
 ├── thinking.py                # 统一思考设置到协议参数的映射
 ├── thinking_profiles.py       # 能力匹配与自定义覆盖
-├── model_catalog.py        # 支持列表、思考能力、长度和来源的唯一目录
+├── model_catalog.py           # 支持列表、思考能力、长度和来源的唯一目录
+├── independent.py             # 内部独立请求的思考配置及输出额度策略
 ├── visible_thinking.py        # 可见思考摘要请求适配
 └── adapters/
     ├── base.py                # 公共转换辅助与原生状态校验
@@ -200,7 +201,7 @@ llm/
     └── gemini.py              # Gemini generateContent
 ```
 
-纯格式转换与 HTTP 分离，Agent 主循环只依赖 `LLM` 或 `AsyncLLM`。扩展同协议厂商通常只需添加 Provider 预设；新协议增加 Adapter 后注册到 `ADAPTERS`。
+纯格式转换与 HTTP 分离，Agent 主循环使用同步 `LLM` 协议；`AsyncLLM` 供独立异步客户端调用方使用。扩展同协议厂商通常只需添加 Provider 预设；新协议增加 Adapter 后注册到 `ADAPTERS`。
 
 开发环境与检查命令见[开发与验证](development.md#开发环境与验证)。
 

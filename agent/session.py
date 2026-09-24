@@ -45,19 +45,39 @@ def validate_compaction(state, history):
     if state is None:
         return
     try:
-        if not isinstance(state, dict) or set(state) != {
-            "snapshot", "pins", "prefix", "before", "after"
-        }:
+        required = {"snapshot", "pins", "prefix", "before", "after"}
+        extra = {"target", "target_met", "safety_limit", "auto_retry_at"}
+        if not isinstance(state, dict) or set(state) not in (required, required | extra):
             raise ValueError
+        if "target" in state:
+            if any(type(state[k]) is not int or state[k] <= 0
+                   for k in ("target", "safety_limit", "auto_retry_at")):
+                raise ValueError
+            if (type(state["target_met"]) is not bool
+                    or state["target_met"] != (state["after"] <= state["target"])
+                    or state["after"] > state["safety_limit"]
+                    or state["auto_retry_at"] <= state["after"]):
+                raise ValueError
         if not isinstance(state["snapshot"], str) or not SESSION_ID.fullmatch(state["snapshot"]):
             raise ValueError
         if any(type(state[k]) is not int or state[k] <= 0 for k in ("before", "after")):
             raise ValueError
         if state["after"] >= state["before"] or not isinstance(state["pins"], list):
             raise ValueError
+        occurrences = set()
         for pin in state["pins"]:
-            if not isinstance(pin, dict) or set(pin) != {"ref", "text"}:
+            # Older snapshots without occurrence IDs remain readable.
+            if not isinstance(pin, dict) or set(pin) not in (
+                {"ref", "text"}, {"ref", "text", "occurrence"}
+            ):
                 raise ValueError
+            if "occurrence" in pin:
+                occurrence = pin["occurrence"]
+                if (not isinstance(occurrence, str)
+                        or not re.fullmatch(r"[0-9a-f]{32}:(0|[1-9][0-9]*)", occurrence)
+                        or occurrence in occurrences):
+                    raise ValueError
+                occurrences.add(occurrence)
             if not isinstance(pin["text"], str) or not isinstance(pin["ref"], str):
                 raise ValueError
             if not re.fullmatch(r"[0-9a-f]{32}/m[0-9]+", pin["ref"]):

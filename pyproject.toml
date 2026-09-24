@@ -17,15 +17,23 @@ dev = ["pytest>=8,<10", "ruff>=0.9,<1"]
 repo-agent = "cli.main:main"
 repo-agent-build-sandbox = "sandbox.build:main"
 
+# BEGIN generated distribution settings (build_manifest.py)
+[tool.setuptools]
+include-package-data = false
+
 [tool.setuptools.packages.find]
-include = ["llm*", "tools*", "agent*", "cli*", "sandbox*"]
+include = ["agent", "agent.*", "cli", "cli.*", "llm", "llm.*", "sandbox", "sandbox.*", "tools", "tools.*"]
+exclude = ["*..git", "*..git.*", "*..venv", "*..venv.*", "*.venv", "*.venv.*", "*.node_modules", "*.node_modules.*", "*.__pycache__", "*.__pycache__.*", "*.build", "*.build.*", "*.dist", "*.dist.*", "*.logs", "*.logs.*", "*..pytest_cache", "*..pytest_cache.*", "*..ruff_cache", "*..ruff_cache.*"]
 
 [tool.setuptools.package-data]
-"agent.skills" = ["builtin/*/SKILL.md"]
-"cli" = ["resources/*", "resources/dependencies/node/*"]
+"agent" = ["skills/builtin/*/SKILL.md"]
+"cli" = ["resources/default.env", "resources/dependencies/node/package-lock.json", "resources/dependencies/node/package.json", "resources/docker-context.tar.gz", "resources/requirements-build.lock", "resources/requirements-core.lock", "resources/requirements-lsp.lock"]
+"sandbox" = ["Dockerfile"]
 
 [tool.setuptools.cmdclass]
 build_py = "build_support.BuildPy"
+sdist = "build_support.Sdist"
+# END generated distribution settings
 
 [dependency-groups]
 build = ["build>=1,<2", "setuptools>=68", "wheel>=0.45"]

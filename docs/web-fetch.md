@@ -1,6 +1,6 @@
 # Web 页面读取
 
-[返回 README](../README.md) · [Web 搜索](web-search.md)
+[文档首页](index.md) · [项目首页](../README.md) · [Web 搜索](web-search.md)
 
 `web_fetch` 获取公开 HTTP(S) 网页，将正文存为当前进程内的不可变快照，再按行返回。第一版支持 HTML、纯文本和 JSON；不执行 JavaScript，不登录，不读取 PDF，不自动下载页面资源。
 
@@ -88,4 +88,4 @@ HTML 优先提取明确的 `main`、`role=main` 或 `article` 内容；候选正
 python -m pytest tests/test_web_fetch.py tests/test_web_fetch_cli.py tests/test_web_search.py tests/test_web_search_cli.py -q
 ```
 
-测试替换 DNS 和 TCP 流，保留真实 HTTP 解析及目标校验逻辑；覆盖 DNS 重绑定、实际对端检查、IPv6、逐跳校验、TLS 主机名、无凭证请求、总超时、解压上限、内容结构、缓存隔离与分页、输出预算，以及 local/native 主进程调用链。真实网络已验证 Python 官方文档和公开 JSON 页面的读取与缓存分页。
+测试替换 DNS 和 TCP 流，保留真实 HTTP 解析及目标校验逻辑；覆盖 DNS 重绑定、实际对端检查、IPv6、逐跳校验、TLS 主机名、无凭证请求、总超时、解压上限、内容结构、缓存隔离与分页、输出预算，以及 local/native 主进程调用链。这些测试不证明目标网站当前可访问。真实网络验收需在启用网页读取的会话中，分别检查公开 HTML/JSON 的首次读取、返回引用的缓存分页和错误处理，并记录实际环境与日期。

@@ -1,6 +1,6 @@
 # CUDA、Triton 与 PyTorch 算子开发
 
-[返回 README](../README.md) · [Sandbox](../sandbox/README.md)
+[文档首页](index.md) · [项目首页](../README.md) · [Sandbox](../sandbox/README.md)
 
 此功能包括 CUDA 文件符号查询、GPU 沙箱运行配置、GPU 开发镜像、环境探测、
 算子环境自检，以及内置 `$gpu-kernel-development` 技能。Triton/PyTorch 是 Python 库，

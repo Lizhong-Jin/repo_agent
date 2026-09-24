@@ -196,10 +196,13 @@ class NativeBackend:
             self.workspace, followlinks=False, onerror=inaccessible
         ):
             for name in names:
-                path = Path(directory) / name
-                info = path.lstat()
-                if stat.S_ISREG(info.st_mode) and info.st_nlink > 1:
-                    raise ValueError(f"Native 工作区含硬链接，拒绝执行：{path}")
+                path = os.path.join(directory, name)
+                self._check_workspace_file(path, os.lstat(path))
+
+    def _check_workspace_file(self, path: str, info: os.stat_result):
+        """Platform checks share one fresh lstat result per non-directory entry."""
+        if stat.S_ISREG(info.st_mode) and info.st_nlink > 1:
+            raise ValueError(f"Native 工作区含硬链接，拒绝执行：{path}")
 
     def execution_context(self):
         return {
