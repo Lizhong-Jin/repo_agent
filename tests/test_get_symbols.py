@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 
 from tools import GetSymbolsTool, create_default_tools
-from tools.lsp_client import LspError, LspResponseError, LspTimeoutError, LspUnsupportedError
+from tools._internal.lsp_client import (
+    LspError,
+    LspResponseError,
+    LspTimeoutError,
+    LspUnsupportedError,
+)
 
 RANGE = {"start": {"line": 1, "character": 2}, "end": {"line": 3, "character": 4}}
 
@@ -245,7 +250,7 @@ def test_real_stdio_transport(tmp_path):
 
 
 def test_mixed_languages_route_per_call_without_state_leaks(tmp_path, monkeypatch):
-    from tools.lsp_config import default_lsp_registry
+    from tools._internal.lsp_config import default_lsp_registry
 
     instance = GetSymbolsTool(tmp_path, execution_allowed=True)
     selected = []
@@ -267,7 +272,7 @@ def test_mixed_languages_route_per_call_without_state_leaks(tmp_path, monkeypatc
 
 
 def test_custom_registry_factory_and_legacy_arguments(tmp_path):
-    from tools.lsp_config import LspLanguageConfig, LspRegistry
+    from tools._internal.lsp_config import LspLanguageConfig, LspRegistry
 
     custom = LspLanguageConfig("custom", "rust", (".rs",), ("rust-analyzer",), 42)
     registry = LspRegistry((custom,))
@@ -307,7 +312,7 @@ def test_symlink_routes_by_validated_target(tmp_path, monkeypatch):
 
 
 def test_missing_language_server_is_explicit_error(tmp_path):
-    from tools.lsp_config import LspLanguageConfig, LspRegistry
+    from tools._internal.lsp_config import LspLanguageConfig, LspRegistry
 
     (tmp_path / "example.ts").write_text("export const x = 1;")
     registry = LspRegistry(

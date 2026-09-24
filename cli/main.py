@@ -8,6 +8,8 @@ from pathlib import Path
 
 from agent import AgentRuntime
 from agent.session import SessionStore
+from agent.history import HistoryArchive, HistoryTool
+from agent.compaction import CompactionSettings
 from agent.skills import SkillRegistry
 from agent.Tracing import Tracer
 from llm import ConfigurationError, LLMClient, LLMConfig, LLMError
@@ -16,6 +18,8 @@ from sandbox import SandboxPolicy, SandboxSession
 from sandbox.environment import DEFAULT_IMAGE, check_image_profile, detect_environment
 from sandbox.native import NativeBackend
 from tools import create_default_tools
+from tools._internal.web_backend import WebBackend
+from tools.web_tools import create_web_tools
 
 from .config import configured_environment
 from .dependencies import available_mode
@@ -23,6 +27,7 @@ from .installation import user_config_path
 from .interactive import display_result, finish_writeback, run_interactive
 from .live import LiveOutput, SessionStatus, ThinkingControl
 from .models import ModelControl, ModelWizard, persist_selection, prompt_model
+from .paths import installation_root, version_info
 from .session import SavedConversation
 from .settings import add_runtime_arguments, request_options, verification_command, writeback_mode
 from .thinking_display import ThinkingDisplay
@@ -48,6 +53,16 @@ def model_config(args):
 
 
 def main() -> None:
+    if sys.argv[1:2] in (["version"], ["--version"]):
+        import json
+
+        print(json.dumps(version_info(), ensure_ascii=False, indent=2))
+        return
+    if sys.argv[1:2] == ["uninstall"]:
+        from .uninstall import main as uninstall_main
+
+        uninstall_main(sys.argv[2:])
+        return
     # Session queries also accept the common --root PATH sessions ... form.
     if sys.argv[1:2] == ["--root"] and sys.argv[3:4] == ["sessions"]:
         from .sessions_command import main as sessions_main
@@ -95,13 +110,14 @@ def _main() -> None:
         description="运行可读写项目文件的 Coding Agent",
         epilog=(
             f"未指定的模型和运行参数自动从配置读取。用户配置：{user_config_path()}。"
-            "使用 repo-agent config show 查看配置，config edit 修改配置；toolchains list 查看语言服务。"
+            "使用 repo-agent config show 查看配置，config edit 修改配置；toolchains list 查看语言服务；version 查看版本和安装位置，uninstall 卸载当前安装。"
         ),
         allow_abbrev=False,
     )
     parser.add_argument("task", nargs="?", help="需要完成的任务；省略时进入交互模式")
-    parser.add_argument("--new-session", action="store_true",
-                        help="启动全新会话；默认恢复当前项目上次会话")
+    parser.add_argument(
+        "--new-session", action="store_true", help="启动全新会话；默认恢复当前项目上次会话"
+    )
     parser.add_argument("--name", help="新会话名称；省略时使用项目内递增序号")
     parser.add_argument("--root", default=".", help="项目根目录，默认当前目录")
     parser.add_argument("--provider", default=os.getenv("LLM_PROVIDER") or "deepseek")
@@ -111,13 +127,21 @@ def _main() -> None:
     )
     parser.add_argument("--base-url", default=os.getenv("LLM_BASE_URL") or None)
     parser.add_argument(
-        "--sandbox", choices=["local", "native", "docker"], default=available_mode(Path(__file__).resolve().parents[1]),
-        help="执行方式：默认沿用安装模式（未登记为 native）；local 仅文件操作；docker 使用副本",
+        "--sandbox",
+        choices=["local", "native", "docker"],
+        default=available_mode(installation_root()),
+        help="执行方式：默认沿用安装模式（未登记为 native）；native 原生隔离直接修改；local 无命令执行；docker 使用副本",
     )
     parser.add_argument("--sandbox-image", help=f"自定义沙箱镜像，默认 {DEFAULT_IMAGE}")
-    parser.add_argument("--sandbox-profile", choices=["auto", "standard", "cuda"], default="auto")
     parser.add_argument(
-        "--sandbox-gpus", help="Docker / Linux native GPU：all、单个设备索引或 GPU UUID；WSL2 native 仅 all"
+        "--sandbox-profile",
+        choices=["auto", "standard", "cuda"],
+        default="auto",
+        help="默认 auto：Docker / Linux native 自动检测 NVIDIA GPU；standard 禁用，cuda 强制启用",
+    )
+    parser.add_argument(
+        "--sandbox-gpus",
+        help="Docker / Linux native GPU：all、单个设备索引或 GPU UUID；WSL2 native 仅 all",
     )
     parser.add_argument("--sandbox-review", help="查看之前保留的 sandbox 会话目录")
     parser.add_argument("--apply", action="store_true", help="与 --sandbox-review 一起显式回写")
@@ -162,7 +186,8 @@ def _main() -> None:
         try:
             args.sandbox_writeback = (
                 writeback_mode(os.getenv("AGENT_SANDBOX_WRITEBACK") or "manual")
-                if args.sandbox == "docker" else "manual"
+                if args.sandbox == "docker"
+                else "manual"
             )
         except argparse.ArgumentTypeError as error:
             parser.error(str(error))
@@ -215,8 +240,10 @@ def _main() -> None:
     store = None
     conversation = None
     native = None
+    web_backend = None
     try:
         workspace_root = Path(args.root).resolve(strict=True)
+        web_backend = WebBackend.from_environment()
         store = SessionStore(workspace_root, new=args.new_session, name=args.name).open()
         if args.sandbox == "docker":
             environment = detect_environment(
@@ -236,7 +263,9 @@ def _main() -> None:
                 if store.data.get("sandbox_healthy") is False:
                     raise ValueError("上次沙箱清理未确认；请检查遗留容器后用 --new-session 启动")
                 session = SandboxSession.resume(
-                    previous_sandbox, workspace_root, sandbox_policy,
+                    previous_sandbox,
+                    workspace_root,
+                    sandbox_policy,
                     verify_command=args.sandbox_verify_command,
                 )
             else:
@@ -247,19 +276,45 @@ def _main() -> None:
                 )
             tools = session.tools(writeback_mode=args.sandbox_writeback)
         elif args.sandbox == "native":
-            if (store.data and store.data["mode"] == "native"
-                    and store.data.get("sandbox_healthy") is False):
+            if (
+                store.data
+                and store.data["mode"] == "native"
+                and store.data.get("sandbox_healthy") is False
+            ):
                 raise ValueError("上次原生进程清理未确认；请检查遗留进程后用 --new-session 启动")
-            native = (NativeBackend(workspace_root, gpus=args.sandbox_gpus or "all")
-                      if gpu_requested else NativeBackend(workspace_root))
+            native = NativeBackend(
+                workspace_root, profile=args.sandbox_profile, gpus=args.sandbox_gpus
+            )
             tools = native.tools()
             platform_label = "Linux" if sys.platform == "linux" else "macOS"
-            print(f"[执行环境：{platform_label} native] 工具断网；直接修改原项目，无副本回写", flush=True)
-            if gpu_requested:
-                print(f"[原生 GPU：{args.sandbox_gpus or 'all'}] CUDA kernel 自检通过；无显存配额", flush=True)
+            print(
+                f"[执行环境：{platform_label} native] 工具断网；直接修改原项目，无副本回写",
+                flush=True,
+            )
+            if sys.platform == "linux":
+                gpu = native.execution_context()["gpu_access"]
+                if gpu["enabled"]:
+                    print(
+                        f"[原生 GPU：{gpu['selection']}] CUDA kernel 自检通过；无显存配额",
+                        flush=True,
+                    )
+                else:
+                    reason = (
+                        "已显式关闭 GPU"
+                        if args.sandbox_profile == "standard"
+                        else "未检测到 NVIDIA CUDA 设备"
+                    )
+                    print(f"[原生环境：standard] {reason}", flush=True)
         else:
             tools = create_default_tools(workspace_root)
             print("[执行环境：local] 直接修改原项目；不执行命令、Python 或语言服务器", flush=True)
+        archive = HistoryArchive(store)
+        tools += [HistoryTool(archive, "search"), HistoryTool(archive, "read")]
+        tools += create_web_tools(web_backend)
+        if web_backend is not None and web_backend.adapter is not None:
+            print("[Web 搜索：Brave] 主进程联网搜索；查询会发送给搜索供应商", flush=True)
+        if web_backend is not None and web_backend.pages is not None:
+            print("[Web 读取] 主进程读取公开网页；不需要搜索密钥", flush=True)
         skills = SkillRegistry(session.workspace if session is not None else workspace_root)
         restore_thinking_args(args)
         extra = request_options(args)
@@ -278,6 +333,10 @@ def _main() -> None:
         def on_event(event, stats):
             status(event, stats)
             tracer(event, stats)
+            if event.startswith("compaction_") and (
+                args.task is not None or not (sys.stdin.isatty() and sys.stdout.isatty())
+            ):
+                print(f"[{stats.compaction['phase']}]", flush=True)
             if event == "recovery" and (
                 args.task is not None or not (sys.stdin.isatty() and sys.stdout.isatty())
             ):
@@ -307,9 +366,20 @@ def _main() -> None:
             runtime.on_model_event = LiveOutput(display=display)
             thinking = ThinkingControl(runtime, args)
             conversation = SavedConversation(
-                store, runtime, config, status, sandbox=session,
-                restore_window=args.context_window is None, tracer=tracer,
-                execution_mode=args.sandbox, execution_backend=native,
+                store,
+                runtime,
+                config,
+                status,
+                sandbox=session,
+                restore_window=args.context_window is None,
+                tracer=tracer,
+                execution_mode=args.sandbox,
+                execution_backend=native,
+                compaction_settings=CompactionSettings(
+                    auto=args.auto_compact, threshold=args.compact_threshold,
+                    target=args.compact_target, keep_tokens=args.compact_keep_tokens,
+                    summary_tokens=args.compact_summary_tokens,
+                ),
             )
             conversation.checkpoint(strict=True)
             print(conversation.notice)
@@ -324,7 +394,11 @@ def _main() -> None:
                 )
                 if session is None:
                     run_interactive(
-                        runtime, thinking=thinking, status=status, models=models, display=display,
+                        runtime,
+                        thinking=thinking,
+                        status=status,
+                        models=models,
+                        display=display,
                         conversation=conversation,
                     )
                 else:
@@ -353,6 +427,8 @@ def _main() -> None:
     except (LLMError, ValueError, OSError, subprocess.SubprocessError) as error:
         parser.exit(1, f"{type(error).__name__}: {error}\n")
     finally:
+        if web_backend is not None:
+            web_backend.close()
         saved_ok = conversation.checkpoint() if conversation is not None else True
         if native is not None:
             native.close()
@@ -366,7 +442,9 @@ def _main() -> None:
                 f"查看：repo-agent --sandbox-review {session.directory}\n"
                 "回写：在查看命令后加 --apply"
             )
-        if tracer is not None and (tracer.error is not None or getattr(tracer, "previous_error", None)):
+        if tracer is not None and (
+            tracer.error is not None or getattr(tracer, "previous_error", None)
+        ):
             print("追踪日志写入失败，请检查日志目录权限和磁盘空间。", file=sys.stderr)
         if not saved_ok:
             parser.exit(1, "会话未能保存，请检查状态目录权限和磁盘空间。\n")

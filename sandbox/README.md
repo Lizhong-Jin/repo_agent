@@ -2,7 +2,7 @@
 
 [返回 README](../README.md) · [会话管理](../docs/sessions.md)
 
-CLI 首次默认使用 macOS / Linux native；本文描述显式选择 `--sandbox docker` 的行为。macOS / Linux 也支持直接修改原项目的 [native 后端](../docs/native-sandbox.md)。Docker 模式下，宿主机只运行模型循环、持有密钥、保存日志并管理容器；文件、命令、Python 和 Git 工具均在容器中执行。Python 库直接调用 `create_default_tools` 只提供本地文件和 Git 工具；需要命令执行和隔离时使用 `SandboxSession(root).tools()`。
+CLI 首次默认使用 macOS / Linux native；本文描述显式选择 `--sandbox docker` 的行为。macOS / Linux 也支持直接修改原项目的 [native 后端](../docs/native-sandbox.md)。Docker 模式下，宿主机只运行模型循环、持有密钥、保存日志并管理容器；文件、命令、Python 和 Git 工具均在容器中执行。Python 库直接调用 `create_default_tools` 提供本地文件、Git 和不启动探测子进程的基础环境查询；需要命令执行和隔离时使用 `SandboxSession(root).tools()`。
 
 ## 准备与使用
 
@@ -41,7 +41,7 @@ repo-agent --sandbox-review /absolute/session-directory --apply
 
 默认 native 通过原生沙箱直接编辑原项目；也可显式使用 `--sandbox local`：文件和 Git 工具在宿主机运行，不具有 Docker 隔离；任意命令与 Python 工具不注册。需要执行测试或脚本时使用 Docker 或 macOS / Linux native 模式。Docker 缺失、镜像缺失、启动失败均不会自动转为 local。
 
-更新工具保护规则后，请重新构建镜像，让容器使用同一版本：`repo-agent-build-sandbox`。凭据及元数据保护规则共用 `tools/file_policy.py`，额外的缓存和依赖排除规则位于 `sandbox/policy.py`。
+更新工具保护规则后，请重新构建镜像，让容器使用同一版本：`repo-agent-build-sandbox`。凭据及元数据保护规则共用 `tools/_internal/file_policy.py`，额外的缓存和依赖排除规则位于 `sandbox/policy.py`。
 
 ## 自动回写配置与恢复
 
@@ -60,7 +60,7 @@ AGENT_SANDBOX_WRITEBACK=on-success
 - `run_python`、`run_command` 验证调用可传 `check_id`（1–64 个字母、数字、下划线或连字符）。从首次检查起使用稳定标识；相同工具、相同 cwd、相同标识的重试成功后，即使脚本或命令修正过，也能解除对应失败。其他检查、工具或目录下的成功不会清除它。标识关联表达的是模型对“同一检查”的声明，不能自动证明两段验证代码覆盖相同断言，不能通过删减断言来解除失败。
 - 未提供 `check_id` 时仍按完整参数匹配重试（忽略 timeout_seconds，省略 cwd 按 `.` 处理）。已有的无标识失败不会被后来带标识的检查清除；可原样重试或检查后 `/apply`。进程清理未确认需人工检查，不由检查重试解除。
 - 模型异常、中断、达到轮数上限、非正常结束等**留下待发布文件变更**时，需要手动 `/apply`，不会被下一条无关的正常任务自动写回。没有遗留变更时，新任务会清理历史阻止状态。
-- 验证非法输入等预期失败场景时，用 `run_python` 的 `subprocess.run` 调用被测程序并断言预期退出码，让验证脚本自身成功返回 0。不能仅根据模型文字描述把非零退出码视为已通过；内置提示词包含此约定，自定义系统提示词需自行保留。
+- 验证非法输入等预期失败场景时，用 `run_python` 的 `subprocess.run` 调用被测程序并断言预期退出码，让验证脚本自身成功返回 0。不能仅根据模型文字描述把非零退出码视为已通过；内置 `coding` 技能包含此约定；使用专业技能时会引导加载它，运行时不强制执行测试策略。
 - 宿主机冲突或不安全文件类型会阻止回写；仍保留副本。
 - `completed` 本身不代表测试通过。可配置 `AGENT_SANDBOX_VERIFY_COMMAND`，在正常完成、有待回写变更、且所有现有阻止原因已解除后，额外执行一次最终检查。未配置时不会猜测测试命令。
 - 单次任务自动回写被阻止或失败时退出码为非零；交互模式报告原因并继续等待输入。
@@ -119,7 +119,7 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py
 
 ## 多语言代码符号
 
-`get_symbols` 根据文件后缀选择 `tools/lsp_config.py` 中的配置；默认覆盖 Python、JS/JSX、
+`get_symbols` 根据文件后缀选择 `tools/_internal/lsp_config.py` 中的配置；默认覆盖 Python、JS/JSX、
 TS/TSX、Go、C/C++ 和 CUDA。standard 镜像自检八种非 CUDA 语言标识，cuda 镜像额外通过 `--cuda` 检查 CUDA 符号（`sandbox/lsp_smoke.py`）。
 
 运行时缓存使用 `/tmp`，保持只读根文件系统、非 root、禁用网络和原有资源上限。
@@ -137,7 +137,7 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_multilang_sa
 
 ## GPU 算子沙箱
 
-构建统一执行 `repo-agent-build-sandbox`，启动统一执行 `repo-agent "任务内容"`。
+Docker 模式构建执行 `repo-agent-build-sandbox`，启动显式执行 `repo-agent --sandbox docker "任务内容"`。
 构建与启动共用 Docker 主机检测逻辑：确认 NVIDIA GPU 可用后自动选择 CUDA 环境，
 否则选择普通环境；已配置但损坏的 NVIDIA runtime 会明确报错。一个 `sandbox/Dockerfile`
 生成统一名称 `repo-agent-sandbox:v1` 的镜像，启动时校验环境标签，不匹配时提示重新构建。

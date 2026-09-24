@@ -1,20 +1,20 @@
 """Private workspace snapshots, conflict detection, and explicit writeback."""
 
-from copy import deepcopy
-from dataclasses import replace
-import re
 import difflib
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 import tempfile
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 
-from tools.base import ToolResult
+from tools._internal.base import ToolResult
+from tools._internal.file_policy import runtime_protected_paths
 from tools.factory import create_default_tools
-from tools.file_policy import runtime_protected_paths
 
 from .docker import DockerBackend, SandboxBackend
 from .policy import SandboxPolicy

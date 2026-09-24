@@ -11,7 +11,7 @@ import pytest
 from test_sessions import open_conversation  # noqa: F401
 
 from sandbox.native import NativeBackend, seatbelt_profile
-from tools.process_runner import ProcessResult
+from tools._internal.process_runner import ProcessResult
 
 
 def test_native_rejects_other_platforms_before_creating_state(monkeypatch, tmp_path):
@@ -44,9 +44,11 @@ def test_cli_defaults_to_native_despite_old_writeback_config(tmp_path, monkeypat
     native_calls = []
     closed = []
 
-    def native_backend(workspace):
+    def native_backend(workspace, **options):
+        assert options == {"profile": "auto", "gpus": None}
         native_calls.append(workspace)
-        return SimpleNamespace(healthy=True, tools=lambda: [], close=lambda: closed.append(True))
+        return SimpleNamespace(healthy=True, tools=lambda: [], close=lambda: closed.append(True),
+                               execution_context=lambda: {"gpu_access": {"enabled": False}})
 
     monkeypatch.setattr(cli, "NativeBackend", native_backend)
     monkeypatch.setattr(cli, "detect_environment", lambda **kw: pytest.fail("Docker selected"))
@@ -334,7 +336,7 @@ def test_timeout_keeps_output_and_allows_later_calls(native_project):
 
 @REAL_NATIVE
 def test_native_timeout_cleans_child_that_changes_session(native_project):
-    from tools.process_supervisor import ProcessTable
+    from tools._internal.process_supervisor import ProcessTable
 
     root, backend = native_project
     child = "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready', flush=True); time.sleep(10)"

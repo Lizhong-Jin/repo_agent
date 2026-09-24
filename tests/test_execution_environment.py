@@ -13,7 +13,7 @@ from sandbox.policy import SandboxPolicy
 from sandbox.session import SandboxedTool
 from sandbox.writeback import WritebackGuard
 from tools import GetExecutionEnvironmentTool, create_default_tools
-from tools.process_runner import ProcessResult, ProcessStartError
+from tools._internal.process_runner import ProcessResult, ProcessStartError
 
 
 def process_result(stdout="v1.2.3", **overrides):

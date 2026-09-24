@@ -61,6 +61,11 @@ class ThinkingArgument(argparse.Action):
 
 
 RUNTIME_OPTIONS = (
+    ("auto-compact", "AGENT_AUTO_COMPACT", True, stream_value),
+    ("compact-threshold", "AGENT_COMPACT_THRESHOLD", .75, float),
+    ("compact-target", "AGENT_COMPACT_TARGET", .45, float),
+    ("compact-keep-tokens", "AGENT_COMPACT_KEEP_TOKENS", 6000, positive_int),
+    ("compact-summary-tokens", "AGENT_COMPACT_SUMMARY_TOKENS", 3000, positive_int),
     ("thinking-display", "AGENT_THINKING_DISPLAY", "collapsed", display_mode),
     ("max-steps", "AGENT_MAX_STEPS", 8, step_limit),
     ("max-output-tokens", "AGENT_MAX_OUTPUT_TOKENS", 4096, int),

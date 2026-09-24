@@ -261,6 +261,8 @@ def test_toolbar_shows_live_totals_and_project_path(tmp_path):
 
 
 def test_cli_session_clear_keeps_usage_totals(tmp_path, monkeypatch, capsys):
+    # This accounting fixture advertises an intentionally tiny synthetic context limit.
+    monkeypatch.setenv("AGENT_AUTO_COMPACT", "false")
     import json
 
     from cli import main as cli

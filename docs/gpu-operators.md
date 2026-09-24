@@ -6,15 +6,36 @@
 算子环境自检，以及内置 `$gpu-kernel-development` 技能。Triton/PyTorch 是 Python 库，
 其 `.py` 文件继续使用 pylsp；`.cu`、`.cuh` 使用 clangd 的 `cuda` 语言标识。
 
-## 在 Linux NVIDIA 机器准备
+## 先选择执行模式
 
-Linux native 也可直接使用宿主机 GPU，无需 Docker：
+| 模式 | GPU 与依赖来源 | 路径与文件生效 | 资源及缓存 |
+| --- | --- | --- | --- |
+| Linux / WSL2 native | 本机 NVIDIA 驱动、Agent Python 环境中的框架和可访问的系统 Toolkit；不需要 Docker 或 NVIDIA Container Toolkit | 原项目真实路径，直接修改，无 `/apply` 或回写备份 | 无 CPU/内存/显存配额，也不保证独占 GPU；默认缓存按工具调用清理 |
+| macOS native | 本项目不提供 NVIDIA CUDA GPU 接入 | 原项目真实路径，直接修改 | 可做允许范围内的代码编辑和检查，不能据此声明 CUDA 实测通过 |
+| Docker cuda | Docker 主机驱动、NVIDIA Container Toolkit、CUDA 镜像内框架及 Toolkit | 容器 `/workspace`，副本变更按回写策略生效 | 有容器 CPU/内存配额，无显存配额；默认 `/tmp` 缓存不跨调用保留 |
+| local | 不提供命令、Python 或 GPU 探测子进程 | 直接修改原项目 | GPU 查询为 unknown；不执行编译或 benchmark |
+
+### Linux / WSL2 native
 
 ```bash
-repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all
+repo-agent --sandbox native
+repo-agent --sandbox native --sandbox-profile standard   # 强制关闭 GPU
+repo-agent --sandbox native --sandbox-profile cuda       # 强制要求 GPU
+repo-agent --sandbox native --sandbox-gpus 0              # 普通 Linux 选择单卡
+repo-agent --sandbox native --sandbox-gpus all            # WSL2 仅支持 all
 ```
 
-默认 native 不开放 GPU，需显式指定 CUDA profile 或 GPU 参数；Linux 可选单卡，WSL2 仅支持 `all`。需要宿主机驱动、GPU 设备权限，并在 Agent 的 Python 环境中预装 CUDA 版 PyTorch、Triton 等依赖。启动会在沙箱内验证实际 CUDA kernel；网络和文件保护继续生效，无显存/算力配额。依赖、权限范围、缓存行为及真实硬件测试见 [原生 GPU 说明](native-sandbox.md#linux--wsl2-原生-gpu)。以下镜像构建、自动检测和容器资源上限描述 Docker 模式。
+默认 auto 发现 NVIDIA CUDA 设备后启用全部 GPU，没有发现则使用 standard；检测到设备但驱动、
+设备权限或 CUDA kernel 启动自检异常时明确报错，不静默降级。macOS 不进行此 GPU 检测。
+驱动自检执行小型 PTX kernel，**不依赖也不验证 PyTorch、Triton 或 nvcc**。
+
+按任务提前准备 Agent 实际使用的 Python 环境和系统工具链。native 安装不自动安装 CUDA、
+PyTorch 或 Triton；不能把宿主机另一套 venv 中可导入的包当作 Agent 环境已具备的依赖。
+当前原生后端只读挂载解释器/依赖目录，命令断网；依赖由用户在沙箱外准备。
+不要将 Docker 镜像构建作为 native 的必经步骤。完整授权、工具链查找与限制见
+[原生 GPU 说明](native-sandbox.md#linux--wsl2-原生-gpu)。
+
+### Docker CUDA 环境
 
 当前 GPU 镜像基线面向 Linux x86_64，使用官方
 `pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel`：PyTorch 2.7.1、CUDA Toolkit 12.8、
@@ -25,9 +46,9 @@ cuDNN 9，配套固定 Triton 3.3.1。包含 nvcc、C/C++ 编译器、Ninja、py
 镜像包含 CUDA 用户态工具链，不包含宿主机内核驱动；GPU 通过 Docker 的 `--gpus` 挂载。
 Mac 的 MPS 或 Linux CPU 模式不能替代 CUDA/Triton GPU 验证。
 
-## 统一构建与启动
+## Docker 构建与启动
 
-普通开发和 GPU 算子开发都只需以下入口，macOS 和 Linux 使用相同命令：
+显式选择 Docker 模式时，普通开发和 GPU 算子开发使用以下入口；GPU 能否使用取决于 Docker 主机：
 
 ```bash
 # 首次使用或更新沙箱代码后构建，不需要模型配置
@@ -70,7 +91,7 @@ Dockerfile 内部不能可靠检测宿主机 GPU，因此请使用上述构建�
 - standard 环境不挂载 GPU；local 模式不使用 Docker 自动检测，也不支持 GPU profile。
 - Profile、GPU 与资源配置由启动配置和宿主机检测决定，模型工具参数不能修改。
 
-资源上限对比：
+以下配额仅适用于 Docker，native 不套用此表中的 CPU、内存、PID 或临时目录大小限制：
 
 | 资源 | standard | cuda |
 | --- | --- | --- |
@@ -88,34 +109,41 @@ Dockerfile 内部不能可靠检测宿主机 GPU，因此请使用上述构建�
 
 ## 探测和实际自检
 
-模型可以使用 `run_command` 执行：
+优先使用 `get_execution_environment`，显式请求 GPU 分组：
 
 ```json
-{"command":["python","-I","-m","sandbox.compute_probe"],"timeout_seconds":60}
+{"sections":["execution","system","runtimes","gpu"]}
 ```
 
-探测报告包含 torch/Triton 版本、torch CUDA 版本、GPU 名称与计算能力、显存和 nvcc。
-普通探测退出 0 只代表信息收集完成，不能认定 GPU 可用；加 `--require-gpu` 时缺依赖或 GPU 会失败。
+`execution` 返回实际模式、工作区、执行权限、可写位置和 `tool_limits`；native Linux 的
+`gpu_access` 还记录授权设备及启动驱动自检。`runtimes.python.executable` 是所用解释器路径。
+`gpu` 检查 PyTorch/Triton、CUDA 设备、nvcc 和驱动信息；查询成功只代表获得报告。
+GPU 分项 unknown 可能是依赖缺失或探测超时，不足以证明没有物理 GPU。
 
-真实算子环境自检：
+`operator_environment_ready` 表示 PyTorch CUDA、Triton、nvcc 同时满足整套环境自检条件。
+按当前任务选择依赖：缺少 Triton 不应阻止只需要 PyTorch 的测试，缺少 nvcc 也不应直接判定
+Triton kernel 无法执行。native 启动驱动自检通过不等于框架和当前算子已验证。
+
+当 Agent 的 `sandbox` 模块可以在该解释器中导入时，也可通过 `run_command` 运行
+`python -I -m sandbox.compute_probe`。`--require-gpu` 检查的是上述整套环境条件，
+不只是 GPU 存在。native 环境下隔离的 `-I -m` 无法找到模块时，优先使用环境工具和项目测试，
+不要将模块导入失败报告为 GPU 故障。
+
+完整算子环境自检示例（**仅在报告和 schema 允许 900 秒超时时使用**）：
 
 ```json
-{"command":["python","-I","-m","sandbox.operator_smoke"],"timeout_seconds":900,"check_id":"gpu-environment-smoke"}
+{"command":["python","-I","-m","sandbox.operator_smoke"],"timeout_seconds":900}
 ```
 
-它编译 CUDA 扩展、JIT 编译 Triton 加法，使用 PyTorch 参考结果验证：
-空输入、1/33/1025/65537 个元素、float32/float16，以及硬件支持时的 bfloat16；
-CUDA 扩展示例验证 float32，并覆盖非默认 stream。缺少 GPU 明确失败，不能以 CPU fallback 通过。
-这只是环境自检，不代表任何新算子已经正确。
+将 `python` 替换为环境报告的解释器路径。native 与 Docker 均可在依赖满足且模块可导入时
+使用该入口；只有 Docker 命令代理支持附加 `check_id`，native 不接受该字段。
+该自检编译 CUDA 扩展、JIT 编译 Triton 加法，用 PyTorch 参考结果验证空输入、
+1/33/1025/65537 个元素、float32/float16，以及硬件支持时的 bfloat16；CUDA 扩展示例
+验证 float32 和非默认 stream。缺依赖或 GPU 时失败，不能以 CPU fallback 通过。
+这只是环境自检，不能代替当前算子的正确性测试。
 
-增加 `--benchmark` 可测量三个实现的 GPU event 耗时；每种实现每次分配输出，先 warm-up，
-不包含首次编译。结果包含环境信息，不承诺哪个实现更快。
-
-在宿主机运行完整沙箱链路验证：
-
-```bash
-RUN_CUDA_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_gpu_support.py
-```
+增加 `--benchmark` 可测量三个实现的 GPU event 耗时；每次分配输出，先 warm-up，
+不包含首次编译。结果附带环境信息，不承诺哪个实现更快。
 
 ## 编写实际算子
 
@@ -123,17 +151,46 @@ RUN_CUDA_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_gpu_support.py
 再实现 kernel，并分别验证正确性、边界条件、stream 与性能。需要 torch.compile 或 autograd 时
 应额外实现和验证对应接入，不能仅凭 eager 测试宣称支持。
 
-编译与 JIT 缓存写入 `/tmp`，相关环境变量会传到命令子进程。每次工具调用仍启动独立容器，
-临时缓存不会跨调用保留，因此尽量在同一次命令中编译、测试和测量。
-运行期禁网；额外 Python 包与项目库需在派生镜像构建阶段预装。
+优先使用执行器设置的 `TMPDIR`、`TRITON_CACHE_DIR`、`TORCH_EXTENSIONS_DIR`；
+创建临时文件可用 `tempfile.gettempdir()`。Docker 使用容器 `/tmp`，native 使用每次调用的
+私有临时目录，Linux native 的顶层 `/tmp` 本身只读，不应硬编码在那里新建编译缓存。
+两种模式的默认临时缓存都会在调用结束后清理，所以将同一候选的编译、正确性检查、预热
+和 benchmark 放在同一进程中；需要保留的实验结果写入工作区普通文件。
 
-CUDA 复杂工程应提供 `compile_commands.json` 或 `.clangd`，包含正确 Toolkit/include、GPU 架构
-与容器路径；文件类型被识别或符号查询成功不能替代 nvcc 编译。头文件 `.cuh` 默认按 CUDA 处理。
+两种模式命令均断网；Docker 依赖预装到镜像，native 依赖预装到 Agent Python 环境或允许的
+系统工具链位置。可选的主进程 Web 搜索/读取不改变命令网络权限。首次编译按
+`execution.tool_limits` 设置超时：GPU 模式的命令/Python 上限通常为 900 秒，默认仍为
+60/10 秒；standard 命令/Python 上限为 120/30 秒。native 没有 Docker 的外层容器总超时。
+
+CUDA 工程的 `compile_commands.json` / `.clangd` 应使用当前执行环境有效的 Toolkit/include、
+GPU 架构与源码路径：native 使用原项目路径，Docker 使用 `/workspace`。
+`.cu`、`.cuh` 能被识别或语义查询成功，不意味着 nvcc 编译成功。
+
+要求逐步优化时，固定正确性约束与基准口径，记录候选源码、输入规模、环境、重复采样方式
+和性能结果，并保留最佳正确实现。当前 Runtime 可按模型决定连续调用工具，但没有强制
+性能提升验收、自动保存最佳候选或专用调参调度器；这些流程由任务/技能与项目测试实现。
+`--max-steps 0` 仅取消模型轮数上限，不保证持续运行到性能目标，也不解除工具超时。
 
 ## 验证边界
 
 在没有 NVIDIA GPU 的开发机上可验证路由、配置、CLI、Docker 参数、技能加载与缺依赖时的行为。
-只有目标 Linux GPU 机器上通过实际算子自检后，才能确认该驱动/硬件组合可运行 CUDA/Triton 算子。
+需要在目标 Linux / WSL2 NVIDIA 环境中执行实际测试，才能确认所用驱动、框架与算子组合。
+技能加载、参数校验或模拟测试通过不能替代真实 GPU 验证。
+
+在已准备相应依赖的宿主机执行，真实测试使用显式开关：
+
+```bash
+# Docker：需要可用的 CUDA 镜像与 NVIDIA runtime
+RUN_CUDA_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_gpu_support.py
+
+# Native：驱动 kernel 与隔离验证
+RUN_NATIVE_GPU_TESTS=1 .venv/bin/python -m pytest -q tests/test_linux_native_gpu.py
+
+# Native：额外验证 PyTorch、Triton 和 CUDA 扩展
+RUN_NATIVE_GPU_TESTS=1 RUN_NATIVE_GPU_OPERATORS=1 .venv/bin/python -m pytest -q tests/test_linux_native_gpu.py
+```
+
+在源码安装目录运行以上命令；其他安装方式使用对应的 Python 环境。
 
 参考：[PyTorch 官方镜像](https://github.com/orgs/pytorch/packages/container/pytorch/431045026?tag=2.7.1-cuda12.8-cudnn9-devel)、
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/docker-specialized.html)、

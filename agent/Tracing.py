@@ -19,6 +19,8 @@ from llm import Message, ToolCall, Usage
 @dataclass
 class ModelCallRecord:
     step: int
+    purpose: str = "task"
+    max_output_tokens: int | None = None
     first_data_seconds: float | None = None
     first_text_seconds: float | None = None
     first_thinking_seconds: float | None = None
@@ -59,6 +61,7 @@ class RunStats:
     error_type: str | None = None
     recoveries: list[dict[str, Any]] = field(default_factory=list)
     stop_reason: str | None = None
+    compaction: dict[str, Any] = field(default_factory=dict)
 
     task_id: str = field(default_factory=lambda: uuid4().hex)
     trace_error: str | None = None
@@ -124,7 +127,8 @@ def format_event(event: str, stats: RunStats) -> str:
     elif event.startswith("model_"):
         call = stats.model_calls[-1]
         if event == "model_start":
-            text = f"模型调用 #{call.step} 开始"
+            purpose = "摘要" if call.purpose == "compaction" else ""
+            text = f"{purpose}模型调用 #{call.step} 开始"
         else:
             usage = call.usage
             counters = (
@@ -142,6 +146,7 @@ def format_event(event: str, stats: RunStats) -> str:
                 f"，首段思考={call.first_thinking_seconds}，思考字符={call.thinking_characters}"
                 f"，首次显示={call.first_display_seconds}，响应总时长={call.response_seconds}"
                 f"，思考设置={json.dumps(call.thinking, ensure_ascii=False)}"
+                f"，输出上限={call.max_output_tokens}"
             )
     elif event.startswith("tool_"):
         call = stats.tool_calls[-1]
@@ -172,7 +177,9 @@ def format_event(event: str, stats: RunStats) -> str:
         )
         if stats.error_type:
             text += f"，异常类型={stats.error_type}"
-    if event == "recovery":
+    if event.startswith("compaction_"):
+        text = stats.compaction["phase"]
+    elif event == "recovery":
         text = stats.recoveries[-1]["message"]
     elif event == "task_end" and stats.stop_reason:
         text += f"，停止原因：{stats.stop_reason}"
@@ -243,8 +250,8 @@ class RunTrace:
         self.emit("task_end")
 
     @contextmanager
-    def model(self, step: int):
-        record = ModelCallRecord(step)
+    def model(self, step: int, *, purpose="task"):
+        record = ModelCallRecord(step, purpose=purpose)
         self.stats.model_calls.append(record)
         started = perf_counter()
         self.emit("model_start")

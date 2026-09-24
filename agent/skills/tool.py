@@ -1,7 +1,7 @@
 """Loading returns a frozen skill; executable resources use existing sandbox tools."""
 
 from llm import ToolDefinition
-from tools.base import ToolResult
+from tools._internal.base import ToolResult
 
 from .registry import SkillError, SkillRegistry
 

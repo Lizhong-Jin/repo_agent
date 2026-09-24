@@ -4,8 +4,8 @@ import subprocess
 
 import pytest
 
+from tools._internal.process_runner import ProcessResult, ProcessStartError
 from tools.git_tools import GitStatusTool
-from tools.process_runner import ProcessResult, ProcessStartError
 
 
 @pytest.fixture

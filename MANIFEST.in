@@ -1,0 +1,4 @@
+include build_support.py .env.example .dockerignore uv.lock requirements-*.lock
+recursive-include dependencies *.json
+recursive-include agent/skills SKILL.md
+include sandbox/Dockerfile

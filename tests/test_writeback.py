@@ -9,7 +9,7 @@ import pytest
 from agent.Tracing import RunStats
 from cli.interactive import finish_writeback, run_interactive
 from sandbox import SandboxSession
-from tools.base import ToolResult
+from tools._internal.base import ToolResult
 
 
 class Backend:

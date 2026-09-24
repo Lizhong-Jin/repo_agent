@@ -16,8 +16,11 @@
 | Skills | [agent/skills/registry.py](agent/skills/registry.py)、[agent/skills/tool.py](agent/skills/tool.py) | 发现并校验技能，显式或按需加载正文 |
 | 模型层 | [llm/client.py](llm/client.py)、[llm/schemas.py](llm/schemas.py)、[llm/adapters/](llm/adapters/) | 同步/异步调用、流式解析、协议转换、原生状态和错误 |
 | 模型能力 | [llm/model_limits.py](llm/model_limits.py)、[llm/thinking_profiles.py](llm/thinking_profiles.py)、[llm/thinking_catalog.py](llm/thinking_catalog.py) | 上下文元数据查询、思考能力匹配与校验 |
-| 工具 | [tools/factory.py](tools/factory.py)、[tools/](tools/) | 文件、搜索、Git、隔离命令、Python 和代码符号 |
-| 沙箱 | [sandbox/session.py](sandbox/session.py)、[sandbox/docker.py](sandbox/docker.py)、[sandbox/writeback.py](sandbox/writeback.py) | 工作副本、容器、回写检查、备份与恢复 |
+| 工具 | [tools/factory.py](tools/factory.py)、[tools/](tools/) | 文件、补丁、搜索、Git、环境查询、隔离命令、Python 和语言服务器工具 |
+| Web 工具 | [tools/web_tools.py](tools/web_tools.py)、[tools/_internal/](tools/_internal/) | 主进程受控搜索、网页抓取和分页缓存，按配置启用 |
+| 系统提示词 | [agent/prompt.py](agent/prompt.py) | 通用任务规则；代码工作流程由 `coding` 等技能按需补充 |
+| 原生沙箱 | [sandbox/native.py](sandbox/native.py)、[sandbox/linux_native.py](sandbox/linux_native.py)、[sandbox/linux_gpu.py](sandbox/linux_gpu.py) | 平台隔离、原项目执行、Linux/WSL2 GPU 授权与驱动自检 |
+| Docker 沙箱 | [sandbox/session.py](sandbox/session.py)、[sandbox/docker.py](sandbox/docker.py)、[sandbox/writeback.py](sandbox/writeback.py) | 工作副本、容器、回写检查、备份与恢复 |
 | 追踪 | [agent/Tracing.py](agent/Tracing.py) | 模型/工具事件、计时、任务与运行片段统计 |
 | 配置与安装 | [cli/config.py](cli/config.py)、[cli/config_command.py](cli/config_command.py)、[cli/setup.py](cli/setup.py)、[cli/uninstall.py](cli/uninstall.py) | 配置加载及备份、安装、诊断、归属清理 |
 
@@ -40,16 +43,16 @@ flowchart TD
     F -.事件.-> J
 ```
 
-显式选择 local 模式时，直接创建文件和 Git 工具，不注册命令、Python 或语言服务器工具。Docker 工具代理为每次调用创建独立容器，只挂载工作副本。`sandbox/native.py` 根据平台选择后端：macOS 使用 Seatbelt，Linux 的 `sandbox/linux_native.py` 使用 Bubblewrap namespace 和只读/遮蔽挂载，`sandbox/linux_exec.py` 在执行前加载 seccomp。命令和 worker 都直接操作原项目，复用工具协议，不使用副本回写。模型请求在宿主机发送，隔离 worker 不持有模型凭证。
+显式选择 local 模式时，直接创建文件、Git 和不启动子进程的基础环境查询工具，不注册命令、Python 或语言服务器工具。Docker 工具代理为每次调用创建独立容器，只挂载工作副本。`sandbox/native.py` 根据平台选择后端：macOS 使用 Seatbelt，Linux 的 `sandbox/linux_native.py` 使用 Bubblewrap namespace 和只读/遮蔽挂载，`sandbox/linux_exec.py` 在执行前加载 seccomp。命令和 worker 都直接操作原项目，复用工具协议，不使用副本回写。模型请求在宿主机发送，隔离 worker 不持有模型凭证。可选 Web 工具也在主进程单独注册，不进入沙箱工具工厂；Web 联网不改变命令断网策略。
 
 ## 上下文构造
 
 1. `AgentRuntime.run(task, history=...)` 复制调用方传入的历史，空历史时加入系统提示词，再加入本次用户任务。
 2. 启用 Skills 时，请求中临时注入技能目录；显式指定或 `load_skill` 成功后，技能正文进入消息历史。
 3. 模型的完整 assistant 消息通过 `to_message()` 保留原生状态；工具结果按调用顺序追加，然后再次请求模型。
-4. CLI 在任务边界保存有效历史；下一次输入或进程重启后再传回 Runtime。Runtime 库本身不自动创建磁盘会话。
+4. CLI 在任务边界保存有效历史；重启恢复时更新系统提示词并按模型身份处理原生状态，再传回 Runtime。Runtime 库本身不自动创建磁盘会话。
 
-当前没有自动摘要或压缩。界面累计用量是多次请求用量之和；上下文占用按最近一次请求估算，两者不是同一个数值，见[上下文占用估算](docs/usage.md#上下文占用估算)。
+当前没有自动摘要或压缩。界面累计用量是多次请求用量之和；上下文占用在请求前可使用本地粗估，收到服务端用量后按最近一次请求估算，两者不是同一个数值，见[上下文占用估算](docs/usage.md#上下文占用估算)。
 
 ## 状态与文件归属
 

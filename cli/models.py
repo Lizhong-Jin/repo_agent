@@ -7,10 +7,12 @@ import warnings
 from dataclasses import dataclass, field, replace
 
 from llm import ConfigurationError, LLMClient
-from llm.providers import PROVIDERS, get_provider
+from llm.model_catalog import require_supported_model, supported_providers
+from llm.providers import get_provider
 
 from .config import read_config, save_user_config
 from .installation import user_config_path
+from .model_picker import pick_model
 
 RESET_SETTINGS = {
     "LLM_THINKING": "auto",
@@ -50,7 +52,7 @@ class ModelWizard:
         self.base_url = base_url
         path = user_config_path()
         self.saved = read_config(path) if path.exists() else {}
-        self.provider = provider
+        self.provider = provider if provider in supported_providers() else supported_providers()[0]
         self.model = self.original_model
         self.stage = "provider"
 
@@ -66,11 +68,12 @@ class ModelWizard:
 
     def prompt(self):
         if self.stage == "provider":
-            choices = "\n".join(f"  {index}. {name}" for index, name in enumerate(PROVIDERS, 1))
+            choices = "\n".join(
+                f"  {index}. {name}" for index, name in enumerate(supported_providers(), 1)
+            )
             return f"选择供应商（序号或名称，回车保留 {self.provider}）：\n{choices}\n供应商> "
         if self.stage == "model":
-            default = f"（回车保留 {self.model}）" if self.model else ""
-            return f"模型名{default}> "
+            return "搜索模型；↑↓ / 滚轮选择，PgUp/PgDn 翻页，Enter 确认，Ctrl+C 取消。"
         reuse = "，回车保留已配置的 Key" if self.existing_key() else ""
         return f"API Key（输入隐藏{reuse}）> "
 
@@ -79,20 +82,20 @@ class ModelWizard:
         if self.stage == "provider":
             if value.isdigit():
                 number = int(value)
-                if not 1 <= number <= len(PROVIDERS):
+                if not 1 <= number <= len(supported_providers()):
                     raise ValueError("请选择列表中的供应商序号")
-                value = list(PROVIDERS)[number - 1]
+                value = supported_providers()[number - 1]
             try:
                 provider = get_provider(value or self.provider).name
             except ConfigurationError:
                 raise ValueError("请选择列表中的供应商") from None
+            if provider not in supported_providers():
+                raise ValueError("该供应商尚无已支持的模型，请选择列表中的供应商")
             self.provider = provider
             self.model = self.original_model if provider == self.original_provider else ""
             self.stage = "model"
         elif self.stage == "model":
-            self.model = value or self.model
-            if not self.model:
-                raise ValueError("模型名不能为空")
+            self.model = require_supported_model(self.provider, value or self.model).id
             self.stage = "key"
         else:
             key = value or self.existing_key()
@@ -117,6 +120,8 @@ def prompt_model(wizard: ModelWizard) -> ModelSelection:
                 with warnings.catch_warnings():
                     warnings.simplefilter("error", getpass.GetPassWarning)
                     value = getpass.getpass(wizard.prompt())
+            elif wizard.stage == "model":
+                value = pick_model(wizard.provider, wizard.model)
             else:
                 value = input(wizard.prompt())
             selection = wizard.submit(value)
@@ -129,6 +134,7 @@ def prompt_model(wizard: ModelWizard) -> ModelSelection:
 
 
 def persist_selection(selection, *, reset):
+    require_supported_model(selection.provider, selection.model)
     values = {
         "LLM_PROVIDER": selection.provider,
         "LLM_MODEL": selection.model,
@@ -166,6 +172,7 @@ class ModelControl:
         )
 
     def switch(self, selection):
+        require_supported_model(selection.provider, selection.model)
         new_config = replace(
             self.config,
             provider=selection.provider,

@@ -19,7 +19,7 @@ from cli.tui import ConversationUI
 from llm import LLMClient, LLMConfig, LLMResponse, Message, ToolCall, Usage
 from llm.schemas import ProviderState
 from sandbox import SandboxPolicy, SandboxSession
-from tools.file_policy import session_state_root
+from tools._internal.file_policy import session_state_root
 from tools.filesystem import ReadFileTool
 
 
@@ -535,6 +535,7 @@ cli.main()
 def test_cli_reconnects_original_sandbox_and_new_flag_creates_copy(tmp_path, monkeypatch):
     import shutil
     from contextlib import nullcontext
+
     from cli import main as cli
     from sandbox.environment import DockerEnvironment
 

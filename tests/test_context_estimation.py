@@ -38,7 +38,8 @@ def test_startup_counts_system_tools_and_skills_without_requests(tmp_path):
     assert status.context_tokens > baseline
     assert "本地粗估" in status.describe_context(compact=True)
     assert "%" in status.describe_context(compact=True)
-    assert "未知" not in status.describe_context(compact=True)
+    assert "占用未知" not in status.describe_context(compact=True)
+    assert "缓存命中 未知" in status.describe_context(compact=True)
     assert status.calls == 0 and not any(status.totals.values())
     assert not any(status.reported.values())
 

@@ -9,10 +9,11 @@ from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, Layout, Window
+from prompt_toolkit.layout import ConditionalContainer, DynamicContainer, HSplit, Layout, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.screen import WritePosition
 from prompt_toolkit.lexers import Lexer
+from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.styles import Style
 from prompt_toolkit.utils import get_cwidth
 from prompt_toolkit.widgets import Frame, TextArea
@@ -21,6 +22,7 @@ from llm import LLMError
 
 from .sessions_command import new_name, ui_command
 from .live import LiveOutput
+from .model_picker import ModelPicker
 from .shortcuts import shortcut_help, shortcut_label
 from .thinking_display import ThinkingDisplay
 from .transcript import Transcript
@@ -53,9 +55,33 @@ class ConversationLexer(Lexer):
 class UserMessageWindow(Window):
     """Extend user-message backgrounds across actual rendered rows, including wraps."""
 
-    def __init__(self, user_lines, **kwargs):
+    def __init__(self, user_lines, *, following=lambda: True, scroll_history=None, **kwargs):
         super().__init__(**kwargs)
         self.user_lines = user_lines
+        self.following = following
+        self.scroll_history = scroll_history
+
+    def _mouse_handler(self, mouse_event):
+        if self.scroll_history is not None:
+            if mouse_event.event_type == MouseEventType.SCROLL_UP:
+                self.scroll_history(-3)
+                return None
+            if mouse_event.event_type == MouseEventType.SCROLL_DOWN:
+                self.scroll_history(3)
+                return None
+        return super()._mouse_handler(mouse_event)
+
+    def _scroll(self, ui_content, width, height):
+        if self.following():
+            return super()._scroll(ui_content, width, height)
+        # The editor keeps keyboard focus. While browsing history the viewport,
+        # not the transcript's off-screen cursor, determines what stays visible.
+        self.horizontal_scroll = 0
+        self.vertical_scroll = min(self.vertical_scroll, max(0, ui_content.line_count - 1))
+        line_height = ui_content.get_height_for_line(
+            self.vertical_scroll, max(1, width), self.get_line_prefix
+        )
+        self.vertical_scroll_2 = min(self.vertical_scroll_2, max(0, line_height - 1))
 
     def _apply_style(self, new_screen, write_position, parent_style):
         super()._apply_style(new_screen, write_position, parent_style)
@@ -103,6 +129,7 @@ class ConversationUI:
         self.model_started_at = None
         self.thinking_characters = 0
         self.model_wizard = None
+        self.model_picker = None
         self.history = conversation.history if conversation else ()
         self.busy = False
         self.cancelled = Event()
@@ -125,6 +152,8 @@ class ConversationUI:
         )
         self.chat.window = UserMessageWindow(
             self.user_lines,
+            following=lambda: self.follow,
+            scroll_history=self.scroll_history,
             content=self.chat.control,
             style="class:chat",
             wrap_lines=True,
@@ -134,13 +163,18 @@ class ConversationUI:
             height=3,
             multiline=True,
             wrap_lines=True,
-            prompt="你> ",
+            prompt=lambda: (
+                {"provider": "供应商> ", "model": "搜索> ", "key": "API Key> "}[
+                    self.model_wizard.stage
+                ] if self.model_wizard else "你> "
+            ),
             password=Condition(lambda: self.model_wizard is not None and self.model_wizard.secret),
             style="class:editor",
             completer=WordCompleter(
                 [
                     "/help",
                     "/clear",
+                    "/compact",
                     "/new",
                     "/rename",
                     "/sessions",
@@ -156,6 +190,23 @@ class ConversationUI:
             ),
         )
         keys = KeyBindings()
+        choosing_model = Condition(
+            lambda: self.model_wizard is not None and self.model_wizard.stage == "model"
+        )
+
+        def search_model(_):
+            if choosing_model() and self.model_picker:
+                self.model_picker.search(self.editor.text)
+
+        self.editor.buffer.on_text_changed += search_model
+
+        @keys.add("up", filter=choosing_model)
+        def model_up(event):
+            self.model_picker.move(-1)
+
+        @keys.add("down", filter=choosing_model)
+        def model_down(event):
+            self.model_picker.move(1)
 
         @keys.add("enter")
         def submit(event):
@@ -234,19 +285,22 @@ class ConversationUI:
 
         @keys.add("pageup")
         def up(event):
-            self.follow = False
-            self.chat.buffer.cursor_up(count=10)
+            if choosing_model():
+                self.model_picker.move(-self.model_picker.page_size)
+            else:
+                self.scroll_history(-self.history_page_size())
 
         @keys.add("pagedown")
         def down(event):
-            self.chat.buffer.cursor_down(count=10)
-            self.follow = self.chat.buffer.cursor_position == len(self.chat.text)
+            if choosing_model():
+                self.model_picker.move(self.model_picker.page_size)
+            else:
+                self.scroll_history(self.history_page_size())
 
         @keys.add("c-end")
         @keys.add("escape", "g")
         def end(event):
-            self.follow = True
-            self.chat.buffer.cursor_position = len(self.chat.text)
+            self.follow_latest()
 
         self.app = Application(
             layout=Layout(
@@ -258,6 +312,11 @@ class ConversationUI:
                             style="class:header",
                         ),
                         self.chat,
+                        ConditionalContainer(
+                            DynamicContainer(lambda: self.model_picker.window
+                                             if self.model_picker else Window()),
+                            filter=choosing_model,
+                        ),
                         Window(
                             FormattedTextControl(self.phase_text),
                             height=1,
@@ -265,7 +324,8 @@ class ConversationUI:
                         ),
                         Frame(
                             self.editor,
-                            title=(
+                            title=lambda: (
+                                "模型设置 · Enter 确认 · Ctrl+C 取消" if self.model_wizard else
                                 f"{shortcut_label('Enter')} 发送 · "
                                 f"{shortcut_label('Alt+Enter')} 换行 · Tab 补全"
                             ),
@@ -280,7 +340,7 @@ class ConversationUI:
                             FormattedTextControl(
                                 f" {shortcut_label('F2')} 改名 · Shift+Tab 强度 · "
                                 "Ctrl+T 思考显示 · Ctrl+C 停止 · "
-                                f"{shortcut_label('PgUp')}/{shortcut_label('PgDn')} 历史"
+                                f"滚轮/{shortcut_label('PgUp')}/{shortcut_label('PgDn')} 历史"
                             ),
                             height=1,
                             style="class:hint",
@@ -355,11 +415,53 @@ class ConversationUI:
 
     def phase_text(self):
         text = " " + self.phase
+        if not self.follow:
+            text += f" · 正在查看历史 · {shortcut_label('Ctrl+End')} 回到最新"
         if self.busy and self.model_started_at is not None:
             text += f" · 已等待 {perf_counter() - self.model_started_at:.1f}s"
             if self.thinking_characters:
                 text += f" · 思考已接收 {self.thinking_characters:,} 字符"
         return text
+
+    def history_page_size(self):
+        info = self.chat.window.render_info
+        return max(1, info.window_height - 1) if info else 10
+
+    def follow_latest(self):
+        self.follow = True
+        self.chat.buffer.cursor_position = len(self.chat.text)
+        self.app.invalidate()
+
+    def scroll_history(self, rows):
+        """Move by screen rows, including rows inside a wrapped paragraph."""
+        window = self.chat.window
+        info = window.render_info
+        if info is None:
+            return
+
+        def shift(position, amount):
+            line, offset = position
+            offset += amount
+            while offset < 0 and line > 0:
+                line -= 1
+                offset += info.get_height_for_line(line)
+            while line < info.content_height - 1:
+                height = info.get_height_for_line(line)
+                if offset < height:
+                    break
+                offset -= height
+                line += 1
+            return line, max(0, min(offset, info.get_height_for_line(line) - 1))
+
+        last = info.content_height - 1
+        bottom = shift((last, info.get_height_for_line(last) - 1), -(info.window_height - 1))
+        target = min(shift((window.vertical_scroll, window.vertical_scroll_2), rows), bottom)
+        self.follow = False
+        window.vertical_scroll, window.vertical_scroll_2 = target
+        if rows > 0 and target == bottom:
+            self.follow_latest()
+        else:
+            self.app.invalidate()
 
     def append(self, text, *, user=False):
         self.blocks.append(text, kind="user" if user else "agent")
@@ -517,10 +619,10 @@ class ConversationUI:
             except (ValueError, OSError, LLMError) as error:
                 self.append(f"设置未变更：{error}\n")
             return
-        if task.startswith("/") and not (self.sandbox and task in {"/diff", "/apply"}):
+        if task.startswith("/") and not (self.sandbox and task in {"/diff", "/apply"}) and not (task == "/compact" and self.conversation):
             self.append("未知会话命令，请输入 /help。\n")
             return
-        if self.conversation and task not in {"/diff", "/apply"}:
+        if self.conversation and task not in {"/diff", "/apply", "/compact"}:
             try:
                 self.conversation.start_task(task, transcript=self.blocks)
             except OSError as error:
@@ -533,6 +635,7 @@ class ConversationUI:
 
     def cancel_model(self):
         self.model_wizard = None
+        self.model_picker = None
         self.editor.buffer.reset()
         self.phase = "就绪"
         self.append("\n模型切换已取消，原模型和上下文保留。\n")
@@ -540,12 +643,17 @@ class ConversationUI:
     def submit_model(self):
         # Never append wizard inputs (especially keys) to chat history or task traces.
         value = self.editor.text
-        self.editor.buffer.reset()
         try:
+            if self.model_wizard.stage == "model":
+                value = self.model_picker.value()
             selection = self.model_wizard.submit(value)
+            self.editor.buffer.reset()
+            if self.model_wizard.stage == "model":
+                self.model_picker = ModelPicker(self.model_wizard.provider, self.model_wizard.model)
             if selection is not None:
                 message = self.models.switch(selection)
                 self.model_wizard = None
+                self.model_picker = None
                 self.history = ()
                 self.phase = "就绪"
                 self.append("\n" + message + "\n")
@@ -564,6 +672,9 @@ class ConversationUI:
         from .interactive import finish_writeback
 
         try:
+            if task == "/compact":
+                self.write(self.conversation.compact())
+                return ("compact", None)
             if task == "/diff":
                 self.write(self.sandbox.diff())
                 return ("command", None)
@@ -594,7 +705,11 @@ class ConversationUI:
         try:
             kind, value = await asyncio.to_thread(self.work, task)
             self.flush_text()
-            if kind == "error":
+            if task == "/compact":
+                self.history = self.conversation.history
+                if kind == "error":
+                    self.append(f"压缩未完成：{value}\n")
+            elif kind == "error":
                 if self.sandbox:
                     self.sandbox.guard.needs_review = True
                 self.history = (
@@ -647,10 +762,16 @@ class ConversationUI:
             if name == "recovery":
                 phase = stats.recoveries[-1]["message"]
                 self.write(f"[{phase}]")
+            compact_call = record is not None and getattr(record, "purpose", "task") == "compaction"
+            if compact_call and name == "model_start":
+                phase = "正在生成历史摘要…"
+            if name.startswith("compaction_"):
+                phase = stats.compaction["phase"]
+                self.write(f"[{phase}]")
             if name == "skill_loaded":
                 self.write(f"[已加载技能：{stats.skill_loads[-1]['name']}]")
             self.loop.call_soon_threadsafe(self.progress, phase, footer)
-            if name in {"model_start", "model_end"}:
+            if name in {"model_start", "model_end"} and not compact_call:
                 self.loop.call_soon_threadsafe(self.model_boundary, name, record)
 
         last_phase = None

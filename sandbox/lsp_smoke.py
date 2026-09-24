@@ -83,12 +83,17 @@ def check_services(*, mode="direct", languages=("python", "typescript", "go", "c
                         ),
                     )
                 )
-        except (OSError, ValueError, StopIteration):
+        except (OSError, ValueError, StopIteration) as error:
+            # Keep the actual failure visible in installer/doctor output. Bound
+            # and flatten diagnostics so exception text cannot emit terminal controls.
+            detail = "".join(c if c.isprintable() else " " for c in str(error))[:1600]
+            if not detail:
+                detail = "缺少 get_symbols 工具" if isinstance(error, StopIteration) else "未提供异常详情"
             rows.append(
                 (
                     "ERROR",
                     "原生沙箱" if mode == "native" else "语言服务",
-                    "无法启动诊断；请检查依赖和系统是否允许沙箱执行",
+                    f"无法启动诊断：{type(error).__name__}: {detail}",
                 )
             )
         finally:

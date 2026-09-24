@@ -3,6 +3,7 @@ import time
 
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.data_structures import Size
 from test_live import control
 
 from agent import AgentRuntime
@@ -153,6 +154,80 @@ def test_multiline_input_and_scroll_do_not_submit(tmp_path):
             pipe.send_text("\x03")
             await until(lambda: not ui.editor.text)
             pipe.send_text("/exit\r")
+            await asyncio.wait_for(task, 3)
+
+    asyncio.run(run())
+
+
+class SmallTerminal(DummyOutput):
+    def get_size(self):
+        return Size(rows=24, columns=60)
+
+
+def test_mouse_scroll_stays_on_history_during_output_and_keeps_editor_focus():
+    async def run():
+        with create_pipe_input() as pipe:
+            ui = ConversationUI(
+                AgentRuntime(StreamingModel()), terminal_input=pipe,
+                terminal_output=SmallTerminal(),
+            )
+            ui.append("".join(f"history {i}\n" for i in range(100)))
+            task = asyncio.create_task(ui.run_async())
+            await until(lambda: ui.chat.window.render_info is not None)
+            window = ui.chat.window
+            original = window.vertical_scroll
+            # Actual terminal SGR mouse event inside the transcript, not a
+            # direct callback: verifies mouse routing with focus in the editor.
+            pipe.send_text("\x1b[<64;5;5M")
+            await until(lambda: not ui.follow and window.vertical_scroll < original)
+            assert window.vertical_scroll == original - 3
+            position = (window.vertical_scroll, window.vertical_scroll_2)
+            ui.append("new streamed text\n" * 5)
+            pipe.send_text("draft")
+            await until(lambda: ui.editor.text == "draft")
+            assert (window.vertical_scroll, window.vertical_scroll_2) == position
+            assert ui.app.layout.has_focus(ui.editor)
+            assert "正在查看历史" in ui.phase_text()
+            # Page keys move a viewport, not a fixed number of logical lines.
+            page_size = ui.history_page_size()
+            pipe.send_text("\x1b[5~")
+            await until(lambda: window.vertical_scroll == position[0] - page_size)
+            pipe.send_text("\x1b[6~")
+            await until(lambda: window.vertical_scroll == position[0])
+            pipe.send_text("\x1bg")
+            await until(lambda: ui.follow)
+            await until(lambda: window.vertical_scroll > original)
+            assert "正在查看历史" not in ui.phase_text()
+            assert ui.editor.text == "draft"
+            pipe.send_text("\x03\x04")
+            await asyncio.wait_for(task, 3)
+
+    asyncio.run(run())
+
+
+def test_mouse_can_scroll_inside_single_wrapped_paragraph_and_resume_at_bottom():
+    async def run():
+        with create_pipe_input() as pipe:
+            ui = ConversationUI(
+                AgentRuntime(StreamingModel()), terminal_input=pipe,
+                terminal_output=SmallTerminal(),
+            )
+            ui.append("中文长段落 mixed text " * 300)
+            task = asyncio.create_task(ui.run_async())
+            await until(lambda: ui.chat.window.vertical_scroll_2 > 10)
+            window = ui.chat.window
+            line, offset = window.vertical_scroll, window.vertical_scroll_2
+            pipe.send_text("\x1b[<64;5;5M")
+            await until(lambda: not ui.follow and window.vertical_scroll_2 == offset - 3)
+            assert window.vertical_scroll == line
+            previous_render = window.render_info
+            ui.append("继续生成" * 100)
+            await until(lambda: window.render_info is not previous_render)
+            assert window.vertical_scroll_2 == offset - 3
+            # A large downward movement clamps to the bottom and restores follow.
+            ui.scroll_history(10000)
+            await until(lambda: ui.follow and window.vertical_scroll_2 > offset)
+            pipe.send_text("\x04")
             await asyncio.wait_for(task, 3)
 
     asyncio.run(run())

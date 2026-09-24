@@ -53,11 +53,12 @@ class SessionStatus:
         if limit is not None:
             self.context_window = limit.tokens
             self.context_limit_kind = limit.kind
-            self.context_limit_source = "服务端自动获取"
+            self.context_limit_source = limit.source
 
     def reset_context(self):
         self.context_tokens = None
         self.context_input_tokens = None
+        self.context_cached_input_tokens = None
         self.context_note = "待请求"
 
     def initialize_context(self, runtime, history=()):
@@ -70,6 +71,7 @@ class SessionStatus:
             return
         self.context_tokens = runtime.estimate_context_tokens(history)
         self.context_input_tokens = self.context_tokens
+        self.context_cached_input_tokens = None
         self.context_note = "本地粗估；不含草稿，服务端用量返回后更新"
 
     def reset_session(self):
@@ -82,6 +84,7 @@ class SessionStatus:
     def session_state(self):
         return {name: deepcopy(getattr(self, name)) for name in (
             "calls", "totals", "reported", "context_tokens", "context_input_tokens",
+            "context_cached_input_tokens",
             "context_note", "context_window", "context_limit_source", "context_override",
         )}
 
@@ -102,6 +105,9 @@ class SessionStatus:
             for field in ("context_tokens", "context_input_tokens"):
                 if data[field] is not None and not counter(data[field]):
                     raise ValueError
+            cached = data.get("context_cached_input_tokens")
+            if cached is not None and not counter(cached):
+                raise ValueError
             window = data["context_window"]
             if window is not None and (not counter(window) or window == 0):
                 raise ValueError
@@ -118,6 +124,7 @@ class SessionStatus:
         if context:
             self.context_tokens = data["context_tokens"]
             self.context_input_tokens = data["context_input_tokens"]
+            self.context_cached_input_tokens = cached
             self.context_note = display_text(data["context_note"])
         else:
             self.reset_context()
@@ -145,14 +152,20 @@ class SessionStatus:
                 limit = f"/ {format_tokens(self.context_window)} · {percent}"
             pending = "（待更新）" if "待" in self.context_note and tokens is not None else ""
             estimate = "（本地粗估）" if "本地粗估" in self.context_note else ""
-            return f"{label} {size} {limit}{estimate}{pending}"
+            return f"{label} {size} {limit}{estimate}{pending} · {self.describe_cache()}"
         note = self.context_note
         if input_only and note == "最近一轮输入＋输出估算":
             note = "最近一轮输入；服务端提供输入上限"
         elif input_only and tokens is not None and note == "接口未返回完整用量":
             note = "最近一轮输入；输出用量未知"
         source = f" · {self.context_limit_source}" if self.context_limit_source else ""
-        return f"{label} {size} {limit}{source} · {note}"
+        return f"{label} {size} {limit} · {self.describe_cache()}{source} · {note}"
+
+    def describe_cache(self):
+        incoming, cached = self.context_input_tokens, self.context_cached_input_tokens
+        if incoming is None or incoming <= 0 or cached is None or not 0 <= cached <= incoming:
+            return "缓存命中 未知"
+        return f"缓存命中 {cached / incoming:.1%}"
 
     def context_command(self, text):
         args = text.split()[1:]
@@ -173,7 +186,9 @@ class SessionStatus:
         return self.describe_context()
 
     def __call__(self, event, stats):
-        if event == "model_start":
+        compact_call = (bool(stats.model_calls)
+                        and getattr(stats.model_calls[-1], "purpose", "task") == "compaction")
+        if event == "model_start" and not compact_call:
             prefix = "本地粗估；" if "本地粗估" in self.context_note else ""
             self.context_note = prefix + "请求中，等待用量更新"
         elif event == "tool_end":
@@ -188,13 +203,15 @@ class SessionStatus:
         self.calls += 1
         incoming = getattr(record.usage, "input_tokens", None)
         outgoing = getattr(record.usage, "output_tokens", None)
-        self.context_input_tokens = incoming
-        self.context_tokens = (
-            incoming + outgoing if incoming is not None and outgoing is not None else None
-        )
-        self.context_note = (
-            "最近一轮输入＋输出估算" if self.context_tokens is not None else "接口未返回完整用量"
-        )
+        if not compact_call:
+            self.context_input_tokens = incoming
+            self.context_cached_input_tokens = getattr(record.usage, "cached_input_tokens", None)
+            self.context_tokens = (
+                incoming + outgoing if incoming is not None and outgoing is not None else None
+            )
+            self.context_note = (
+                "最近一轮输入＋输出估算" if self.context_tokens is not None else "接口未返回完整用量"
+            )
         for field in self.totals:
             value = getattr(record.usage, field, None)
             if value is not None:

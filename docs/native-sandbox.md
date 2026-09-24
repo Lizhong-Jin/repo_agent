@@ -40,7 +40,9 @@ Fedora 的对应包是 `bubblewrap libseccomp`。需要其他语言时，先准�
 
 已有硬链接会被拒绝，新建硬链接被 seccomp 禁止；普通符号链接不能扩大可见文件范围。工作区中的受保护路径如果是符号链接，Linux 拒绝该调用；只读工具链中的此类链接通过遮蔽父目录处理。已有 socket、FIFO、设备文件也会让工作区检查失败，避免暴露宿主机通信通道。固定保护路径和项目内解释器目录的祖先会成为挂载点，防止移动祖先后在下次调用绕过保护。
 
-工作区不能位于只读系统/解释器目录内，也不能覆盖 `/proc`、`/dev`、`/sys` 或后端控制目录。没有映射宿主机 `/run`、Docker socket；GPU 设备仅在显式启用 CUDA 时映射，见下节。Linux 额外使用独立 PID namespace，其 init 退出时由内核清理 namespace 内的进程；CPU、内存和进程数仍无配额限制。
+扫描工作区外的只读系统目录时，若遇到无权列出的子目录（例如 WSL 的 `/lib/modules/.../lost+found`），会将整个子目录遮蔽为不可访问的只读空目录后继续。不能只跳过扫描：某些目录虽然不能列出文件名，仍允许读取已知路径。工作区（包括其中的只读工具链）扫描权限不足、其他 I/O 错误或遮蔽挂载失败时仍拒绝执行。安装和诊断输出会保留异常类型及具体路径，无需通过 sudo 或修改系统目录权限绕过。
+
+工作区不能位于只读系统/解释器目录内，也不能覆盖 `/proc`、`/dev`、`/sys` 或后端控制目录。没有映射宿主机 `/run`、Docker socket；GPU 设备在自动检测启用或显式强制 CUDA 时映射，见下节。Linux 额外使用独立 PID namespace，其 init 退出时由内核清理 namespace 内的进程；CPU、内存和进程数仍无配额限制。
 
 Linux 外层监督读取 `/proc/<pid>/stat` 的 PID、父 PID、进程组和启动时钟；按字节解析，进程名含非 UTF-8 字节、换行或括号不会破坏快照。进程已退出与身份不可读分开处理，无法核验时保持清理状态为 `unknown`。
 
@@ -52,10 +54,18 @@ pidfd 改善进程身份与信号发送的可靠性，不负责发现全部后�
 
 ## Linux / WSL2 原生 GPU
 
-无需 Docker、镜像或 NVIDIA Container Toolkit。默认 native（包括 `--sandbox-profile auto`）不开放 GPU；必须通过启动参数显式授权：
+无需 Docker、镜像或 NVIDIA Container Toolkit。Linux / WSL2 native 默认使用 `--sandbox-profile auto`：发现 NVIDIA CUDA 设备后自动开放全部 GPU，并在沙箱内验证 CUDA kernel；没有发现则使用不开放 GPU 的 standard 环境。macOS 保持普通 native，不探测 NVIDIA CUDA。
+
+普通 Linux 以 `/dev/nvidiaN` 为候选标志；WSL2 需同时存在 `/dev/dxg` 和 Windows 提供的 CUDA 驱动库，避免将仅有非 NVIDIA 显卡的 WSL2 误判为 CUDA。已检测到设备但驱动、UVM、权限或 kernel 自检异常时明确报错，不静默降级；可显式选择 standard 关闭 GPU。`--sandbox-gpus` 或 cuda profile 则强制要求 GPU，设备不存在也会报错。
 
 ```bash
-# Linux：全部 GPU，或按 nvidia-smi 索引/完整 GPU UUID 选择一张卡
+# Linux / WSL2：默认自动检测，有 NVIDIA CUDA GPU 即启用
+repo-agent --sandbox native
+
+# 强制关闭 GPU，不做 GPU 检测或挂载
+repo-agent --sandbox native --sandbox-profile standard
+
+# 强制启用全部 GPU；Linux 也可按 nvidia-smi 索引/完整 UUID 选单卡
 repo-agent --sandbox native --sandbox-profile cuda
 repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus 0
 repo-agent --sandbox native --sandbox-gpus GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
@@ -72,7 +82,7 @@ repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all
 
 自动识别系统 `/usr/local/cuda` 或 `/opt/cuda`（解析后的目录须位于 `/usr` 或 `/opt`），只读映射工具链并设置 CUDA_HOME/PATH；发行版安装在 `/usr/bin` 的 nvcc 也可通过系统 PATH 使用。不会继承宿主机任意 CUDA_HOME、LD_LIBRARY_PATH 或 CUDA_VISIBLE_DEVICES。CUDA、Triton 和 PyTorch 扩展缓存放在本次调用的私有临时目录，调用结束删除，因此可能重复编译。GPU 模式命令和 Python 的最大超时都为 900 秒，默认仍分别为 60/10 秒，首次编译应显式设置 `timeout_seconds`。
 
-文件保护、禁止联网、独立进程 namespace 和 seccomp 保持生效。`get_execution_environment` 的 execution 部分报告 `gpu_access`（授权设备、启动探测结果和无显存配额），gpu 部分仍报告框架依赖及实际可用性。GPU 驱动由宿主机共享，native 不提供显存/算力配额、独占访问或恶意 GPU 程序之间的强隔离；单卡设备映射与 CUDA_VISIBLE_DEVICES 不等价于多租户安全边界。MIG、NVSwitch/Fabric Manager、MPS、ROCm/AMD 及分布式网络通信不在当前支持范围；需要这些环境时保持失败并单独适配，不开放整个 `/dev`、`/sys` 或宿主机 socket。
+文件保护、禁止联网、独立进程 namespace 和 seccomp 保持生效。`get_execution_environment` 的 execution 部分报告 `gpu_access`（请求的 profile、实际 profile、授权设备、启动探测结果和无显存配额），gpu 部分仍报告框架依赖及实际可用性。GPU 驱动由宿主机共享，native 不提供显存/算力配额、独占访问或恶意 GPU 程序之间的强隔离；单卡设备映射与 CUDA_VISIBLE_DEVICES 不等价于多租户安全边界。MIG、NVSwitch/Fabric Manager、MPS、ROCm/AMD 及分布式网络通信不在当前支持范围；需要这些环境时保持失败并单独适配，不开放整个 `/dev`、`/sys` 或宿主机 socket。
 
 当前开发机没有 NVIDIA GPU；单元测试和普通 Linux namespace 回归不能替代真实 Linux/WSL2 驱动验证。真实硬件测试入口见本文末尾。
 
@@ -128,13 +138,18 @@ native 提供平台内核级的文件/网络隔离，不提供 Docker 等价的 
 
 Apple 将 `sandbox-exec` 标记为弃用；不同 macOS 版本和外层沙箱可能不支持它。启动自检是必要条件，并非完整的安全审计。需要严格的资源限额、可控依赖或工作副本回写时，继续选择 Docker。
 
-## 后续接入 Web 工具
+## 主进程 Web 工具
 
-可以加入，但当前尚未实现。建议在主进程工具注册处单独加入受控的 `web_search` / `web_fetch` 代理，由沙箱外的专用网络服务执行请求；native worker 的断网规则保持不变。这样模型请求和 Web 请求有各自明确的入口，命令及项目代码仍不能自行联网。
+已实现可选的 `web_search` 和 `web_fetch`，由 CLI 在主进程注册，local/native/Docker 均可使用。
+搜索通过 `AGENT_WEB_SEARCH_PROVIDER=brave` 和 `BRAVE_SEARCH_API_KEY` 启用；网页读取
+通过 `AGENT_WEB_FETCH_ENABLED=true` 独立启用，不需要搜索密钥。默认均关闭。
 
-首版可限定搜索和公开 HTTP(S) 页面的只读抓取，不执行网页脚本，不上传本地文件，也不读取浏览器 Cookie。搜索服务密钥由专用服务持有，不传入 native worker。抓取结果返回文本、来源 URL 和截断标记，必要时再通过已有文件工具写入工作区。
+网络请求由沙箱外的受控后端执行；native 命令、Python 和语言服务器继续断网，Web 请求失败
+不会解除隔离或改变 native 健康状态。搜索不自动抓取结果网页，抓取也不会开放包安装或
+项目网络访问。抓取限制公开 HTTP(S) 地址，校验 DNS、实际对端及每次重定向。
+网页内容不能授权本地命令、读取或上传文件；搜索词和 URL 会外发，应遵守用户任务范围。
 
-网络服务需要校验 URL、DNS 解析结果及实际连接目标，阻止 localhost、内网和云元数据地址；禁用自动重定向，确有需要时逐跳重新校验，并限制响应大小和超时。相关要求可参考 [OWASP SSRF 防护指南](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html)。网页正文应作为不可信资料处理，不能授权本地命令、上传或文件操作；即使只允许 GET，URL 和搜索词也可能携带项目内容，因此后续仍需设计外发数据策略。
+参数、限制与测试见 [Web 搜索](web-search.md) 和 [Web 页面读取](web-fetch.md)。
 
 ## 验证
 
@@ -166,4 +181,4 @@ RUN_NATIVE_GPU_TESTS=1 NATIVE_TEST_GPUS=0 python -m pytest tests/test_linux_nati
 RUN_NATIVE_GPU_TESTS=1 RUN_NATIVE_GPU_OPERATORS=1 python -m pytest tests/test_linux_native_gpu.py -q
 ```
 
-硬件测试验证实际 kernel、子进程 GPU 访问、GPU 启用时仍禁止目录越界/凭据读取/网络，以及默认 native 不暴露 GPU。可选算子测试复用 `sandbox.operator_smoke` 的 CUDA 扩展和 Triton 计算正确性检查。
+硬件测试验证默认 auto 启用 GPU、实际 kernel、子进程 GPU 访问、GPU 启用时仍禁止目录越界/凭据读取/网络，以及显式 standard 不暴露 GPU。可选算子测试复用 `sandbox.operator_smoke` 的 CUDA 扩展和 Triton 计算正确性检查。

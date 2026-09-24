@@ -74,6 +74,36 @@ def test_missing_gpu_does_not_fall_back(host):
         NativeGPU.discover("0 --privileged")
 
 
+def test_auto_uses_standard_without_nvidia_including_non_cuda_wsl(host):
+    assert NativeGPU.detect() is None
+    host.create("/dev/dxg")
+    assert NativeGPU.detect() is None
+
+
+@pytest.mark.parametrize("kind", ["nvidia", "wsl2"])
+def test_auto_detects_nvidia_and_wsl_cuda(host, kind):
+    if kind == "nvidia":
+        nvidia_host(host)
+    else:
+        host.create("/dev/dxg")
+        host.create("/usr/lib/wsl/lib/libcuda.so.1")
+    gpu = NativeGPU.detect()
+    assert gpu.kind == kind and gpu.requested == "all"
+
+
+def test_auto_does_not_hide_broken_detected_driver(host):
+    host.create("/dev/nvidia0")
+    with pytest.raises(ValueError, match="缺少 NVIDIA 驱动信息"):
+        NativeGPU.detect()
+    host.path("/dev/nvidia0").unlink()
+    host.create("/dev/dxg")
+    cuda = host.path("/usr/lib/wsl/lib/libcuda.so.1")
+    cuda.parent.mkdir(parents=True)
+    cuda.symlink_to("missing-driver")
+    with pytest.raises(ValueError, match="Windows NVIDIA"):
+        NativeGPU.detect()
+
+
 def test_wsl_only_all_and_requires_driver(host):
     host.create("/dev/dxg")
     with pytest.raises(ValueError, match="仅支持"):
@@ -146,7 +176,7 @@ def test_device_mounts_do_not_replace_private_dev_or_relax_network(backend, tmp_
     (backend.directory / "hidden-dir").chmod(0o700)
 
 
-def test_default_native_has_no_gpu_mounts_environment_or_probe(backend, tmp_path, monkeypatch):
+def test_cpu_native_has_no_gpu_mounts_environment_or_probe(backend, tmp_path, monkeypatch):
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "all")
     monkeypatch.setenv("LD_LIBRARY_PATH", "/private")
     scratch = tmp_path / "scratch"
@@ -210,9 +240,12 @@ def test_gpu_preflight_selects_then_checks_isolation_and_kernel(backend, monkeyp
     assert backend.gpu_probe["devices"] == [UUID1]
 
 
-@pytest.mark.parametrize("flags,expected", [([], None), (["--sandbox-profile", "cuda"], "all"),
-                                           (["--sandbox-gpus", "0"], "0")])
-def test_cli_passes_explicit_gpu_only_on_linux(tmp_path, monkeypatch, flags, expected):
+@pytest.mark.parametrize("flags,expected", [([], ("auto", None)),
+    (["--sandbox-profile", "auto"], ("auto", None)),
+    (["--sandbox-profile", "standard"], ("standard", None)),
+    (["--sandbox-profile", "cuda"], ("cuda", None)),
+    (["--sandbox-gpus", "0"], ("auto", "0"))])
+def test_cli_passes_native_profile_and_gpu_selection(tmp_path, monkeypatch, flags, expected):
     from cli import main as cli
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
@@ -222,7 +255,7 @@ def test_cli_passes_explicit_gpu_only_on_linux(tmp_path, monkeypatch, flags, exp
     captured = []
 
     def constructor(root, **kwargs):
-        captured.append(kwargs.get("gpus"))
+        captured.append((kwargs["profile"], kwargs["gpus"]))
         raise ValueError("stop after backend selection")
 
     monkeypatch.setattr(cli, "NativeBackend", constructor)
@@ -232,10 +265,81 @@ def test_cli_passes_explicit_gpu_only_on_linux(tmp_path, monkeypatch, flags, exp
     assert captured == [expected]
 
 
-def test_macos_native_rejects_gpu_before_starting(tmp_path):
+@pytest.mark.parametrize("flags", [["--sandbox-profile", "standard", "--sandbox-gpus", "all"],
+                                   ["--sandbox-gpus", ""]])
+def test_cli_rejects_conflicting_or_empty_selection(tmp_path, monkeypatch, flags):
+    from cli import main as cli
+
+    monkeypatch.setattr(sys, "argv", ["repo-agent", "--sandbox", "native", *flags])
+    monkeypatch.setattr(cli, "sys", SimpleNamespace(platform="linux"))
+    with pytest.raises(SystemExit) as error:
+        cli._main()
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize("options", [{"gpus": "all"}, {"profile": "cuda"}])
+def test_macos_native_rejects_gpu_before_starting(tmp_path, options):
     backend = object.__new__(NativeBackend)
     with pytest.raises(ValueError, match="原生 GPU 仅支持"):
-        backend.__init__(tmp_path, gpus="all")
+        backend.__init__(tmp_path, **options)
+
+
+@pytest.mark.parametrize("profile,gpus,detected,enabled", [
+    ("auto", None, False, False), ("auto", None, True, True),
+    ("standard", None, True, False), ("cuda", None, False, True),
+    ("auto", "0", False, True),
+])
+def test_linux_profile_controls_detection_and_grants(backend, monkeypatch, profile, gpus, detected, enabled):
+    monkeypatch.setattr("sandbox.linux_native.sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr("sandbox.linux_native.shutil.which", lambda *a, **kw: "/usr/bin/bwrap")
+    calls = []
+
+    def detect():
+        calls.append("auto")
+        return NativeGPU("nvidia", "all", ()) if detected else None
+
+    def discover(selection):
+        calls.append(selection)
+        return NativeGPU("nvidia", selection, ())
+
+    monkeypatch.setattr(NativeGPU, "detect", detect)
+    monkeypatch.setattr(NativeGPU, "discover", discover)
+    backend.requested_profile, backend.requested_gpus = profile, gpus
+    backend._platform_setup()
+    assert (backend.gpu is not None) == enabled
+    assert calls == ([] if profile == "standard" else [gpus or ("all" if profile == "cuda" else "auto")])
+    assert backend.python_timeout_seconds == (900 if enabled else 30)
+    context = backend.execution_context()["gpu_access"]
+    assert context["profile"] == ("cuda" if enabled else "standard")
+    assert context["requested_profile"] == profile
+
+
+@pytest.mark.parametrize("gpu_present", [False, True])
+def test_default_constructor_probes_detected_gpu_and_propagates_failure(tmp_path, monkeypatch, gpu_present):
+    monkeypatch.setattr("sandbox.linux_native.sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr("sandbox.linux_native.shutil.which", lambda *a, **kw: "/usr/bin/bwrap")
+    monkeypatch.setattr(NativeGPU, "detect", lambda: NativeGPU("nvidia", "all", ()) if gpu_present else None)
+    monkeypatch.setattr(LinuxNativeBackend, "_read_paths", lambda self: (self.runtime,))
+    calls = []
+
+    def run(self, command, **kwargs):
+        calls.append(command)
+        outcome = result("native-ok")
+        if command[-1].endswith("native_gpu_probe.py"):
+            outcome.exit_code = 1
+        return outcome
+
+    monkeypatch.setattr(LinuxNativeBackend, "_run", run)
+    if gpu_present:
+        with pytest.raises(ValueError, match="CUDA 自检失败"):
+            LinuxNativeBackend(tmp_path)
+        assert len(calls) == 2  # No retry without GPU or unrestricted fallback.
+    else:
+        backend = LinuxNativeBackend(tmp_path)
+        try:
+            assert backend.gpu is None and len(calls) == 1
+        finally:
+            backend.close()
 
 
 def test_gpu_setup_and_tool_limits_reach_definitions_and_worker(backend, monkeypatch):
@@ -306,7 +410,7 @@ def test_cuda_driver_probe_checks_result_and_cleans_context(monkeypatch, failure
 @pytest.mark.skipif(sys.platform != "linux" or os.getenv("RUN_SANDBOX_LINUX_TESTS") != "1",
                     reason="Requires Linux namespaces; no GPU needed for device mount regression")
 def test_real_linux_explicit_device_bind_retains_isolation(tmp_path):
-    backend = NativeBackend(tmp_path)
+    backend = NativeBackend(tmp_path, profile="standard")
     try:
         backend.gpu = NativeGPU("nvidia", "all", (DeviceNode.read(Path("/dev/null")),))
         code = '''
@@ -337,7 +441,8 @@ def test_real_native_gpu_kernel_and_isolation(tmp_path):
     (root / ".env").write_text("must remain hidden")
     outside = tmp_path / "private.txt"
     outside.write_text("outside")
-    with_gpu = NativeBackend(root, gpus=os.getenv("NATIVE_TEST_GPUS", "all"))
+    selection = os.getenv("NATIVE_TEST_GPUS", "all")
+    with_gpu = NativeBackend(root) if selection == "all" else NativeBackend(root, gpus=selection)
     try:
         assert with_gpu.gpu_probe["cuda_kernel_verified"]
         code = f'''
@@ -359,7 +464,7 @@ subprocess.run([sys.executable, '-I', {str(with_gpu.runtime / 'sandbox/native_gp
         assert report.data["execution"]["tool_limits"]["python_max_timeout_seconds"] == 900
     finally:
         with_gpu.close()
-    without_gpu = NativeBackend(root)
+    without_gpu = NativeBackend(root, profile="standard")
     try:
         code = "import pathlib; assert not list(pathlib.Path('/dev').glob('nvidia*')); assert not pathlib.Path('/dev/dxg').exists()"
         executed = without_gpu.execute(root, "run_python", {"code": code})

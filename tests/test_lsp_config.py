@@ -2,7 +2,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from tools.lsp_config import LspLanguageConfig, LspRegistry, default_lsp_registry
+from tools._internal.lsp_config import LspLanguageConfig, LspRegistry, default_lsp_registry
 
 
 @pytest.mark.parametrize(

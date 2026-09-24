@@ -1,7 +1,8 @@
 """Tools available to the coding agent."""
 
-from .base import Tool, ToolResult
-from .errors import ToolErrorCode, tool_error
+from ._internal.base import Tool, ToolResult
+from ._internal.errors import ToolErrorCode, tool_error
+from ._internal.process_runner import ProcessResult, ProcessRunner, ProcessStartError
 from .execute import (
     GetExecutionEnvironmentTool,
     RunCommandTool,
@@ -9,6 +10,7 @@ from .execute import (
 )
 from .factory import create_default_tools
 from .filesystem import (
+    ApplyPatchTool,
     DeleteFileTool,
     EditFileTool,
     FindFileTool,
@@ -24,12 +26,13 @@ from .git_tools import (
     GitDiffTool,
     GitStatusTool,
 )
-from .process_runner import ProcessResult, ProcessRunner, ProcessStartError
 from .semantic import (
     FindReferencesTool,
     GetDiagnosticsTool,
+    GetHoverTool,
     GetSymbolsTool,
     GoToDefinitionsTool,
+    SearchWorkspaceSymbolsTool,
 )
 
 __all__ = [
@@ -38,10 +41,13 @@ __all__ = [
     "GoToDefinitionsTool",
     "FindReferencesTool",
     "GetDiagnosticsTool",
+    "GetHoverTool",
+    "SearchWorkspaceSymbolsTool",
     # filesystem tools
     "ReadFileTool",
     "WriteFileTool",
     "EditFileTool",
+    "ApplyPatchTool",
     "ListFileTool",
     "FindFileTool",
     "SearchFilesTool",

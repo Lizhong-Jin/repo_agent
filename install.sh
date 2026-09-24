@@ -7,31 +7,98 @@ if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
     cat <<'HELP'
 用法：./install.sh [--mode native|docker|local] [--languages all|python,typescript,go,cpp] [--with-toolchains | --skip-toolchains] [--no-path] [--bin-dir DIRECTORY] [--check | --recover]
 创建 .venv、安装所选模式依赖、生成默认配置并安装命令。首次默认 native，重装沿用原模式。
---check 只检查环境；--recover 只恢复中断的安装。安装失败自动恢复原环境和命令。
-需要 Python 3.11+。native 支持 macOS 或 Linux（bubblewrap/libseccomp），默认安装 Python 语言服务；询问是否补齐其他语言，回车跳过。
+--check 只检查环境；--recover 只恢复中断的安装。核心安装失败恢复原环境和命令；额外工具链失败保留核心安装。
+自动搜索版本和 venv/ensurepip 组件均满足要求的 Python 3.11+；显式 AGENT_PYTHON 不自动替换。
+native 支持 macOS 或 Linux（bubblewrap/libseccomp），默认安装 Python 语言服务；询问是否补齐其他语言，回车跳过。
 docker 模式需要已启动的 Docker 并构建镜像；local 仅安装文件/Git 模式。
 --with-toolchains 自动补齐；--skip-toolchains 跳过额外补齐。无输入时也跳过。
 --languages 限定补齐范围，Python 始终安装；后续用 repo-agent toolchains list/install 查看和补齐。
 --skip-sandbox 仅在 docker 模式跳过镜像构建。
 系统共享工具链不会随卸载或失败恢复而删除。
+下载临时故障默认重试 2 次；AGENT_INSTALL_RETRIES / AGENT_INSTALL_TIMEOUT 可设置次数和单步超时（秒）。
+代理/包源可通过 AGENT_INSTALL_PROXY、AGENT_INSTALL_PYPI_INDEX、AGENT_INSTALL_NPM_REGISTRY、AGENT_INSTALL_GOPROXY 指定。
 命令指向其他安装目录时，先确认再安装；回车默认取消，成功后切换命令，不自动回退。
 安装时无需模型或 API Key；安装后编辑提示的配置文件即可。已有配置保持不变。
 安装改动会记录，卸载可执行 ./uninstall.sh；预览使用 --dry-run。
 HELP
     exit 0
 fi
-agent_python="${AGENT_PYTHON:-}"
-if [[ -z "$agent_python" ]]; then
-    for agent_candidate in python3 python3.14 python3.13 python3.12 python3.11; do
-        if command -v "$agent_candidate" >/dev/null 2>&1 && \
-            "$agent_candidate" -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
-            agent_python="$agent_candidate"
-            break
+agent_python=""
+agent_partial_python=""
+agent_recover=0
+for agent_argument in "$@"; do
+    [[ "$agent_argument" == --recover ]] && agent_recover=1
+done
+agent_probe='import sys
+if sys.version_info < (3, 11):
+    print("版本低于 Python 3.11")
+    sys.exit(1)
+if sys.argv[1] == "1":
+    sys.exit(0)
+missing = []
+for name in ("venv", "ensurepip"):
+    try:
+        module = __import__(name)
+        if name == "venv":
+            assert callable(module.EnvBuilder)
+        else:
+            assert module.version()
+    except (ImportError, AttributeError, AssertionError):
+        missing.append(name)
+if missing:
+    print("缺少或不可用：" + ", ".join(missing))
+    sys.exit(2)
+'
+agent_try_python() {
+    local agent_candidate="$1" agent_reason agent_code
+    if agent_reason=$("$agent_candidate" -I -B -c "$agent_probe" "$agent_recover" 2>/dev/null); then
+        agent_python="$agent_candidate"
+        return 0
+    else
+        agent_code=$?
+        if [[ "$agent_code" == 2 && -z "$agent_partial_python" ]]; then
+            agent_partial_python="$agent_candidate"
         fi
+        printf '跳过 Python %s：%s\n' "$agent_candidate" "${agent_reason:-无法运行}" >&2
+        return 1
+    fi
+}
+if [[ -n "${AGENT_PYTHON:-}" ]]; then
+    # An explicit selection must never silently switch to a different interpreter.
+    agent_candidate=$(command -v -- "$AGENT_PYTHON" || true)
+    if [[ -n "$agent_candidate" ]]; then
+        agent_try_python "$agent_candidate" || true
+    else
+        printf 'AGENT_PYTHON 指定的解释器不存在：%s\n' "$AGENT_PYTHON" >&2
+    fi
+else
+    # Search every PATH directory, not just the first python3 returned by command -v.
+    IFS=: read -r -a agent_search_dirs <<< "${PATH:-}"
+    agent_search_dirs+=(/opt/homebrew/bin /usr/local/bin /usr/bin)
+    agent_seen=""
+    for agent_dir in "${agent_search_dirs[@]}"; do
+        [[ -n "$agent_dir" && -d "$agent_dir" ]] || continue
+        for agent_candidate in "$agent_dir/python3" "$agent_dir"/python3.[0-9]*; do
+            [[ -f "$agent_candidate" && -x "$agent_candidate" ]] || continue
+            [[ "${agent_candidate##*/}" =~ ^python3(\.[0-9]+)?$ ]] || continue
+            case "$agent_seen" in *"|$agent_candidate|"*) continue ;; esac
+            agent_seen="$agent_seen|$agent_candidate|"
+            if agent_try_python "$agent_candidate"; then break 2; fi
+        done
     done
 fi
-if [[ -z "$agent_python" ]] || ! "$agent_python" -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
-    printf '需要 Python 3.11+；也可以用 AGENT_PYTHON 指定解释器路径。\n' >&2
+if [[ -z "$agent_python" ]]; then
+    printf '未找到组件齐全的 Python 3.11+；可用 AGENT_PYTHON 指定完整解释器。\n' >&2
+    if [[ -n "$agent_partial_python" ]]; then
+        "$agent_partial_python" -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from maintenance import python_components_report, print_report; print_report(python_components_report())' "$agent_install_dir/cli" || true
+    else
+        printf 'macOS 可安装完整 Python：https://www.python.org/downloads/macos/；Linux 请通过发行版包管理器安装 Python 3.11+ 及匹配的 venv 组件。\n' >&2
+    fi
     exit 1
+fi
+printf '使用 Python：%s\n' "$agent_python"
+if [[ "${1:-}" == --release ]]; then
+    shift
+    exec "$agent_python" -B "$agent_install_dir/cli/release_install.py" "$@"
 fi
 exec "$agent_python" "$agent_install_dir/cli/setup.py" --bootstrap --agent-home "$agent_install_dir" "$@"

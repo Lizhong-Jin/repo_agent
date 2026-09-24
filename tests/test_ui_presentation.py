@@ -65,7 +65,9 @@ def test_agent_metadata_style_is_based_on_origin_including_after_fold():
 def test_compact_footer_retains_directory_usage_context_and_unknowns(tmp_path):
     status = SessionStatus(tmp_path, context_window=1_000_000)
     stats = RunStats(1)
-    stats.model_calls.append(ModelCallRecord(1, usage=Usage(1_200_000, 50_000)))
+    stats.model_calls.append(ModelCallRecord(
+        1, usage=Usage(1_200_000, 50_000, cached_input_tokens=900_000),
+    ))
     status("model_end", stats)
     with create_pipe_input() as pipe:
         ui = ConversationUI(
@@ -77,9 +79,10 @@ def test_compact_footer_retains_directory_usage_context_and_unknowns(tmp_path):
         )
         assert len(ui.footer_text.splitlines()) == 3
         assert "输入 1.2M · 输出 50k" in ui.footer_text
-        assert "上下文 ≈1.25M / 1M · ≈125.0%" in ui.footer_text
+        assert "上下文 ≈1.25M / 1M · ≈125.0% · 缓存命中 75.0%" in ui.footer_text
         assert str(tmp_path.resolve()) in ui.footer_text
         assert status.totals == {"input_tokens": 1_200_000, "output_tokens": 50_000}
         status.reset_context()
         ui.refresh_footer()
         assert "占用未知" in ui.footer_text and "%" not in ui.footer_text
+        assert "缓存命中 未知" in ui.footer_text

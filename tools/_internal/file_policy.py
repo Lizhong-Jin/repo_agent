@@ -2,6 +2,7 @@
 
 import os
 import stat
+from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 
 PROTECTED_NAMES = frozenset(
@@ -56,6 +57,35 @@ def runtime_protected_paths(root=None):
     )]
 
 
+_UNSET = object()
+
+
+@dataclass(frozen=True)
+class PathPolicy:
+    """An operation-scoped policy snapshot; file metadata is never cached here."""
+
+    protected_paths: tuple[Path, ...] = field(
+        default_factory=lambda: tuple(runtime_protected_paths())
+    )
+
+    def protects_path(self, requested: Path, resolved: Path) -> bool:
+        return any(is_protected_name(path) for path in (requested, resolved)) or any(
+            resolved == target or resolved.is_relative_to(target)
+            for target in self.protected_paths
+        )
+
+    def is_protected(self, requested: Path, resolved: Path, *, info=_UNSET) -> bool:
+        """info, when supplied, must describe the resolved target (None if missing)."""
+        if self.protects_path(requested, resolved):
+            return True
+        if info is _UNSET:
+            try:
+                info = resolved.stat()
+            except (FileNotFoundError, NotADirectoryError):
+                info = None
+        return info is not None and stat.S_ISREG(info.st_mode) and info.st_nlink > 1
+
+
 def is_credential_path(requested: Path, resolved: Path) -> bool:
     """Compatibility name: now protects credentials, metadata and agent state.
 
@@ -63,13 +93,4 @@ def is_credential_path(requested: Path, resolved: Path) -> bool:
     because a harmless filename cannot establish that the other links are safe.
     Configured paths include descendants even if the target does not exist yet.
     """
-    if any(is_protected_name(path) for path in (requested, resolved)):
-        return True
-    for target in runtime_protected_paths():
-        if resolved == target or resolved.is_relative_to(target):
-            return True
-    try:
-        info = resolved.stat()
-    except (FileNotFoundError, NotADirectoryError):
-        return False
-    return stat.S_ISREG(info.st_mode) and info.st_nlink > 1
+    return PathPolicy().is_protected(requested, resolved)

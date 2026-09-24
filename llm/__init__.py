@@ -13,6 +13,7 @@ from .errors import (
     ProviderError,
     RateLimitError,
 )
+from .model_catalog import ModelInfo, model_info, supported_models, supported_providers
 from .providers import PROVIDERS, get_provider
 from .schemas import LLMRequest, LLMResponse, Message, ToolCall, ToolDefinition, Usage
 
@@ -30,6 +31,10 @@ __all__ = [
     "Usage",
     "PROVIDERS",
     "get_provider",
+    "ModelInfo",
+    "model_info",
+    "supported_models",
+    "supported_providers",
     "LLMError",
     "ConfigurationError",
     "InvalidRequestError",

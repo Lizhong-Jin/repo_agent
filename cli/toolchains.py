@@ -8,25 +8,56 @@ import tempfile
 from contextlib import ExitStack
 from pathlib import Path
 
-from .dependencies import (
-    LANGUAGES,
-    install_language_servers,
-    language_status,
-    native_preflight,
-    prepare_toolchains,
-    print_language_status,
-    service_report,
-)
-from .install_transaction import TRANSACTION
-from .installation import load_record, registry_dir, save_record
-from .maintenance import file_lock, print_report
+if __package__:
+    from .dependencies import (
+        LANGUAGES,
+        install_language_servers,
+        language_status,
+        native_preflight,
+        prepare_toolchains,
+        print_language_status,
+        service_report,
+    )
+    from .install_network import run_download
+    from .install_transaction import TRANSACTION
+    from .installation import load_record, registry_dir, save_record
+    from .maintenance import file_lock, print_report
+    from .paths import installation_root, resource_path
+else:
+    from install_network import run_download
+    from install_transaction import TRANSACTION
+    from installation import load_record, registry_dir, save_record
+    from maintenance import file_lock, print_report
+    from paths import installation_root, resource_path
+
+    from dependencies import (
+        LANGUAGES,
+        install_language_servers,
+        language_status,
+        native_preflight,
+        prepare_toolchains,
+        print_language_status,
+        service_report,
+    )
 
 
 def install_server(root, language):
     """Download JS/Go into a staging directory; preserve existing files on failure."""
     if language == "python":
         python = str(root / ".venv/bin/python")
-        subprocess.run([python, "-m", "pip", "install", "python-lsp-server>=1.12,<2"], check=True)
+        run_download(
+            [
+                python,
+                "-m",
+                "pip",
+                "install",
+                "--require-hashes",
+                "--only-binary=:all:",
+                "-r",
+                str(resource_path("requirements-lsp.lock")),
+            ],
+            label="安装 Python 语言服务",
+        )
         subprocess.run([python, "-m", "pip", "check"], check=True)
         return
     if language not in {"go", "typescript"}:
@@ -100,6 +131,9 @@ def install_missing(root, languages):
             record["languages"] = [
                 name for name in LANGUAGES if name in {*record.get("languages", []), language}
             ]
+            record["pending_languages"] = [
+                name for name in record.get("pending_languages", []) if name != language
+            ]
             save_record(record)
 
 
@@ -113,7 +147,7 @@ def main(argv=None):
     install = commands.add_parser("install", help="补齐指定语言；已有可用依赖不重复下载")
     install.add_argument("languages", nargs="+", choices=["all", *LANGUAGES])
     args = parser.parse_args(argv)
-    root = Path(__file__).resolve().parents[1]
+    root = installation_root()
     try:
         if args.action == "install":
             languages = (

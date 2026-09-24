@@ -56,7 +56,7 @@ repo-agent config model                # 选择供应商、填写模型和 Key�
 repo-agent --configure-model
 ```
 
-向导从项目当前支持的供应商列表中选择（可输入序号或供应商名称），模型名称手动填写，API Key 隐藏输入。已配置同一供应商时，模型名和 Key 可以回车保留；Ctrl+C 取消。向导中的模型名称仍需手动输入，配置命令保存时不发出 API 请求。进入会话或会话内切换模型时，会查询模型元数据以获取上下文上限；查询失败不影响使用，生成权限和 Key 是否有效仍由实际模型调用验证。
+向导先选择供应商（序号或名称），再进入可搜索、可滚动的模型列表：输入关键词实时筛选，↑/↓ 或鼠标滚轮移动，PgUp/PgDn 翻页，Enter 确认。列表仅显示[统一模型目录](model-catalog.md)中可选的模型；没有匹配结果时不能提交任意名称。列表下方显示所选模型的上下文/输入上限、最大输出和思考范围。已有模型仍在列表时默认选中它，API Key 隐藏输入，回车可复用，Ctrl+C 取消。设置向导本身不发出 API 请求；进入会话或切换模型时查询服务端上下文上限，缺失时回退到目录。生成权限和 Key 是否有效仍由实际模型调用验证。
 
 会话中输入 `/model` 可再次打开相同向导。仅在当前任务结束后切换；全屏界面底部显示当前供应商和模型。设置成功后立即生效，并保存到用户 `.env`，作为以后启动的默认设置。用户配置以权限 `600` 原子更新，保留其他供应商的 Key、注释及无关设置；Key 不进入对话、任务历史或追踪日志。取消或保存失败时，当前模型和上下文保持不变。
 
@@ -74,8 +74,13 @@ repo-agent --configure-model
 | --- | --- | --- |
 | `LLM_PROVIDER` / `LLM_MODEL` | `deepseek` / 必填 | 厂商与模型 ID |
 | `LLM_BASE_URL` | 空 | 空值使用厂商预设地址 |
-| `LLM_CONTEXT_WINDOW` | 空 | 留空从服务端自动获取；正整数手动覆盖，仅用于显示，不会压缩历史 |
+| `LLM_CONTEXT_WINDOW` | 空 | 留空优先服务端、其次模型目录；正整数手动覆盖，用于显示和压缩预算 |
 | `AGENT_MAX_STEPS` | `8` | 每条用户任务最多调用模型的轮数；`0` 表示无上限 |
+| `AGENT_AUTO_COMPACT` | `true` | 每次正常模型请求前检查输入预算并按需压缩；`false` 关闭自动压缩，仍可 `/compact` |
+| `AGENT_COMPACT_THRESHOLD` | `0.75` | 自动触发比例，相对于预留输出后的可用输入预算 |
+| `AGENT_COMPACT_TARGET` | `0.45` | 压缩后目标比例；必须满足 `0 < target < threshold < 1` |
+| `AGENT_COMPACT_KEEP_TOKENS` | `6000` | 近期完整消息组预算上限，实际不超过目标预算的约三分之一；至少 256 |
+| `AGENT_COMPACT_SUMMARY_TOKENS` | `3000` | 最终摘要正文目标预算，受剩余目标空间约束；至少 256。摘要请求输出额度沿用 `AGENT_MAX_OUTPUT_TOKENS`，思考设置沿用当前有效配置 |
 | `AGENT_MAX_OUTPUT_TOKENS` | `4096` | 每次模型请求的输出 token 上限 |
 | `AGENT_MAX_RECOVERIES` | `2` | 连续输出截断的额外恢复次数，文字/工具共享计数；0 关闭；正常工具轮完成后重置 |
 | `AGENT_RECOVERY_MAX_OUTPUT_TOKENS` | 留空 | 工具参数重生成时的输出额度上限；每次翻倍至此值。留空沿用原额度；显式值须不低于原额度且符合模型限制 |
@@ -97,11 +102,18 @@ repo-agent --configure-model
 | `LLM_RETRY_DELAY` / `LLM_MAX_RETRY_DELAY` | `0.5` / `30` | 重试基础间隔与最大间隔，单位秒 |
 | `AGENT_SYSTEM_PROMPT` | 空 | 空值使用内置提示词；非空的单行文本替换它 |
 | `AGENT_LOG_DIR` | 项目 `logs/` | 运行片段追踪日志；不改变连续会话日志或快照位置 |
+| `AGENT_WEB_SEARCH_PROVIDER` | `off` | `brave` 启用主进程 Web 搜索；命令沙箱继续断网，详见 [Web 搜索](web-search.md) |
+| `AGENT_WEB_FETCH_ENABLED` | `false` | `true` 独立启用公开网页读取及缓存分页，不需要搜索密钥；详见 [Web 页面读取](web-fetch.md) |
+| `BRAVE_SEARCH_API_KEY` | 空 | Brave Search API 密钥；配置查看时隐藏，使用 `config set BRAVE_SEARCH_API_KEY` 隐藏输入 |
 | `AGENT_SANDBOX_WRITEBACK` | `manual` | 仅 Docker：`manual` 手动回写；`on-success` 按检查结果自动回写；local/native 忽略此配置 |
 | `AGENT_SANDBOX_VERIFY_COMMAND` | 空 | on-success 回写前的最终验证命令，使用 JSON 参数数组 |
 | `LLM_EXTRA_JSON` | `{}` | 高级厂商原生请求参数，须为 JSON 对象，不允许覆盖统一字段或与显式思考配置冲突 |
 
-内置提示词要求修改文件后简短汇报完成内容、文件路径、实际验证结果和必要的未完成事项，通常为 3 到 6 行；不重复粘贴已写入文件的完整代码，工具调用前也不先展示整份实现。用户明确要求代码或详细解释时仍可展开，传给工具的代码参数始终保持完整。使用默认风格时将 `AGENT_SYSTEM_PROMPT` 留空；自定义提示词会替换这些规则，需要自行加入同样的简洁要求。修改配置或升级默认提示词后重新启动会话生效。
+内置系统提示词位于 `agent/prompt.py`，只规定通用的目标理解、任务推进、工具使用、事实核验、技能选择和回复方式，并保留网页资料与外发搜索词的处理规则。它不再限定代码仓库角色，也不对论文、分析等任务套用代码修改后的回复格式。
+
+代码相关要求集中在内置 `coding` 技能（`check_id` 仅在工具 schema 支持时使用，当前 native 不支持）：仓库理解与编辑、代码参数完整性、测试选择、稳定的 `check_id`、预期失败的退出码验证，以及修改后通常用 3 到 6 行汇报且不重复粘贴完整实现的约定。用户明确要求完整代码或详细解释时仍按要求展开。编程任务可由模型按描述选择，也可在任务开头显式使用 `$coding`；`debug-and-fix` 和 `gpu-kernel-development` 会指导模型先加载 `coding` 再执行各自的专用流程，加载依赖由模型完成，不是运行时自动展开。
+
+将 `AGENT_SYSTEM_PROMPT` 留空即可使用通用默认提示词；自定义值只替换基础提示词，技能目录和按需加载机制仍然可用。修改配置或升级提示词、技能后重启。CLI 恢复会话时会替换为当前系统提示词；旧技能正文仍可能留在恢复的用户/工具消息中，需要用 `/clear` 或新建会话清除旧模型上下文，再加载新技能。
 
 普通设置遵循上文优先级。例如下面的临时参数会覆盖项目及用户 `.env`：
 
@@ -113,7 +125,7 @@ repo-agent --thinking enabled --max-steps 12 --max-output-tokens 8192 --timeout 
 
 `LLM_THINKING=auto` 表示不指定思考开关，不保证关闭思考；单独填写强度或预算仍可能发送这些参数。强度、预算、历史保留和显示方式是独立设置，支持范围取决于当前模型。
 
-交互命令、按模型保存的偏好、档位及能力覆盖统一见[思考设置](thinking.md)。内置规则由 [llm/thinking_catalog.py](../llm/thinking_catalog.py) 维护，协议映射位于 [llm/thinking.py](../llm/thinking.py)。不支持或冲突的组合会报错，服务端仍决定实际可用能力。
+交互命令、按模型保存的偏好、档位及能力覆盖统一见[思考设置](thinking.md)。内置规则由 [llm/model_catalog.py](../llm/model_catalog.py) 维护，协议映射位于 [llm/thinking.py](../llm/thinking.py)。不支持或冲突的组合会报错，服务端仍决定实际可用能力。
 
 完整配置模板见 [`.env.example`](../.env.example)，回写条件见 [Sandbox](../sandbox/README.md#自动回写配置与恢复)。
 
@@ -151,3 +163,5 @@ repo-agent config reset                 # 恢复安装目录 .env.example 模板
 | `AGENT_LOG_DIR` | 运行片段日志；显式相对路径以调用目录为准，留空使用项目 `logs/` |
 
 配置目录和状态目录变量在启动前设置，不属于 `.env` 中的运行参数。`--new-session`、`--name`、`--root` 是启动选项；会话名称和上下文保存在会话状态中，不写入模型配置。完整存储结构见[会话管理](sessions.md#保存位置)。
+
+压缩配置也可通过 `--auto-compact false`、`--compact-threshold 0.8`、`--compact-target 0.5`、`--compact-keep-tokens 4000` 和 `--compact-summary-tokens 3000` 覆盖。详见[上下文压缩与历史回查](context-compaction.md)。

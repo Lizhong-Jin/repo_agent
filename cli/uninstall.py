@@ -17,8 +17,10 @@ if __package__:
         registry_dir,
         save_record,
     )
+    from .paths import installation_root
 else:
     from installation import COMMANDS, MANIFEST, load_record, read_record, registry_dir, save_record
+    from paths import installation_root
 
 
 if __package__:
@@ -282,9 +284,9 @@ def uninstall(root: Path, *, dry_run=False, purge=False, remove_image=False):
         return _uninstall(root, dry_run=dry_run, purge=purge, remove_image=remove_image)
 
 
-def main() -> None:
+def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description="卸载当前 Repo Agent 安装，默认保留配置和任务数据")
-    parser.add_argument("--agent-home", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--agent-home", type=Path, default=installation_root())
     parser.add_argument("--dry-run", action="store_true", help="只预览，不修改文件或镜像")
     parser.add_argument(
         "--purge", action="store_true", help="同时删除未被其他安装使用的用户配置和 Key"
@@ -292,7 +294,7 @@ def main() -> None:
     parser.add_argument(
         "--remove-image", action="store_true", help="移除可确认归属、未共享且未使用的镜像"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         ok = uninstall(
             args.agent_home, dry_run=args.dry_run, purge=args.purge, remove_image=args.remove_image

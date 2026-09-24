@@ -7,10 +7,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from cli import dependencies, doctor, setup
+from cli import dependencies, doctor, install_network, setup
 from cli.installation import COMMANDS, begin_install, load_record, prepare_venv, save_record
 from sandbox import lsp_smoke
 from sandbox.native import NativeBackend
+
+
+@pytest.fixture(autouse=True)
+def download_executor_for_installer_mocks(monkeypatch):
+    monkeypatch.setattr(
+        install_network, "execute", lambda command, **kw: subprocess.run(command, **kw)
+    )
 
 
 @pytest.fixture
@@ -24,7 +31,7 @@ def installation(tmp_path, monkeypatch):
     (root / ".env.example").write_text("LLM_MODEL=\n")
     record = begin_install(root)
     prepare_venv(record)
-    (root / ".venv/bin").mkdir()
+    (root / ".venv/bin").mkdir(exist_ok=True)
     for name in COMMANDS:
         (root / ".venv/bin" / name).write_text("old entry")
     (root / ".venv/old-marker").write_text("preserve")
@@ -111,15 +118,28 @@ def test_language_servers_install_in_owned_virtualenv(tmp_path, monkeypatch):
     assert go[1]["env"]["GOTOOLCHAIN"] == "local"
 
 
-@pytest.mark.parametrize("failure", [None, "language-install", "smoke"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        None,
+        "language-install",
+        "language-interrupt",
+        "middle-language",
+        "optional-preflight",
+        "smoke",
+    ],
+)
 def test_native_install_adds_lsp_and_rolls_back_failures(installation, monkeypatch, failure):
     root = installation
     commands = []
     checks = []
     monkeypatch.setattr(setup, "environment_report", lambda *a, **kw: checks.append(kw) or [])
     monkeypatch.setattr(setup, "native_preflight", lambda: [])
-    monkeypatch.setattr(setup, "preparation_report", lambda *a: [])
-    monkeypatch.setattr(setup, "prepare_toolchains", lambda *a: ["python", "typescript"])
+    monkeypatch.setattr(
+        setup,
+        "preparation_report",
+        lambda *a: [("ERROR", "Homebrew", "missing")] if failure == "optional-preflight" else [],
+    )
     monkeypatch.setattr(
         setup,
         "language_status",
@@ -130,11 +150,26 @@ def test_native_install_adds_lsp_and_rolls_back_failures(installation, monkeypat
     )
     monkeypatch.setattr(setup, "print_language_status", lambda root: None)
 
-    def install_servers(*args):
+    def install_servers(root, names):
+        assert load_record(root)["status"] == "installed"
+        assert not (root / ".repo-agent-install-transaction").exists()
+        assert (Path.home() / ".local/bin/repo-agent").resolve() == root / ".venv/bin/repo-agent"
+        if failure == "optional-preflight":
+            raise ValueError("缺少 Homebrew")
+        if failure == "middle-language" and names == ["go"]:
+            raise subprocess.CalledProcessError(1, ["go", "install"])
         if failure == "language-install":
             raise subprocess.CalledProcessError(1, ["npm", "install"])
+        if failure == "language-interrupt":
+            raise KeyboardInterrupt
+        record = load_record(root)
+        record["languages"] += names
+        record["pending_languages"] = [
+            name for name in record["pending_languages"] if name not in names
+        ]
+        save_record(record)
 
-    monkeypatch.setattr(setup, "install_language_servers", install_servers)
+    monkeypatch.setattr(setup, "install_missing", install_servers)
     monkeypatch.setattr(
         setup,
         "service_report",
@@ -144,7 +179,7 @@ def test_native_install_adds_lsp_and_rolls_back_failures(installation, monkeypat
     def run(command, **kwargs):
         commands.append(command)
         if command[1:4] == ["-m", "pip", "install"]:
-            (root / ".venv/bin").mkdir()
+            (root / ".venv/bin").mkdir(exist_ok=True)
             for name in COMMANDS:
                 (root / ".venv/bin" / name).write_text("new entry")
         return SimpleNamespace(returncode=0)
@@ -162,19 +197,29 @@ def test_native_install_adds_lsp_and_rolls_back_failures(installation, monkeypat
             "native",
             "--no-path",
             "--with-toolchains",
+            "--languages",
+            "all" if failure == "middle-language" else "typescript",
         ],
     )
-    if failure:
+    if failure == "smoke":
         with pytest.raises(SystemExit):
             setup.main()
         assert (root / ".venv/old-marker").exists()
     else:
         setup.main()
-        assert load_record(root)["languages"] == ["python", "typescript"]
+        assert load_record(root)["languages"] == (
+            ["python", "typescript", "cpp"]
+            if failure == "middle-language"
+            else ["python"] if failure else ["python", "typescript"]
+        )
+        assert load_record(root)["pending_languages"] == (
+            ["go"] if failure == "middle-language" else ["typescript"] if failure else []
+        )
+        assert not (root / ".venv/old-marker").exists()
         assert load_record(root)["mode"] == "native"
         assert not load_record(root)["uses_default_image"]
     assert all(not call["docker"] for call in checks)
-    assert any(command[-1] == str(root) + "[lsp]" for command in commands)
+    assert any(str(root) + "[lsp]" in command for command in commands)
     assert any(command[1:] == ["-m", "pip", "check"] for command in commands)
     assert not any("sandbox.build" in command for command in commands)
 
@@ -187,7 +232,7 @@ def test_install_check_does_not_install_or_require_docker(installation, monkeypa
     )
     monkeypatch.setattr(setup, "native_preflight", lambda: [])
     monkeypatch.setattr(setup, "preparation_report", lambda *a: [("WARN", "Go", "will install")])
-    monkeypatch.setattr(setup, "prepare_toolchains", lambda *a: pytest.fail("check cannot install"))
+    monkeypatch.setattr(setup, "install_missing", lambda *a: pytest.fail("check cannot install"))
     monkeypatch.setattr(
         sys,
         "argv",
@@ -264,6 +309,28 @@ def test_smoke_never_reports_success_without_expected_symbol(monkeypatch):
     assert lsp_smoke.check_services(languages=["python"])[0][0] == "ERROR"
 
 
+def test_smoke_reports_underlying_permission_failure(monkeypatch):
+    denied = "/lib/modules/6.6.87.2-microsoft-standard-WSL2/lost+found"
+
+    def backend(root):
+        raise PermissionError(13, "Permission denied", denied)
+
+    monkeypatch.setattr("sandbox.native.NativeBackend", backend)
+    row = lsp_smoke.check_services(mode="native", languages=["python"])[0]
+    assert row[:2] == ("ERROR", "原生沙箱")
+    assert "PermissionError" in row[2] and denied in row[2] and "Permission denied" in row[2]
+
+
+def test_smoke_bounds_and_sanitizes_failure_detail(monkeypatch):
+    def backend(root):
+        raise ValueError("namespace failed\n\x1b[2J" + "x" * 2000)
+
+    monkeypatch.setattr("sandbox.native.NativeBackend", backend)
+    detail = lsp_smoke.check_services(mode="native", languages=["python"])[0][2]
+    assert "ValueError" in detail and "namespace failed" in detail
+    assert "\n" not in detail and "\x1b" not in detail and len(detail) < 1700
+
+
 def test_docker_diagnostic_is_offline_without_mounts_and_always_cleans(tmp_path, monkeypatch):
     calls = []
 
@@ -297,8 +364,6 @@ def test_diagnostic_malformed_output_does_not_leak_output(tmp_path, monkeypatch)
 def test_versions_match_dockerfile():
     text = (Path(__file__).resolve().parents[1] / "sandbox/Dockerfile").read_text()
     for version in (
-        dependencies.TYPESCRIPT,
-        dependencies.TYPESCRIPT_SERVER,
         dependencies.GOPLS,
     ):
         assert version in text

@@ -76,8 +76,10 @@ JSONL 包含 `schema_version`、带时区的 `timestamp`、`session_id`、`run_i
 
 ## 文件保护边界
 
-文件工具与 Docker 导入/回写共用 [tools/file_policy.py](../tools/file_policy.py)。受保护项包括任意层级的 `.env` / `.env.*`、`.git`、安装元数据、`.codex`、`.agents`、`logs`、常见凭据目录与文件、私钥扩展名，以及 `AGENT_ENV_FILE`、`AGENT_LOG_DIR` 指定路径和用户会话状态目录。
+文件工具与 Docker 导入/回写共用 [tools/_internal/file_policy.py](../tools/_internal/file_policy.py)。受保护项包括任意层级的 `.env` / `.env.*`、`.git`、安装元数据、`.codex`、`.agents`、`logs`、常见凭据目录与文件、私钥扩展名，以及 `AGENT_ENV_FILE`、`AGENT_LOG_DIR` 指定路径和用户会话状态目录。
 
-文件工具检查符号链接原名和目标，拒绝多硬链接普通文件；列表和搜索过滤受保护项。Git diff 先筛选路径，再读取差异，并禁用重命名检测，避免引用受保护来源。沙箱额外排除虚拟环境、依赖目录和缓存，见 [Sandbox](../sandbox/README.md#工作副本与-git-语义)。
+文件工具检查符号链接原名和目标，拒绝多硬链接普通文件；列表和搜索过滤受保护项。Git diff 先筛选路径，再读取差异，并禁用重命名检测，避免引用受保护来源。Docker 副本额外排除虚拟环境、依赖目录和缓存，见 [Sandbox](../sandbox/README.md#工作副本与-git-语义)。
+
+native 不导入工作副本；原项目和只读解释器目录按平台规则映射，已有受保护路径会被拒绝或遮蔽，详见[原生沙箱](native-sandbox.md)。
 
 配置文件请通过配置命令或编辑器修改。文件名规则不能识别嵌入普通源码的密钥，也不构成抵御恶意并发路径替换的操作系统隔离；`.gitignore` 不负责访问控制。

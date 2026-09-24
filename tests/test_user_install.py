@@ -245,7 +245,7 @@ def test_failed_sandbox_build_reports_failure_before_path_setup(user_home, monke
     monkeypatch.setattr(sys, "argv", ["setup", "--agent-home", str(install), "--mode", "docker"])
 
     def failed_build(command, **kwargs):
-        assert command == [sys.executable, "-m", "sandbox.build"]
+        assert command == [sys.executable, "-I", "-m", "sandbox.build"]
         raise subprocess.CalledProcessError(1, command)
 
     monkeypatch.setattr(setup.subprocess, "run", failed_build)
@@ -302,7 +302,8 @@ def test_startup_defaults_and_partial_cli_overrides(
     monkeypatch.chdir(project)
     monkeypatch.setattr(sys, "argv", ["repo-agent", *flags])
     # Model defaults must also work with zero CLI arguments and the default sandbox.
-    sandbox = SimpleNamespace(healthy=True, tools=lambda: [], close=lambda: None)
+    sandbox = SimpleNamespace(healthy=True, tools=lambda: [], close=lambda: None,
+                              execution_context=lambda: {"gpu_access": {"enabled": False}})
     monkeypatch.setattr(cli, "NativeBackend", lambda *args, **kwargs: sandbox)
     monkeypatch.setattr(cli, "detect_environment", lambda **kwargs: pytest.fail("Docker selected"))
     seen_clients = []

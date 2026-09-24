@@ -8,8 +8,8 @@ import uuid
 from pathlib import Path
 from typing import Protocol
 
-from tools.base import ToolResult
-from tools.process_runner import ProcessRunner
+from tools._internal.base import ToolResult
+from tools._internal.process_runner import ProcessRunner
 
 from .policy import SandboxPolicy
 

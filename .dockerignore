@@ -13,3 +13,14 @@
 **/__pycache__
 **/*.pyc
 **/.env*
+
+!build_support.py
+!MANIFEST.in
+!.dockerignore
+!uv.lock
+!requirements-*.lock
+!dependencies/
+!dependencies/node/
+!dependencies/node/package.json
+!dependencies/node/package-lock.json
+!.env.example

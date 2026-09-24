@@ -1,5 +1,6 @@
 """Linux namespace policy and opt-in real kernel enforcement tests."""
 
+import errno
 import importlib.util
 import os
 import shutil
@@ -93,6 +94,86 @@ def test_configured_paths_and_toolchain_aliases_are_hidden(linux_policy):
     assert set(masks) == {private, certdir}
 
 
+@pytest.mark.parametrize("error_number", [errno.EACCES, errno.EPERM])
+@pytest.mark.parametrize("unreadable_root", [False, True])
+def test_unreadable_readonly_tree_is_masked(linux_policy, tmp_path, monkeypatch,
+                                          error_number, unreadable_root):
+    system = tmp_path / "system"
+    restricted = system if unreadable_root else system / "modules/kernel/lost+found"
+    restricted.mkdir(parents=True)
+    (restricted / ".env").write_text("must never be exposed")
+    original = os.scandir
+
+    def scandir(path):
+        if Path(path) == restricted:
+            raise PermissionError(error_number, "Permission denied", str(path))
+        return original(path)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(os, "scandir", scandir)
+        masks, _ = linux_policy._mount_policy((system,), git_read=False)
+        assert masks == [restricted]
+        control = tmp_path / "call"
+        control.mkdir()
+        scratch = control / "scratch"
+        scratch.mkdir()
+        argv = linux_policy._sandbox_command(["true"], control, scratch, (system,))
+        assert any(argv[i:i + 3] == ["--ro-bind", str(control / "hidden-dir"), str(restricted)]
+                   for i in range(len(argv)))
+        (control / "hidden-dir").chmod(0o700)
+
+
+@pytest.mark.parametrize("readonly", [False, True])
+def test_unreadable_workspace_still_fails_closed(linux_policy, monkeypatch, readonly):
+    restricted = linux_policy.workspace / "private"
+    restricted.mkdir()
+    original = os.scandir
+
+    def scandir(path):
+        if Path(path) == restricted:
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return original(path)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(os, "scandir", scandir)
+        with pytest.raises(PermissionError):
+            linux_policy._mount_policy((restricted,) if readonly else (), git_read=False)
+        with pytest.raises(PermissionError):
+            linux_policy._check_workspace()
+
+
+def test_unreadable_workspace_alias_is_not_treated_as_system_tree(linux_policy, tmp_path, monkeypatch):
+    alias = tmp_path / "runtime-alias"
+    alias.symlink_to(linux_policy.workspace, target_is_directory=True)
+    original = os.scandir
+
+    def scandir(path):
+        if Path(path) == alias:
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return original(path)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(os, "scandir", scandir)
+        with pytest.raises(PermissionError):
+            linux_policy._mount_policy((alias,), git_read=False)
+
+
+@pytest.mark.parametrize("error_number", [errno.EIO, errno.ENOENT])
+def test_system_scan_other_errors_are_not_ignored(linux_policy, monkeypatch, error_number):
+    original = os.scandir
+
+    def scandir(path):
+        if Path(path) == linux_policy.runtime:
+            raise OSError(error_number, "scan failed", str(path))
+        return original(path)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(os, "scandir", scandir)
+        with pytest.raises(OSError) as caught:
+            linux_policy._mount_policy(linux_policy.read_paths, git_read=False)
+        assert caught.value.errno == error_number
+
+
 def test_linux_dependency_checks_and_manual_toolchain_hint(monkeypatch):
     from cli import dependencies
 
@@ -122,6 +203,52 @@ def linux_project(tmp_path):
         yield root, backend
     finally:
         backend.close()
+
+
+@REAL_LINUX
+@pytest.mark.parametrize("mode", [0o000, 0o111])
+def test_real_unreadable_system_directory_is_hidden_on_all_mount_paths(tmp_path, monkeypatch, mode):
+    if os.geteuid() == 0:
+        pytest.skip("Permission regression must run as an ordinary user")
+    root = tmp_path / "project"
+    root.mkdir()
+    system = tmp_path / "usr"
+    lib = system / "lib"
+    restricted = lib / "modules/6.6.87.2-microsoft-standard-WSL2/lost+found"
+    restricted.mkdir(parents=True)
+    (restricted / ".env").write_text("secret")
+    (lib / "ordinary.txt").write_text("readable")
+    alias = tmp_path / "lib"
+    alias.symlink_to(lib, target_is_directory=True)
+    original = LinuxNativeBackend._read_paths
+    monkeypatch.setattr(LinuxNativeBackend, "_read_paths", lambda self: (*original(self), system, alias))
+    backend = None
+    restricted.chmod(mode)
+    try:
+        if mode == 0o111:
+            assert (restricted / ".env").read_text() == "secret"  # Can't list, but CAN read known files.
+        backend = NativeBackend(root, profile="standard")  # Startup itself must now succeed.
+        paths = [restricted, alias / restricted.relative_to(lib)]
+        code = f'''
+import pathlib
+assert pathlib.Path({str(lib / 'ordinary.txt')!r}).read_text() == 'readable'
+for directory in {list(map(str, paths))!r}:
+    path = pathlib.Path(directory)
+    for operation in (lambda: list(path.iterdir()), lambda: (path / '.env').read_text(),
+                      lambda: path.chmod(0o755), lambda: (path / 'new.txt').write_text('no')):
+        try: operation()
+        except OSError: pass
+        else: raise AssertionError('unscanned directory accessible: ' + directory)
+print('masked')
+'''
+        outcome = backend.execute(root, "run_python", {"code": code})
+        assert outcome.success and outcome.data["exit_code"] == 0, outcome
+        assert outcome.data["stdout"] == "masked\n"
+    finally:
+        restricted.chmod(0o700)
+        if backend is not None:
+            backend.close()
+    assert (restricted / ".env").read_text() == "secret"
 
 
 @REAL_LINUX
@@ -295,7 +422,7 @@ while True:
 
 @REAL_LINUX
 def test_real_linux_cancellation_preserves_backend_health(linux_project, monkeypatch):
-    from tools.process_runner import ProcessRunner
+    from tools._internal.process_runner import ProcessRunner
 
     root, backend = linux_project
     collect = ProcessRunner._collect_output

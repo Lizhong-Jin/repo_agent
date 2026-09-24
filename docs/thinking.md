@@ -74,22 +74,11 @@ CLI 为已登记且适用的模型请求可读摘要：OpenAI 添加 `reasoning.
 
 ## 维护内置模型字典
 
-所有内置档位配置集中在 [`llm/thinking_catalog.py`](../llm/thinking_catalog.py) 的 `MODEL_THINKING_PROFILES` 字典中；[`llm/thinking_profiles.py`](../llm/thinking_profiles.py) 负责匹配、应用自定义覆盖与校验。
+所有内置模型信息集中在 [`llm/model_catalog.py`](../llm/model_catalog.py) 的 `MODEL_CATALOG`；[`llm/thinking_profiles.py`](../llm/thinking_profiles.py) 从目录读取思考规则，再应用用户能力覆盖。
 
-字典按「供应商 → 模型名称元组 → 能力配置」组织。同一组名称共享配置；只有一个名称时也使用元组，并保留末尾逗号。新增已支持供应商的模型通常只需添加一项，例如在 `openai` 字典下登记：
+统一目录同时保存模型 ID、思考模式/强度/预算/默认值、上下文口径及上限、最大输出、来源和核对日期。最低和最高思考设置从模式、强度顺序和预算范围派生，避免单独维护后发生矛盾。新增模型时在该文件调用 `_register`；完整字段和使用入口见[模型目录](model-catalog.md)。
 
-```python
-("your-model-id",): {
-    "modes": ("auto", "enabled"),
-    "efforts": ("low", "medium", "high"),
-    "default_effort": "medium",
-    "dated_snapshots": True,
-},
-```
-
-请按实际模型能力填写，示例档位不代表所有模型都支持。字段说明位于字典文件开头；`efforts` 的顺序决定强度切换顺序。`dated_snapshots=True` 同时接受 `-YYYY-MM-DD` 和 `-YYYYMMDD` 后缀；默认只匹配精确名称。精确名称的配置优先，因此可以单独登记能力不同的日期版本。模型名称使用小写，同一供应商内不要重复登记名称。
-
-修改字典后重启 agent 生效；用户能力覆盖仍优先于内置字典。模型偏好继续保存在用户配置目录的 `thinking.json`，无需写入这份源码字典。新增供应商协议仍需实现对应适配器。
+`dated_snapshots=True` 为历史配置保留 `-YYYY-MM-DD` 和 `-YYYYMMDD` 后缀的思考规则匹配，精确登记优先。未单独登记的日期快照不继承长度限制，也不会出现在选择列表中。用户能力覆盖仍优先，偏好继续保存在用户配置目录的 `thinking.json`。新增供应商协议仍需实现对应适配器。
 
 ## 历史思考保留
 

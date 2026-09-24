@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from tools import GetDiagnosticsTool
-from tools.lsp_client import LspTimeoutError
+from tools._internal.lsp_client import LspTimeoutError
 
 SPAN = {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}}
 SERVER = Path(__file__).parent / "fixtures" / "lsp_server.py"
@@ -176,7 +176,7 @@ def test_real_stdio_missing_or_stale_reports_timeout(tmp_path, mode):
 
 
 def test_client_diagnoses_supplied_snapshot(tmp_path):
-    from tools.lsp_client import LspClient
+    from tools._internal.lsp_client import LspClient
 
     source = tmp_path / "a.py"
     source.write_text("on_disk")

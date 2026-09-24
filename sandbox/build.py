@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from cli.installation import record_image
+from cli.paths import docker_build_context, installation_root
 
 from .environment import (
     CUDA_BASE,
@@ -43,11 +44,14 @@ def main() -> None:
     )
     parser.add_argument("--image", default=DEFAULT_IMAGE)
     args = parser.parse_args()
-    root = Path(__file__).resolve().parents[1]
+    root = installation_root()
     try:
         environment = detect_environment(profile=args.profile, image=args.image)
         print(f"[构建环境：{environment.profile}] {environment.reason}", flush=True)
-        result = subprocess.run(build_command(root, environment.profile, args.image), check=False)
+        with docker_build_context() as context:
+            result = subprocess.run(
+                build_command(context, environment.profile, args.image), check=False
+            )
     except (OSError, ValueError) as error:
         parser.exit(1, f"{error}\n")
     if result.returncode == 0:

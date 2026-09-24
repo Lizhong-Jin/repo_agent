@@ -1,6 +1,6 @@
 """Synchronous stdio LSP client, independent of tool schemas and LLM types.
 
-Use one client per workspace/language, and close it (preferably with ``with``).
+Use one client per workspace/server, and close it (preferably with ``with``).
 Positions and returned data use LSP conventions: zero-based lines, UTF-16 code
 units, file URIs and raw Location/LocationLink/DocumentSymbol dictionaries.
 Queries synchronize the requested file from disk; callers must explicitly sync
@@ -156,7 +156,16 @@ class LspClient:
                         "workspaceFolders": self._workspace_folders(),
                         "capabilities": {
                             "general": {"positionEncodings": ["utf-16"]},
-                            "workspace": {"configuration": True, "workspaceFolders": True},
+                            "workspace": {
+                                "configuration": True,
+                                "workspaceFolders": True,
+                                "symbol": {
+                                    "dynamicRegistration": False,
+                                    "symbolKind": {"valueSet": list(range(1, 27))},
+                                    "tagSupport": {"valueSet": [1]},
+                                    "resolveSupport": {"properties": ["location.range"]},
+                                },
+                            },
                             "textDocument": {
                                 "synchronization": {"dynamicRegistration": False},
                                 "documentSymbol": {"hierarchicalDocumentSymbolSupport": True},
@@ -164,6 +173,10 @@ class LspClient:
                                 "references": {"dynamicRegistration": False},
                                 "publishDiagnostics": {"versionSupport": True},
                                 "diagnostic": {"dynamicRegistration": False},
+                                "hover": {
+                                    "dynamicRegistration": False,
+                                    "contentFormat": ["markdown", "plaintext"],
+                                },
                             },
                         },
                         "initializationOptions": self.initialization_options,
@@ -180,18 +193,29 @@ class LspClient:
                 self._dispose()
                 raise
 
-    def request(self, method: str, params: Any = None) -> Any:
+    def request(self, method: str, params: Any = None, *, timeout: float | None = None) -> Any:
         """Escape hatch for additional LSP requests; returns unmodified JSON data."""
+        if timeout is not None and (
+            isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout) or timeout <= 0
+        ):
+            raise ValueError("timeout must be finite and positive")
         with self._lock:
             self.start()
-            return self._request(method, params)
+            return self._request(method, params, timeout=timeout)
 
-    def sync_document(self, path: str | Path, *, text: str | None = None) -> str:
+    def sync_document(
+        self, path: str | Path, *, text: str | None = None, language_id: str | None = None,
+    ) -> str:
         """Open/update a UTF-8 file or supplied buffer; return its file URI.
 
         Full replacement ranges are used for incremental-sync servers. Supplying
-        text does not write it to disk. Query helpers subsequently read disk.
+        text does not write it to disk. language_id selects the language when
+        opening a document on a server shared by multiple languages. Query
+        helpers subsequently read disk.
         """
+        if language_id is not None and (not isinstance(language_id, str) or not language_id):
+            raise ValueError("language_id must be a non-empty string")
         with self._lock:
             self.start()
             target = (self.root / path).resolve()
@@ -235,7 +259,9 @@ class LspClient:
                     params = {
                         "textDocument": {
                             "uri": uri,
-                            "languageId": self.language_id,
+                            "languageId": (
+                                language_id if language_id is not None else self.language_id
+                            ),
                             "version": version,
                             "text": text,
                         }

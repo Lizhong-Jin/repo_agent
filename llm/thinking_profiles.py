@@ -1,14 +1,12 @@
 """Model thinking capabilities; no network probes or automatic model substitution."""
 
 import json
-import re
-from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from urllib.parse import urlsplit, urlunsplit
 
 from .errors import ConfigurationError
+from .model_catalog import model_info
 from .providers import get_provider
-from .thinking_catalog import MODEL_THINKING_PROFILES
 
 EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
 MODES = ("auto", "disabled", "enabled", "adaptive")
@@ -99,27 +97,10 @@ def parse_profile(value):
     return result.copy()
 
 
-def _builtin_profile(provider, model):
-    groups = MODEL_THINKING_PROFILES.get(provider, {})
-    # Explicit snapshots can override a family rule regardless of dictionary order.
-    for dated in (False, True):
-        for models, settings in groups.items():
-            if dated:
-                matches = settings.get("dated_snapshots", False) and any(
-                    re.fullmatch(re.escape(name) + r"-\d{4}-?\d{2}-?\d{2}", model)
-                    for name in models
-                )
-            else:
-                matches = model in models
-            if matches:
-                # Returned profiles must not expose mutable catalog dictionaries.
-                return deepcopy({k: v for k, v in settings.items() if k != "dated_snapshots"})
-    return None
-
-
 def thinking_profile(provider, model, *, base_url=None, override=None):
     name = get_provider(provider).name
-    kwargs = _builtin_profile(name, model.lower())
+    info = model_info(name, model, allow_snapshot=True)
+    kwargs = info.thinking if info is not None else None
     profile = (
         ThinkingProfile(**kwargs, source="内置模型规则", known=True)
         if kwargs is not None

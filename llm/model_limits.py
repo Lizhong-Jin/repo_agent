@@ -12,6 +12,7 @@ import httpx
 class ModelContextLimit:
     tokens: int
     kind: Literal["context", "input"]
+    source: str = "服务端自动获取"
 
 
 def _positive(value):

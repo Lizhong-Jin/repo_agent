@@ -9,10 +9,10 @@ from typing import Any
 
 from llm import ToolDefinition
 
-from .base import ToolResult
-from .errors import ToolErrorCode, tool_error
-from .file_policy import is_credential_path
-from .process_runner import ProcessRunner, ProcessStartError
+from ._internal.base import ToolResult
+from ._internal.errors import ToolErrorCode, tool_error
+from ._internal.file_policy import is_credential_path
+from ._internal.process_runner import ProcessRunner, ProcessStartError
 
 
 # GitDiffTool

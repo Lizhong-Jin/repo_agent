@@ -9,6 +9,7 @@ from .thinking_display import ThinkingDisplay
 
 HELP = (
     "输入任务后按回车。/help 查看帮助，/clear 清空上下文，/new [名称] 启动新会话。"
+    "/compact 压缩上下文并归档原文。"
     "/rename 名称 改名；/sessions 列出会话；/logs [序号] --tail 100 查看日志。"
     "/exit、/quit 或 Ctrl+D 退出并保存；下次启动默认恢复，--new-session 启动全新会话。"
     "/model 选择供应商、模型和 API Key，保存并切换。"
@@ -125,6 +126,15 @@ def run_interactive(
             except (OSError, ValueError) as error:
                 print(str(error))
             continue
+        if task == "/compact" and conversation:
+            try:
+                print(conversation.compact())
+            except (LLMError, ValueError, OSError) as error:
+                print(f"压缩未完成：{error}")
+            except KeyboardInterrupt:
+                print("压缩已取消；原上下文保留。")
+            history = conversation.history
+            continue
         if task == "/clear":
             history = ()
             if status:
@@ -233,7 +243,7 @@ def finish_writeback(sandbox, result, mode: str, *, emit=print) -> bool:
             emit(f"未自动回写：{reason}。副本：{sandbox.workspace}")
             return False
         if sandbox.verify_command:
-            emit("正在容器中执行最终验证（最多 120 秒）……")
+            emit("正在容器中执行最终验证（时限以当前执行配置为准）……")
         verification_error = sandbox.verify_writeback()
         if verification_error:
             emit(

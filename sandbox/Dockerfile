@@ -3,10 +3,8 @@
 ARG BASE_IMAGE=python:3.12-slim-bookworm
 # Keep server versions explicit; update them together with the smoke checks.
 FROM node:22-bookworm-slim AS node_lsp
-ARG TYPESCRIPT_VERSION=5.9.3
-ARG TYPESCRIPT_LSP_VERSION=4.3.4
-RUN npm install --global --ignore-scripts \
-    typescript@${TYPESCRIPT_VERSION} typescript-language-server@${TYPESCRIPT_LSP_VERSION} \
+COPY dependencies/node/package*.json /opt/lsp/
+RUN npm ci --prefix /opt/lsp --ignore-scripts --no-audit --no-fund \
     && npm cache clean --force
 
 FROM golang:1.25-bookworm AS go_lsp
@@ -20,10 +18,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git clangd clang build-essential ninja-build ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=node_lsp /usr/local/bin/ /usr/local/bin/
-COPY --from=node_lsp /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
+COPY --from=node_lsp /opt/lsp/ /opt/lsp/
 COPY --from=go_lsp /usr/local/go/ /usr/local/go/
 COPY --from=go_lsp /out/gopls /usr/local/bin/gopls
-ENV PATH="/usr/local/go/bin:/usr/local/cuda/bin:${PATH}" \
+ENV PATH="/opt/lsp/node_modules/.bin:/usr/local/go/bin:/usr/local/cuda/bin:${PATH}" \
     CUDA_HOME=/usr/local/cuda \
     PYTHONDONTWRITEBYTECODE=1 \
     TORCH_EXTENSIONS_DIR=/tmp/torch-extensions \
@@ -34,13 +32,15 @@ ENV PATH="/usr/local/go/bin:/usr/local/cuda/bin:${PATH}" \
     GOPATH=/tmp/go GOCACHE=/tmp/go-build GOMODCACHE=/tmp/go-mod \
     GOTOOLCHAIN=local GOTELEMETRY=off GOPROXY=off GOSUMDB=off GOMAXPROCS=2
 WORKDIR /opt/agent
-COPY pyproject.toml ./
+COPY pyproject.toml build_support.py MANIFEST.in .env.example .dockerignore uv.lock requirements-*.lock ./
+COPY dependencies ./dependencies
 COPY llm ./llm
 COPY tools ./tools
 COPY agent ./agent
 COPY cli ./cli
 COPY sandbox ./sandbox
-RUN python -m pip install --no-cache-dir '.[lsp]' \
+RUN python -m pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements-build.lock -r requirements-lsp.lock \
+    && python -m pip install --no-cache-dir --no-build-isolation --no-deps . \
     && git config --system --add safe.directory /workspace \
     && case "$SANDBOX_PROFILE" in \
          cuda) python -m pip install --no-cache-dir pytest ninja triton==3.3.1 ;; \

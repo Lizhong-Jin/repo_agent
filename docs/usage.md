@@ -16,9 +16,9 @@ repo-agent --max-steps 12 --max-output-tokens 8192 # 临时覆盖任务轮数和
 
 项目根目录默认为调用时的当前目录；`--root` 同时选择工作目录和项目 `.env`，不会切换到 Agent 安装目录。用户配置由各项目共用，项目 `.env` 可覆盖用户设置，完整优先级见[配置参考](configuration.md)。
 
-默认使用 native，等同 `repo-agent --sandbox native`，在 macOS / Linux 原生沙箱内运行本机工具并直接修改项目；见[原生沙箱说明](native-sandbox.md)。Linux 需要 bubblewrap、libseccomp 和可用的非特权 user namespace；Windows 请通过 WSL2 运行 Linux 后端。`--sandbox local` 仅提供文件/Git 操作，不提供命令、Python 或代码符号工具。需要工作副本及受控回写时，显式使用 `repo-agent --sandbox docker`。Docker/native 失败均不会自动切换为未隔离执行。
+未登记安装模式时默认使用 native；已有安装沿用其记录，可用 `repo-agent --sandbox native` 显式选择，在 macOS / Linux 原生沙箱内运行本机工具并直接修改项目；见[原生沙箱说明](native-sandbox.md)。Linux 需要 bubblewrap、libseccomp 和可用的非特权 user namespace；Windows 请通过 WSL2 运行 Linux 后端。`--sandbox local` 提供文件/Git 和不启动子进程的基础环境查询，不提供命令、Python 或语言服务器工具。可选 Web 工具在主进程独立注册。需要工作副本及受控回写时，显式使用 `repo-agent --sandbox docker`。Docker/native 失败均不会自动切换为未隔离执行。
 
-Linux / WSL2 原生 GPU 使用 `repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all`；默认 native 不开放 GPU。Linux 可用索引或完整 GPU UUID 选择单卡，WSL2 仅支持 `all`。需要宿主机预装 NVIDIA 驱动和计算依赖，启动会实际执行 CUDA kernel 自检；详见[原生 GPU 说明](native-sandbox.md#linux--wsl2-原生-gpu)。
+Linux / WSL2 native 默认自动检测 NVIDIA CUDA GPU：发现后启用全部 GPU，没有则使用普通环境；发现设备但驱动或 CUDA 自检失败时明确报错。`--sandbox-profile standard` 强制关闭 GPU，`--sandbox-profile cuda` 强制要求 GPU。Linux 可通过 `--sandbox-gpus` 指定索引或完整 GPU UUID 选择单卡，WSL2 仅支持 `all`。需要宿主机预装 NVIDIA 驱动和计算依赖，启动会实际执行 CUDA kernel 自检；详见[原生 GPU 说明](native-sandbox.md#linux--wsl2-原生-gpu)。
 
 ## 会话命令与快捷键
 
@@ -56,6 +56,8 @@ Linux / WSL2 原生 GPU 使用 `repo-agent --sandbox native --sandbox-profile cu
 
 完整终端使用全屏界面；管道输入和单次任务使用普通文本输出。普通终端不提供全屏快捷键，但支持对应的会话命令。停止采用协作方式，需要等待当前网络读取或工具安全结束，已经执行的文件操作不会撤销。任务停止后可输入 `/exit`。
 
+全屏界面内，将鼠标放在对话区，用滚轮或触控板查看历史；也可使用 PgUp/PgDn（Mac：fn+↑/fn+↓）按可见页面翻动，自动换行的长段落也可以逐行滚动。向上滚动会暂停自动跟随，后续流式输出不会把视图拉回底部，输入框仍可编辑草稿。状态栏显示“正在查看历史”；向下滚到末尾，或按 Ctrl+End（Mac：Esc → g），恢复跟随最新输出。滚动由应用处理，终端自身的滚动条不代表完整对话历史。
+
 模型可在任务结束后通过 `/model` 切换；项目根目录在进程内固定。思考强度影响后续请求，可见思考显示方式可在生成中切换，具体模型限制和偏好保存见[思考设置](thinking.md)。
 
 ## 交互与流式输出
@@ -78,19 +80,23 @@ Linux / WSL2 原生 GPU 使用 `repo-agent --sandbox native --sandbox-profile cu
 
 文字和工具截断共享连续恢复计数，完整工具轮执行后重置；所有请求始终受本次任务总轮数限制。连续截断超限、重复续写、没有可续写正文或恢复请求失败时停止并解释原因，保留有效上下文供“继续”。若服务端拒绝更大的输出额度，需要先调整配置。自动续写提示属于程序事件，不显示为用户输入；每次请求分别统计耗时和 token。网络超时、取消、拒绝和未知结束原因不会触发截断重试；恢复阶段之外的模型异常、中断或非正常回复保留此前完整上下文，并添加需要核实文件现状的说明。已经执行的文件操作不会撤销，也不会自动重试整个任务。
 
+摘要请求单独统计，计入会话累计调用次数与 token，但不消耗任务的 `--max-steps` 轮数，也不显示摘要正文。
+
 ## 上下文占用估算
 
 底栏同时显示 session 累计用量和当前上下文估算。启动时若没有可恢复的服务端用量，先根据系统提示、技能目录、工具定义及恢复的消息/工具结果进行**本地粗估**，底栏明确标注来源；不发起模型请求，也不计入 session 累计用量。估算按紧凑 JSON 中 ASCII 字符约 4 字符/token、其他字符约 1.5 token/字符计算，并非模型专用 tokenizer；不重复计算原生状态中的正文，也无法准确计入加密思考等隐藏开销。已保存的本地粗估在重启时重新计算。上限已知时显示估算比例，上限未知时只显示估算 token 数；草稿不计入。
 
 模型返回后，上下文使用**最近一次请求的 input_tokens + output_tokens**，替换本地粗估，不是整个 session token 的累加；包含接口归入输出的思考 token，可能与下一次实际发送的 token 数不同。新生成的工具结果在下一次请求返回用量后计入，期间显示待更新。完整窗口口径缺少任一用量字段时显示未知，不沿用旧百分比。`/clear`、中断或失败时重置上下文估算，但不重置 session 累计用量。
 
+上下文占比后显示“缓存命中”：按最近一次模型请求的 `cached_input_tokens / input_tokens` 计算，不是会话累计比例。分母包含该次全部输入 token，缓存写入不算命中，输出 token 不参与计算。首次请求前、接口缺少相关字段或输入为 0 时显示“未知”；明确返回零命中且输入大于 0 时显示 `0.0%`。该值随会话保存恢复；清空上下文、新建会话或切换模型时重置。
+
 模型上限默认从当前配置的 API 地址自动获取，启动会话和 `/model` 切换时各查询一次，同一客户端缓存查询结果（包括未知结果），普通对话不会反复查询。手动填写 `LLM_CONTEXT_WINDOW` 或 `--context-window` 时优先使用该值，启动不查询。自定义网关只查询配置的地址，不会将 Key 发送到额外服务或跟随重定向。
 
 - `/context`：查看当前上限、来源及占用。
-- `/context auto`：取消本会话的手动覆盖，重新查询服务端；失败后显示未知，不沿用旧上限。
+- `/context auto`：取消本会话的手动覆盖，重新查询服务端；缺失时读取模型目录，两者均无数据才显示未知，不沿用旧上限。
 - `/context 131072`：手动设置完整窗口上限（数值仅为示例）。会话修改不写回配置；下次启动仍遵循配置优先级。
 
-自动查询采用模型元数据 GET 接口，不调用模型生成，也不计入会话生成次数或 token。每个网络阶段超时为 2 秒，读取期间检查总耗时和响应大小，不重试。查询失败、接口不支持、未找到精确模型或未返回有效正整数时显示上限未知，仍可正常对话或手动设置。
+自动查询采用模型元数据 GET 接口，不调用模型生成，也不计入会话生成次数或 token。每个网络阶段超时为 2 秒，读取期间检查总耗时和响应大小，不重试。查询失败、接口不支持、未找到精确模型或未返回有效正整数时，使用[模型目录](model-catalog.md)中精确登记的长度，显示“内置模型目录（标准 API 规格）”；目录也未知时才显示上限未知。自定义网关可能限制容量，可手动覆盖。
 
 | 接口类型 | 查询与计算口径 |
 | --- | --- |
@@ -98,6 +104,6 @@ Linux / WSL2 原生 GPU 使用 `repo-agent --sandbox native --sandbox-profile cu
 | Anthropic | `GET /models/{model}` 的 `max_input_tokens`；显示“输入上下文”，仅用最近一轮输入 token 计算比例 |
 | 其他兼容接口 | `GET /models` 精确匹配模型 ID，读取 `context_length`、`context_window` 或 `max_model_len`；如只提供 `max_input_tokens`，改用输入口径 |
 
-完整窗口仍采用上述输入＋输出估算；输入口径缺少输入用量时显示未知，输出用量缺失不会妨碍输入比例。不会把 `max_tokens`、`outputTokenLimit` 当作上下文上限，也不会简单将输入和输出上限相加。仅返回模型名称、没有长度信息的服务仍需手动配置，具体以当前配置地址返回的元数据为准。
+完整窗口仍采用上述输入＋输出估算；输入口径缺少输入用量时显示未知，输出用量缺失不会妨碍输入比例。不会把 `max_tokens`、`outputTokenLimit` 当作上下文上限，也不会简单将输入和输出上限相加。目录保留相同的输入/完整窗口区分。上限优先级为：手动设置 > 当前地址服务端元数据 > 内置模型目录；目录数据不代表账户权限或自定义网关的实际容量。
 
-这些设置仅用于显示，不更改模型请求或自动压缩历史，`AGENT_MAX_OUTPUT_TOKENS` 仍单独控制输出上限。
+上下文上限同时用于自动压缩的输入预算；`AGENT_MAX_OUTPUT_TOKENS` 单独控制普通请求输出上限，完整窗口会先预留这部分空间。`/compact` 手动生成摘要并归档原文，详见[上下文压缩与历史回查](context-compaction.md)。

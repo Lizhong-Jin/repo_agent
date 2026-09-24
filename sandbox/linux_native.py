@@ -5,6 +5,7 @@ Existing protected paths are masked on every invocation. Unlike Seatbelt, Linux
 mount rules do not filter future filenames; see docs/native-sandbox.md.
 """
 
+import errno
 import json
 import os
 import shutil
@@ -12,7 +13,7 @@ import stat
 import sys
 from pathlib import Path
 
-from tools.file_policy import is_protected_name
+from tools._internal.file_policy import is_protected_name
 
 from .linux_gpu import NativeGPU
 from .native import NativeBackend
@@ -45,8 +46,13 @@ class LinuxNativeBackend(NativeBackend):
                 "（Fedora 使用 libseccomp）。不会退回未隔离执行。"
             )
         self.executable = Path(executable)
-        if self.requested_gpus is not None:
-            self.gpu = NativeGPU.discover(self.requested_gpus)
+        if self.requested_gpus is not None or self.requested_profile == "cuda":
+            self.gpu = NativeGPU.discover(self.requested_gpus or "all")
+        elif self.requested_profile == "auto":
+            self.gpu = NativeGPU.detect()
+        else:
+            self.gpu = None
+        if self.gpu:
             self.command_timeout_seconds = self.python_timeout_seconds = 900
 
     def _read_paths(self):
@@ -84,7 +90,20 @@ class LinuxNativeBackend(NativeBackend):
         roots = _outermost([self.workspace, *read_paths])
 
         def inaccessible(error):
-            raise error
+            # Read-only system trees can contain root-only directories (e.g.
+            # WSL's /lib/modules/.../lost+found). Lack of list permission does
+            # NOT prevent opening known filenames in an execute-only directory.
+            # Hide the entire unscanned subtree, never simply skip its contents.
+            if (not isinstance(error, PermissionError)
+                    or error.errno not in {errno.EACCES, errno.EPERM}
+                    or not error.filename):
+                raise error
+            path = Path(error.filename)
+            if (not path.is_absolute() or not path.is_relative_to(root)
+                    or path.is_relative_to(self.workspace)
+                    or path.resolve(strict=True).is_relative_to(self.workspace)):
+                raise error
+            masks.append(path)
 
         def protected(path):
             if any(path == p or path.is_relative_to(p) for p in self.protected_paths):
@@ -186,6 +205,8 @@ class LinuxNativeBackend(NativeBackend):
         result["persistence"]["process_cleanup"] = "pid_namespace_and_host_supervision"
         result["gpu_access"] = {
             "enabled": self.gpu is not None,
+            "requested_profile": self.requested_profile,
+            "profile": "cuda" if self.gpu else "standard",
             "kind": self.gpu.kind if self.gpu else None,
             "selection": self.gpu.requested if self.gpu else None,
             "device_paths": [str(node.path) for node in self.gpu.devices] if self.gpu else [],
@@ -264,6 +285,7 @@ print('native-ok')
             raise ValueError(
                 "Linux native CUDA 自检失败；未退回 CPU 或放宽隔离。"
                 "请检查驱动、UVM 设备权限、libcuda/PTX JIT 库和所选 GPU；MIG/NVSwitch 暂不支持。\n"
+                "如需关闭 GPU，可显式使用 --sandbox-profile standard。\n"
                 + result.stderr[:2000]
             )
         self.gpu_probe = report

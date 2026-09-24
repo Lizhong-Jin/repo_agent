@@ -12,25 +12,10 @@ from tools import Tool, ToolResult
 
 from .skills import LoadSkillTool, SkillRegistry
 from .Tracing import RunStats, RunTrace
+from .prompt import make_default_system_prompt
 
-DEFAULT_SYSTEM_PROMPT = (
-    "你是一个代码仓库助手。根据用户任务，按需调用提供的工具获取信息，再给出回答。"
-    "文件路径相对于配置的项目根目录。只根据实际读取的内容描述代码，"
-    "不要声称已经执行未执行的操作。工具返回错误时，修正参数或说明限制。"
-    "默认使用简洁的中文回复。完成代码或文件修改后，通常用 3 到 6 行说明："
-    "完成了什么、涉及的文件路径、实际验证结果，以及必要的未完成事项。"
-    "已经通过工具写入或修改的代码，不要在面向用户的回复中重复粘贴完整文件、"
-    "完整实现或长篇 diff; 只在确有必要时引用少量关键代码。"
-    "执行过程中的文字说明也应简短，不要先展示完整代码再调用工具写入。"
-    "传给写入或编辑工具的代码参数必须完整准确，不能用省略号或说明文字代替。"
-    "用户明确要求完整代码、示例、diff 或详细讲解时，按用户要求提供相应内容。"
-    "验证非法输入等预期失败场景时，用 run_python 调用 subprocess.run 并断言"
-    "实际退出码等于预期值，使验证本身通过时返回 0; "
-    "不要仅凭被测程序的非零退出码就声称验证成功。"
-    "当工具支持 check_id 时，从首次验证起为每项检查提供稳定标识；修正验证脚本后"
-    "复用同一 check_id 和 cwd 重跑，保留原有断言，不同检查使用不同标识。"
-)
 
+DEFAULT_SYSTEM_PROMPT = make_default_system_prompt()
 
 @dataclass(frozen=True)
 class RunResult:
@@ -118,6 +103,7 @@ class AgentRuntime:
         self.last_stats: RunStats | None = None
         self._task_number = 0
         self.on_model_event = None
+        self.before_request = None
         self.check_cancelled = lambda: None
         self.thinking_settings = None
         self._tools: dict[str, Tool] = {}
@@ -221,6 +207,8 @@ class AgentRuntime:
         while self.max_steps == 0 or step < self.max_steps:
             step += 1
             self.check_cancelled()
+            if self.before_request is not None:
+                messages = list(self.before_request(messages, output_limit))
             request = self._request(messages, max_output_tokens=output_limit)
             try:
                 response = self._generate(request, step, trace)
@@ -345,6 +333,7 @@ class AgentRuntime:
     def _generate(self, request: LLMRequest, step: int, trace: RunTrace) -> LLMResponse:
         with trace.model(step) as record:
             record.thinking = deepcopy(self.thinking_settings)
+            record.max_output_tokens = request.max_output_tokens
 
             def event(kind, text, elapsed):
                 if kind not in {"end", "thinking_end", "usage"}:

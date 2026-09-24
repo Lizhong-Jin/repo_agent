@@ -18,6 +18,7 @@ from cli.models import ModelControl, ModelSelection, ModelWizard, prompt_model
 from cli.tui import ConversationUI
 from llm import LLMClient, LLMConfig
 from llm.providers import PROVIDERS
+from llm.model_catalog import supported_models, supported_providers
 
 
 @pytest.fixture(autouse=True)
@@ -28,17 +29,20 @@ def private_config(tmp_path, monkeypatch):
         monkeypatch.delenv(key, raising=False)
 
 
-@pytest.mark.parametrize("provider", PROVIDERS)
-def test_wizard_uses_supported_providers_and_manual_models(provider):
+@pytest.mark.parametrize("provider", supported_providers())
+def test_wizard_uses_only_catalog_providers_and_models(provider):
     wizard = ModelWizard("deepseek", "old", base_url="https://old.invalid")
-    assert all(name in wizard.prompt() for name in PROVIDERS)
-    wizard.submit(str(list(PROVIDERS).index(provider) + 1))
-    wizard.submit("my-model-id")
+    assert all(name in wizard.prompt() for name in supported_providers())
+    wizard.submit(str(list(supported_providers()).index(provider) + 1))
+    with pytest.raises(ValueError, match="已支持"):
+        wizard.submit("my-model-id")
+    model = supported_models(provider)[0].id
+    wizard.submit(model)
     assert wizard.secret
     selection = wizard.submit("new-secret")
     assert (selection.provider, selection.model, selection.api_key) == (
         provider,
-        "my-model-id",
+        model,
         "new-secret",
     )
     assert selection.base_url == ("https://old.invalid" if provider == "deepseek" else None)
@@ -53,7 +57,7 @@ def test_wizard_reuses_saved_key_without_revealing_it():
     wizard.submit("qwen")
     with pytest.raises(ValueError):
         wizard.submit("")
-    wizard.submit("q-model")
+    wizard.submit("qwen-plus")
     assert "saved-secret" not in wizard.prompt()
     assert wizard.submit("").api_key == "saved-secret"
 
@@ -105,7 +109,8 @@ def test_defaults_file_is_not_loaded(tmp_path):
 def test_prompt_uses_hidden_input_and_can_cancel(monkeypatch, capsys):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
-    answers = iter(["deepseek", "manual-model"])
+    answers = iter(["deepseek"])
+    monkeypatch.setattr("cli.models.pick_model", lambda *args: "deepseek-flash")
     monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
     monkeypatch.setattr("cli.models.getpass.getpass", lambda prompt: "hidden-secret")
     assert prompt_model(ModelWizard("deepseek", None)).api_key == "hidden-secret"
@@ -137,17 +142,17 @@ def test_startup_wizard_saves_and_uses_new_model(tmp_path, monkeypatch, explicit
         args.append("--configure-model")
     monkeypatch.setattr(sys, "argv", args)
     monkeypatch.setattr(
-        cli, "prompt_model", lambda wizard: ModelSelection("qwen", "chosen", "new-key")
+        cli, "prompt_model", lambda wizard: ModelSelection("qwen", "qwen-plus", "new-key")
     )
     seen = []
 
     def interactive(runtime, **kwargs):
         seen.append(runtime.llm.config)
-        assert kwargs["models"].config.model == "chosen"
+        assert kwargs["models"].config.model == "qwen-plus"
 
     monkeypatch.setattr(cli, "run_interactive", interactive)
     cli.main()
-    assert seen[0].model == "chosen" and seen[0].api_key == "new-key"
+    assert seen[0].model == "qwen-plus" and seen[0].api_key == "new-key"
     values = read_config(user_config_path())
     assert values["LLM_PROVIDER"] == "qwen" and values["DASHSCOPE_API_KEY"] == "new-key"
     if explicit:
@@ -219,18 +224,18 @@ def test_switch_changes_wire_request_resets_settings_and_logs_no_key(tmp_path, m
         control.tracer = tracer
         control.runtime.on_event = tracer
         control.runtime.run("first")
-        control.switch(ModelSelection("qwen", "new", "new-key"))
+        control.switch(ModelSelection("qwen", "qwen-plus", "new-key"))
         control.runtime.run("second")
     assert clients[0]._http.is_closed
     assert calls[1][0].startswith(PROVIDERS["qwen"].base_url)
     assert calls[1][1] == "Bearer new-key"
-    assert calls[1][2]["model"] == "new" and "thinking" not in calls[1][2]
+    assert calls[1][2]["model"] == "qwen-plus" and "thinking" not in calls[1][2]
     assert control.thinking.provider == "qwen" and control.thinking.current["mode"] == "auto"
     assert control.status.context_window == 2000
     assert "服务端自动获取" in control.status.describe_context()
     log = tracer.jsonl_path.read_text()
     assert '"event": "model_changed"' in log
-    assert '"model": "new"' in log and "new-key" not in log and "old-key" not in log
+    assert '"model": "qwen-plus"' in log and "new-key" not in log and "old-key" not in log
     control.close()
     assert clients[1]._http.is_closed
 
@@ -245,7 +250,7 @@ def test_failed_switch_preserves_client_settings_and_configuration(tmp_path, mon
 
     monkeypatch.setattr("cli.config.os.replace", fail)
     with pytest.raises(OSError):
-        control.switch(ModelSelection("qwen", "new", "new-key"))
+        control.switch(ModelSelection("qwen", "qwen-plus", "new-key"))
     assert control.runtime.llm is clients[0] and not clients[0]._http.is_closed
     assert clients[1]._http.is_closed
     assert control.config.model == "old" and control.runtime.request_extra
@@ -280,7 +285,7 @@ def test_full_terminal_model_wizard_masks_key_and_clears_history(tmp_path, monke
             await until(lambda: ui.model_wizard is not None)
             pipe.send_text("qwen\r")
             await until(lambda: ui.model_wizard.stage == "model")
-            pipe.send_text("new\r")
+            pipe.send_text("qwen-plus\r")
             await until(lambda: ui.model_wizard.secret)
             pipe.send_text("private-key")
             await until(lambda: ui.editor.text == "private-key")
@@ -294,9 +299,9 @@ def test_full_terminal_model_wizard_masks_key_and_clears_history(tmp_path, monke
             assert not ui.editor.text and not user_config_path().exists()
             pipe.send_text("/model\r")
             await until(lambda: ui.model_wizard is not None)
-            pipe.send_text("qwen\rnew\rprivate-key\r")
-            await until(lambda: control.config.model == "new")
-            assert not ui.history and "qwen / new" in ui.footer_text
+            pipe.send_text("qwen\rqwen-plus\rprivate-key\r")
+            await until(lambda: control.config.model == "qwen-plus")
+            assert not ui.history and "qwen / qwen-plus" in ui.footer_text
             assert "private-key" not in ui.transcript
             pipe.send_text("second\r")
             await until(lambda: len(calls) == 2 and not ui.busy)
@@ -315,10 +320,10 @@ def test_plain_session_switch_discards_history_and_reuses_new_client(tmp_path, m
     answers = iter(["first", "/model", "second", "/exit"])
     monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
     monkeypatch.setattr(
-        "cli.models.prompt_model", lambda wizard: ModelSelection("qwen", "new", "new-key")
+        "cli.models.prompt_model", lambda wizard: ModelSelection("qwen", "qwen-plus", "new-key")
     )
     run_interactive(control.runtime, models=control)
-    assert calls[0][2]["model"] == "old" and calls[1][2]["model"] == "new"
+    assert calls[0][2]["model"] == "old" and calls[1][2]["model"] == "qwen-plus"
     assert [m["role"] for m in calls[1][2]["messages"]] == ["system", "user"]
     control.close()
 
@@ -334,4 +339,59 @@ def test_model_command_waits_for_running_task(tmp_path, monkeypatch):
         ui.submit()
         assert ui.model_wizard is None and ui.editor.text == "/model"
         assert control.config.model == "old"
+    clients[0].close()
+
+
+def test_tui_model_picker_search_page_keys_mouse_and_empty_results(tmp_path, monkeypatch):
+    from prompt_toolkit.data_structures import Size
+
+    class Terminal(DummyOutput):
+        def get_size(self):
+            return Size(rows=32, columns=110)
+
+    async def until(predicate):
+        async def wait():
+            while not predicate():
+                await asyncio.sleep(0.01)
+        await asyncio.wait_for(wait(), 3)
+
+    async def run():
+        control, _, clients = make_control(tmp_path, monkeypatch)
+        with create_pipe_input() as pipe:
+            ui = ConversationUI(control.runtime, models=control, terminal_input=pipe,
+                                terminal_output=Terminal())
+            task = asyncio.create_task(ui.run_async())
+            await until(lambda: ui.app.is_running)
+            pipe.send_text("/model\rqwen\r")
+            await until(lambda: ui.model_picker is not None)
+            picker = ui.model_picker
+            await until(lambda: picker.window.render_info is not None)
+            pipe.send_text("\x1b[6~")
+            await until(lambda: picker.index == picker.page_size)
+            position = ui.app.renderer._last_screen.visible_windows_to_write_positions[picker.window]
+            pipe.send_text(f"\x1b[<65;5;{position.ypos + 3}M")
+            await until(lambda: picker.index == picker.page_size + 1)
+            assert ui.app.layout.has_focus(ui.editor)
+            pipe.send_text("NO-SUCH-MODEL\r")
+            await until(lambda: "没有匹配" in ui.transcript)
+            assert ui.model_wizard.stage == "model" and control.config.model == "old"
+            assert not user_config_path().exists()
+            pipe.send_text("\x15QWEN3.8")
+            await until(lambda: len(picker.matches) == 2)
+            pipe.send_text("\x1b[B\r")
+            await until(lambda: ui.model_wizard.secret)
+            assert ui.model_wizard.model == "qwen3.8-flash"
+            pipe.send_text("\x03\x04")
+            await asyncio.wait_for(task, 3)
+        clients[0].close()
+
+    asyncio.run(run())
+
+
+def test_switch_rejects_unlisted_model_before_constructing_client(tmp_path, monkeypatch):
+    control, _, clients = make_control(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="已支持"):
+        control.switch(ModelSelection("qwen", "invented-model", "secret"))
+    assert len(clients) == 1 and control.config.model == "old"
+    assert not user_config_path().exists()
     clients[0].close()

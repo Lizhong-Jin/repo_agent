@@ -39,32 +39,33 @@ if __package__:
     from .config_storage import config_lock
     from .dependencies import (
         available_mode,
-        install_language_servers,
         language_status,
         native_preflight,
         preparation_report,
-        prepare_toolchains,
         print_language_status,
         selected_languages,
         service_report,
     )
+    from .install_network import network_options, run_download
     from .install_transaction import TRANSACTION, InstallTransaction, recover_install
     from .maintenance import environment_report, file_lock, print_report
+    from .toolchains import install_missing
 else:
     from config_storage import config_lock
+    from install_network import network_options, run_download
+    from install_transaction import TRANSACTION, InstallTransaction, recover_install
+    from maintenance import environment_report, file_lock, print_report
+    from toolchains import install_missing
+
     from dependencies import (
         available_mode,
-        install_language_servers,
         language_status,
         native_preflight,
         preparation_report,
-        prepare_toolchains,
         print_language_status,
         selected_languages,
         service_report,
     )
-    from install_transaction import TRANSACTION, InstallTransaction, recover_install
-    from maintenance import environment_report, file_lock, print_report
 
 
 def command_state(command: Path) -> str | None:
@@ -253,7 +254,7 @@ def preserve_managed_servers(transaction, root):
             shutil.copy2(source, target)
 
 
-def main() -> None:
+def main(argv=None, *, approved_commands=None) -> None:
     parser = argparse.ArgumentParser(description="配置 Repo Agent 用户安装")
     parser.add_argument("--agent-home", type=Path, required=True)
     parser.add_argument("--bin-dir", type=Path, default=Path.home() / ".local" / "bin")
@@ -286,14 +287,27 @@ def main() -> None:
     parser.set_defaults(toolchains=None)
     parser.add_argument("--no-path", action="store_true")
     parser.add_argument("--bootstrap", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--wheel", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--check", action="store_true", help="只检查安装环境，不做修改")
     parser.add_argument("--recover", action="store_true", help="只恢复上次中断的安装")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         agent_home = args.agent_home.expanduser().resolve(strict=True)
         bin_dir = args.bin_dir.expanduser().resolve()
         args.mode = args.mode or available_mode(agent_home)
         selected_languages(args.languages)
+        release = None
+        if args.wheel:
+            if __package__:
+                from .release_manifest import read_release
+            else:
+                from release_manifest import read_release
+            release = read_release(agent_home)
+            if args.wheel.resolve() != (agent_home / release["wheel"]).resolve():
+                raise ValueError("wheel 与发行清单不匹配")
+        network_options()
+        extra_languages = []
+        unfinished_languages = []
         build_docker = args.mode == "docker" and not args.skip_sandbox
 
         def preflight():
@@ -302,7 +316,7 @@ def main() -> None:
                 rows += native_preflight()
                 if not any(level == "ERROR" for level, _, _ in rows):
                     optional = preparation_report(agent_home / ".venv/bin/python", args.languages)
-                    if not args.toolchains:
+                    if not (args.check and args.toolchains):
                         optional = [
                             (
                                 "WARN" if level == "ERROR" else level,
@@ -323,8 +337,8 @@ def main() -> None:
                 parser.exit(1)
             return
         pending = (agent_home / TRANSACTION).exists()
-        approved_states = None
-        if not args.recover and not pending:
+        approved_states = approved_commands
+        if not args.recover and not pending and approved_states is None:
             approved_states = confirm_commands(agent_home, bin_dir)
         with ExitStack() as stack:
             stack.enter_context(file_lock(registry_dir().parent / ".maintenance.lock"))
@@ -355,19 +369,46 @@ def main() -> None:
                 record["uses_default_image"] = args.mode == "docker"
                 python = sys.executable
                 languages = []
-                if args.bootstrap and args.mode == "native":
-                    languages = (
-                        prepare_toolchains(agent_home / ".venv/bin/python", args.languages)
-                        if args.toolchains
-                        else ["python"]
-                    )
                 if args.bootstrap:
                     transaction.fresh_venv()
                     prepare_venv(record)
                     subprocess.run([python, "-m", "venv", str(agent_home / ".venv")], check=True)
                     python = str(agent_home / ".venv/bin/python")
-                    try:
-                        subprocess.run(
+                    print("安装核心依赖……", flush=True)
+                    lock = agent_home / (
+                        "requirements-lsp.lock"
+                        if args.mode == "native"
+                        else "requirements-core.lock"
+                    )
+                    locked = [
+                        python,
+                        "-m",
+                        "pip",
+                        "install",
+                        "--require-hashes",
+                        "--only-binary=:all:",
+                        "-r",
+                        str(lock),
+                    ]
+                    if not args.wheel:
+                        locked += ["-r", str(agent_home / "requirements-build.lock")]
+                    run_download(locked, label="安装固定版本依赖", cwd=agent_home)
+                    if args.wheel:
+                        run_download(
+                            [
+                                python,
+                                "-m",
+                                "pip",
+                                "install",
+                                "--no-deps",
+                                "--no-index",
+                                str(args.wheel.resolve()),
+                            ],
+                            label="安装发行版 wheel",
+                            cwd=agent_home,
+                        )
+                    else:
+                        run_download(
                             [
                                 python,
                                 "-m",
@@ -375,42 +416,51 @@ def main() -> None:
                                 "install",
                                 "-e",
                                 str(agent_home) + ("[lsp]" if args.mode == "native" else ""),
+                                "--no-deps",
+                                "--no-build-isolation",
                             ],
-                            check=True,
+                            label="安装 Agent 核心依赖",
+                            cwd=agent_home,
                         )
-                    except subprocess.CalledProcessError:
-                        print(
-                            "依赖安装失败。如输出含 CERTIFICATE_VERIFY_FAILED，请修复所选 Python 的 CA 信任库，"
-                            "或通过 PIP_CERT 指定可信 CA 文件；不要关闭证书校验。",
-                            file=sys.stderr,
-                        )
-                        raise
                     subprocess.run([python, "-m", "pip", "check"], check=True)
                     if args.mode == "native":
                         preserve_managed_servers(transaction, agent_home)
                         states = {row["language"]: row for row in language_status(agent_home)}
-                        if not args.toolchains:
-                            languages = [
+                        languages = ["python"]
+                        previous = [
+                            name
+                            for name in record.get("languages", [])
+                            if name in {"typescript", "go", "cpp"}
+                        ]
+                        extra_languages = (
+                            [
                                 name
-                                for name in selected_languages("all")
-                                if name == "python"
-                                or (
-                                    name in record.get("languages", [])
-                                    and states[name]["toolchain"]
-                                    and states[name]["service"]
-                                )
+                                for name in selected_languages(args.languages)
+                                if name != "python"
                             ]
-                        install_language_servers(
-                            agent_home,
-                            [name for name in languages if not states[name]["service"]],
+                            if args.toolchains
+                            else [
+                                name
+                                for name in previous
+                                if states[name]["service"] and states[name]["toolchain"]
+                            ]
                         )
-                        print("验证原生沙箱和语言服务（使用临时示例文件）……", flush=True)
+                        record["pending_languages"] = list(
+                            dict.fromkeys(
+                                [
+                                    *record.get("pending_languages", []),
+                                    *previous,
+                                    *extra_languages,
+                                ]
+                            )
+                        )
+                        print("验证原生沙箱和 Python 语言服务（使用临时示例文件）……", flush=True)
                         if not print_report(
                             service_report(agent_home, mode="native", languages=languages)
                         ):
                             raise ValueError("原生模式依赖实测未通过，恢复原安装")
                     subprocess.run(
-                        [python, "-c", "import cli.main, sandbox.build"],
+                        [python, "-I", "-c", "import cli.main, sandbox.build"],
                         cwd=agent_home,
                         check=True,
                     )
@@ -424,7 +474,7 @@ def main() -> None:
                         )
                 config_path = configure_user(agent_home, record)
                 if build_docker:
-                    build = [python, "-m", "sandbox.build"]
+                    build = [python, "-I", "-m", "sandbox.build"]
                     if args.bootstrap:
                         build += ["--image", transaction.stage_image()]
                     subprocess.run(build, cwd=agent_home, check=True)
@@ -458,6 +508,10 @@ def main() -> None:
                 record["uses_default_image"] = args.mode == "docker"
                 record["languages"] = languages
                 record["status"] = "installed"
+                record["kind"] = "release" if release else "development"
+                if release:
+                    record["app_version"] = release["version"]
+                    record["release_files"] = release["files"]
                 record["python"] = {
                     "executable": sys.executable,
                     "version": sys.version.split()[0],
@@ -472,13 +526,39 @@ def main() -> None:
         parser.exit(1, "安装已取消。\n")
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, f"安装未完成：{error}\n")
+    print("Agent 核心安装成功。", flush=True)
+    if extra_languages:
+        print("开始补齐或验证额外语言服务；失败不会撤销核心安装。", flush=True)
+        for index, language in enumerate(extra_languages):
+            try:
+                install_missing(agent_home, [language])
+            except KeyboardInterrupt:
+                unfinished_languages.extend(extra_languages[index:])
+                print("已取消额外补齐；Agent 核心安装保留。", flush=True)
+                break
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                unfinished_languages.append(language)
+                print(
+                    f"[WARN] {language} 未完成：{error}\n重试：repo-agent toolchains install {language}",
+                    flush=True,
+                )
+        try:
+            languages = load_record(agent_home).get("languages", languages)
+        except (OSError, ValueError, AttributeError):
+            print("[WARN] 无法刷新语言服务记录，请用 repo-agent doctor 检查。")
     for command in commands:
         print(f"已安装命令：{command}")
     print(f"默认启动模式：{args.mode}（可用 --sandbox 显式切换）")
     if args.mode == "native":
         print("已验证的原生模式语言服务：" + ", ".join(languages))
         print("系统共享工具链在卸载或安装失败时保留；虚拟环境内的语言服务跟随安装恢复和卸载。")
-    print_language_status(agent_home)
+    try:
+        print_language_status(agent_home)
+    except (KeyboardInterrupt, OSError, ValueError, subprocess.SubprocessError):
+        print("[WARN] 状态列表未完成；可运行 repo-agent toolchains list，核心安装已保留。")
+    if unfinished_languages:
+        print("安装成功，以下额外语言尚未完成：" + ", ".join(unfinished_languages))
+        print("稍后补齐：repo-agent toolchains install " + " ".join(unfinished_languages))
     if args.mode == "docker":
         print("以后重建镜像：repo-agent-build-sandbox")
     print(f"首次启动前可编辑 {config_path}；也可直接启动 repo-agent，由向导设置模型和 API Key。")

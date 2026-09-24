@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-from tools.file_policy import is_credential_path
+from tools._internal.file_policy import is_credential_path
 
 MAX_SKILL_BYTES = 64 * 1024
 MAX_SKILLS = 64

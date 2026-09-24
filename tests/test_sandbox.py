@@ -8,7 +8,7 @@ import pytest
 
 from sandbox import SandboxPolicy, SandboxSession
 from sandbox.docker import DockerBackend
-from tools.base import ToolResult
+from tools._internal.base import ToolResult
 
 
 class Backend:

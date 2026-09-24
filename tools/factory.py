@@ -4,13 +4,15 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from .base import Tool
+from ._internal.base import Tool
+from ._internal.lsp_config import LspRegistry, default_lsp_registry
 from .execute import (
     GetExecutionEnvironmentTool,
     RunCommandTool,
     RunPythonTool,
 )
 from .filesystem import (
+    ApplyPatchTool,
     DeleteFileTool,
     EditFileTool,
     FindFileTool,
@@ -26,12 +28,13 @@ from .git_tools import (
     GitDiffTool,
     GitStatusTool,
 )
-from .lsp_config import LspRegistry, default_lsp_registry
 from .semantic import (
     FindReferencesTool,
     GetDiagnosticsTool,
+    GetHoverTool,
     GetSymbolsTool,
     GoToDefinitionsTool,
+    SearchWorkspaceSymbolsTool,
 )
 
 
@@ -63,6 +66,7 @@ def create_default_tools(
         ReadFileTool(workspace_root),
         WriteFileTool(workspace_root),
         EditFileTool(workspace_root),
+        ApplyPatchTool(workspace_root),
         ListFileTool(workspace_root),
         FindFileTool(workspace_root),
         SearchFilesTool(workspace_root),
@@ -107,6 +111,20 @@ def create_default_tools(
                     else default_lsp_registry(),
                 ),
                 GetDiagnosticsTool(
+                    workspace_root,
+                    execution_allowed=True,
+                    lsp_registry=lsp_registry
+                    if lsp_registry is not None
+                    else default_lsp_registry(),
+                ),
+                GetHoverTool(
+                    workspace_root,
+                    execution_allowed=True,
+                    lsp_registry=lsp_registry
+                    if lsp_registry is not None
+                    else default_lsp_registry(),
+                ),
+                SearchWorkspaceSymbolsTool(
                     workspace_root,
                     execution_allowed=True,
                     lsp_registry=lsp_registry

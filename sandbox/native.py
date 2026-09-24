@@ -9,11 +9,11 @@ import tempfile
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from tools.base import ToolResult
+from tools._internal.base import ToolResult
+from tools._internal.file_policy import PROTECTED_NAMES, PROTECTED_SUFFIXES, runtime_protected_paths
+from tools._internal.process_runner import ProcessRunner, _BoundedCapture
 from tools.execute import GetExecutionEnvironmentTool, RunCommandTool, RunPythonTool
 from tools.factory import create_default_tools
-from tools.file_policy import PROTECTED_NAMES, PROTECTED_SUFFIXES, runtime_protected_paths
-from tools.process_runner import ProcessRunner, _BoundedCapture
 
 
 def _quoted(value):
@@ -107,6 +107,7 @@ class NativeBackend:
     temporary_root = "/private/tmp"
     command_timeout_seconds = 120
     python_timeout_seconds = 30
+    requested_profile = "auto"
 
     def __new__(cls, *args, **kwargs):
         if cls is NativeBackend and sys.platform == "linux":
@@ -126,9 +127,14 @@ class NativeBackend:
         "read_file", "list_files", "find_files", "search_files", "get_path_info",
     })
 
-    def __init__(self, workspace, *, gpus=None):
-        if gpus is not None and self.platform_name != "linux":
+    def __init__(self, workspace, *, profile="auto", gpus=None):
+        if profile not in {"auto", "standard", "cuda"}:
+            raise ValueError("profile must be auto, standard or cuda")
+        if profile == "standard" and gpus is not None:
+            raise ValueError("GPU selection requires the cuda profile")
+        if (profile == "cuda" or gpus is not None) and self.platform_name != "linux":
             raise ValueError("原生 GPU 仅支持 Linux / WSL2 NVIDIA CUDA")
+        self.requested_profile = profile
         self.requested_gpus = gpus
         self._platform_setup()
         self.workspace = Path(workspace).resolve(strict=True)
@@ -144,7 +150,8 @@ class NativeBackend:
             if self.directory.is_relative_to(self.workspace):
                 raise ValueError("Native 工作区不能包含沙箱控制目录；请选择具体项目目录")
             self.runtime = self.directory / "runtime"
-            source = Path(__file__).resolve().parents[1]
+            from .resources import trusted_code_root
+            source = trusted_code_root()
             # Freeze trusted tool code before allowing edits to the agent's own repository.
             for package in ("tools", "llm", "sandbox"):
                 shutil.copytree(

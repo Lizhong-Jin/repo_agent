@@ -367,22 +367,22 @@ def test_explicit_on_displays_actual_effort_sent():
 
 
 def test_catalog_extension_and_explicit_snapshot_precedence(monkeypatch):
-    from llm.thinking_catalog import MODEL_THINKING_PROFILES
+    from llm.model_catalog import MODEL_CATALOG, ModelInfo
 
     monkeypatch.setitem(
-        MODEL_THINKING_PROFILES,
-        "openai",
-        {
-            ("private-reasoner",): {
-                "modes": ("auto", "enabled"),
-                "efforts": ("low", "high"),
-                "dated_snapshots": True,
-            },
-            ("private-reasoner-2026-09-19",): {
-                "modes": ("auto", "enabled"),
-                "efforts": ("high",),
-            },
-            ("exact-only",): {"modes": ("auto", "disabled", "enabled")},
+        MODEL_CATALOG, "openai", {
+            "private-reasoner": ModelInfo(
+                "openai", "private-reasoner",
+                thinking={"modes": ("auto", "enabled"), "efforts": ("low", "high")},
+                dated_snapshots=True,
+            ),
+            "private-reasoner-2026-09-19": ModelInfo(
+                "openai", "private-reasoner-2026-09-19",
+                thinking={"modes": ("auto", "enabled"), "efforts": ("high",)},
+            ),
+            "exact-only": ModelInfo(
+                "openai", "exact-only", thinking={"modes": ("auto", "disabled", "enabled")},
+            ),
         },
     )
     assert thinking_profile("openai", "PRIVATE-REASONER").efforts == ("low", "high")

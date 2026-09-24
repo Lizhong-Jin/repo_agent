@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cli import config_command, doctor, setup
+from cli import config_command, doctor, install_network, setup
 from cli.config import CONFIG_KEYS, read_config, save_user_config
 from cli.config_storage import backup_config, backups, config_lock
 from cli.install_transaction import TRANSACTION, InstallTransaction, recover_install
@@ -26,6 +26,13 @@ from cli.maintenance import environment_report, file_lock
 from cli.uninstall import uninstall
 
 SOURCE = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def download_executor_for_installer_mocks(monkeypatch):
+    monkeypatch.setattr(
+        install_network, "execute", lambda command, **kw: subprocess.run(command, **kw)
+    )
 
 
 @pytest.fixture(autouse=True)

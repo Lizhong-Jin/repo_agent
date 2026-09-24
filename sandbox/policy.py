@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from pathlib import PurePath
 
-from tools.file_policy import is_protected_name
+from tools._internal.file_policy import is_protected_name
 
 
 @dataclass(frozen=True)

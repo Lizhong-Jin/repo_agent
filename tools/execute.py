@@ -19,10 +19,10 @@ from typing import Any
 
 from llm import ToolDefinition
 
-from .base import ToolResult
-from .errors import ToolErrorCode, tool_error
-from .file_policy import is_credential_path
-from .process_runner import ProcessRunner, ProcessStartError
+from ._internal.base import ToolResult
+from ._internal.errors import ToolErrorCode, tool_error
+from ._internal.file_policy import is_credential_path
+from ._internal.process_runner import ProcessRunner, ProcessStartError
 
 
 class _ProbeCleanupError(RuntimeError):
@@ -510,8 +510,9 @@ class RunPythonTool:
             name="run_python",
             description=(
                 "Execute a Python snippet in a separate non-interactive "
-                "subprocess inside the workspace. Each call is an independent process."
-                "across calls. Intended for small calculations, parsing, experiments, and debugging. "
+                "subprocess inside the workspace. Each call is an independent process; "
+                "Python variables and imported modules do not persist across calls. "
+                "Intended for small calculations, parsing, experiments, and debugging. "
                 "Use run_command for project scripts, tests, builds, or longer-running programs. "
                 f"Execution is limited to {self.max_timeout_seconds} seconds. "
                 "Timeouts retain collected stdout/stderr with status=timed_out and "

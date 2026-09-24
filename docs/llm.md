@@ -175,7 +175,7 @@ CLI 通过 `LLMConfig(include_thinking=True)` 为已适配的模型请求可读�
 
 同步客户端 `get_context_limit(refresh=False)` 从当前配置的服务地址查询上限，同一客户端缓存结果（包括未知结果）。Gemini/Anthropic 使用模型详情接口，兼容接口查询模型列表并精确匹配 ID。查询不使用生成请求，不会把输出上限当成上下文窗口，也不转发凭证到其他地址或跟随重定向。
 
-此查询只用于界面显示；手动配置上限优先，查询失败时仍能继续正常对话。字段与输入/完整窗口计算口径见[上下文占用估算](usage.md#上下文占用估算)。
+手动配置上限优先；服务端没有有效上限时，使用 `model_info(provider, model)` 的已核实长度，并标明“内置模型目录（标准 API 规格）”。两者均未知时仍可对话或手动设置。长度同时用于界面显示及压缩预算。字段与输入/完整窗口计算口径见[上下文占用估算](usage.md#上下文占用估算)。
 
 ## 代码组织与验证
 
@@ -190,7 +190,7 @@ llm/
 ├── model_limits.py            # 模型上下文元数据
 ├── thinking.py                # 统一思考设置到协议参数的映射
 ├── thinking_profiles.py       # 能力匹配与自定义覆盖
-├── thinking_catalog.py        # 内置模型能力字典
+├── model_catalog.py        # 支持列表、思考能力、长度和来源的唯一目录
 ├── visible_thinking.py        # 可见思考摘要请求适配
 └── adapters/
     ├── base.py                # 公共转换辅助与原生状态校验

@@ -8,6 +8,14 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
+if __package__:
+    from .install_network import run_download
+    from .paths import resource_path
+else:
+    from install_network import run_download
+    from paths import resource_path
+
+
 LANGUAGES = ("python", "typescript", "go", "cpp")
 TYPESCRIPT = "5.9.3"
 TYPESCRIPT_SERVER = "4.3.4"
@@ -23,10 +31,21 @@ HINTS = {
 def tool_path(python):
     prefix = Path(python).absolute().parent.parent
     if sys.platform == "linux":
-        return os.pathsep.join(map(str, [
-            prefix / "bin", prefix / "lsp/node_modules/.bin", "/usr/local/go/bin",
-            "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
-        ]))
+        return os.pathsep.join(
+            map(
+                str,
+                [
+                    prefix / "bin",
+                    prefix / "lsp/node_modules/.bin",
+                    "/usr/local/go/bin",
+                    "/usr/local/bin",
+                    "/usr/bin",
+                    "/bin",
+                    "/usr/sbin",
+                    "/sbin",
+                ],
+            )
+        )
     return os.pathsep.join(
         map(
             str,
@@ -129,7 +148,13 @@ def preparation_report(python, languages="all"):
     rows, available = toolchain_report(python, languages)
     if sys.platform == "linux":
         if any(name not in available for name in selected_languages(languages)):
-            rows.append(("ERROR", "系统工具链", "请用发行版包管理器安装 Node.js/npm、Go 1.25+ 或 clangd；不会自动调用 sudo"))
+            rows.append(
+                (
+                    "ERROR",
+                    "系统工具链",
+                    "请用发行版包管理器安装 Node.js/npm、Go 1.25+ 或 clangd；不会自动调用 sudo",
+                )
+            )
         return rows
     brew = brew_executable()
     missing = [name for name in selected_languages(languages) if name not in available]
@@ -157,8 +182,11 @@ def prepare_toolchains(python, languages="all"):
     _, available = toolchain_report(python, languages)
     missing = [name for name in selected_languages(languages) if name not in available]
     if missing and sys.platform == "linux":
-        raise ValueError("Linux 缺少工具链：" + ", ".join(missing)
-                         + "；请先用发行版包管理器安装 Node.js/npm、Go 1.25+ 或 clangd")
+        raise ValueError(
+            "Linux 缺少工具链："
+            + ", ".join(missing)
+            + "；请先用发行版包管理器安装 Node.js/npm、Go 1.25+ 或 clangd"
+        )
     if missing:
         brew = brew_executable()
         if not brew:
@@ -166,7 +194,7 @@ def prepare_toolchains(python, languages="all"):
         formulas = {"typescript": "node", "go": "go", "cpp": "llvm"}
         packages = [formulas[name] for name in missing]
         print("通过 Homebrew 补齐共享工具链：" + ", ".join(packages), flush=True)
-        subprocess.run([brew, "install", *packages], check=True)
+        run_download([brew, "install", *packages], label="安装共享工具链")
     rows, available = toolchain_report(python, languages)
     remaining = [name for name in selected_languages(languages) if name not in available]
     if remaining and missing:
@@ -174,7 +202,9 @@ def prepare_toolchains(python, languages="all"):
             "工具链仍不可用，尝试更新对应 Homebrew 包：" + ", ".join(remaining),
             flush=True,
         )
-        subprocess.run([brew, "upgrade", *[formulas[name] for name in remaining]], check=True)
+        run_download(
+            [brew, "upgrade", *[formulas[name] for name in remaining]], label="更新共享工具链"
+        )
         _, available = toolchain_report(python, languages)
     if any(name not in available for name in selected_languages(languages)):
         raise ValueError("Homebrew 执行后仍缺少所选工具链；请检查安装输出与 PATH")
@@ -186,12 +216,24 @@ def native_preflight():
         import ctypes
 
         if not shutil.which("bwrap", path="/usr/bin:/bin:/usr/local/bin"):
-            return [("ERROR", "原生沙箱", "缺少 bubblewrap；Debian/Ubuntu 安装 bubblewrap libseccomp2，Fedora 安装 bubblewrap libseccomp")]
+            return [
+                (
+                    "ERROR",
+                    "原生沙箱",
+                    "缺少 bubblewrap；Debian/Ubuntu 安装 bubblewrap libseccomp2，Fedora 安装 bubblewrap libseccomp",
+                )
+            ]
         try:
             ctypes.CDLL("libseccomp.so.2")
         except OSError:
             return [("ERROR", "原生沙箱", "缺少 libseccomp.so.2；请安装 libseccomp2 或 libseccomp")]
-        return [("OK", "原生沙箱", "bubblewrap/libseccomp 存在；安装后将验证 user namespace、实际隔离和语言服务")]
+        return [
+            (
+                "OK",
+                "原生沙箱",
+                "bubblewrap/libseccomp 存在；安装后将验证 user namespace、实际隔离和语言服务",
+            )
+        ]
     if sys.platform != "darwin":
         return [
             (
@@ -216,27 +258,27 @@ def install_language_servers(root, languages):
     python = str(root / ".venv/bin/python")
     env = {**os.environ, "PATH": tool_path(python)}
     if "typescript" in languages:
-        subprocess.run(
+        prefix = root / ".venv/lsp"
+        prefix.mkdir(parents=True, exist_ok=True)
+        for name in ("package.json", "package-lock.json"):
+            shutil.copyfile(resource_path("dependencies/node/" + name), prefix / name)
+        run_download(
             [
                 shutil.which("npm", path=env["PATH"]),
-                "install",
+                "ci",
                 "--prefix",
                 str(root / ".venv/lsp"),
-                "--no-save",
-                "--package-lock=false",
                 "--ignore-scripts",
                 "--no-audit",
                 "--no-fund",
-                "typescript@" + TYPESCRIPT,
-                "typescript-language-server@" + TYPESCRIPT_SERVER,
             ],
             env=env,
             cwd=root,
-            check=True,
+            label="安装 JS/TS 语言服务",
         )
     if "go" in languages:
         env.update(GOBIN=str(root / ".venv/bin"), GOTOOLCHAIN="local", GOWORK="off")
-        subprocess.run(
+        run_download(
             [
                 shutil.which("go", path=env["PATH"]),
                 "install",
@@ -244,7 +286,7 @@ def install_language_servers(root, languages):
             ],
             env=env,
             cwd=root,
-            check=True,
+            label="安装 Go 语言服务 gopls",
         )
 
 

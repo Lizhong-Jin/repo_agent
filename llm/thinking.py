@@ -131,7 +131,7 @@ def _native_options(
             raise ConfigurationError("Gemini accepts a thinking level or budget, not both")
         if mode == "disabled":
             options = {"thinkingBudget": 0}
-        elif effort or (mode == "enabled" and "gemini-3" in model and budget is None):
+        elif effort:
             if effort and effort not in {"minimal", "low", "medium", "high"}:
                 raise ConfigurationError(
                     "Gemini thinking level must be minimal, low, medium or high"

@@ -8,6 +8,8 @@ from llm import Message
 from llm.providers import get_provider
 
 from agent.session import validate_name
+from agent.compaction import CompactionSettings, ContextCompactor
+from agent.history import HistoryArchive
 
 from .transcript import Transcript
 
@@ -24,7 +26,7 @@ def model_identity(config):
 
 class SavedConversation:
     def __init__(self, store, runtime, config, status, *, sandbox=None, restore_window=True,
-                 tracer=None, execution_mode=None, execution_backend=None):
+                 tracer=None, execution_mode=None, execution_backend=None, compaction_settings=None):
         self.store, self.runtime, self.config, self.status = store, runtime, config, status
         self.tracer = tracer
         self.log_error = None
@@ -35,9 +37,18 @@ class SavedConversation:
         self.transcript = Transcript()
         self.pending_task = None
         self.save_error = None
+        self.compaction_state = None
+        self.archive = HistoryArchive(store)
+        self.compactor = ContextCompactor(
+            self, self.archive, compaction_settings or CompactionSettings(auto=False)
+        )
+        runtime.before_request = self.compactor.before_request
         data = store.data
         self.notice = f"新会话：{store.label}"
         if data is not None:
+            self.compaction_state = data.get("compaction")
+            if self.compaction_state:
+                self.archive.check_snapshot(self.compaction_state["snapshot"])
             self.history = tuple(Message.from_dict(m) for m in data["history"])
             self.transcript = Transcript.from_records(data["transcript"])
             same_model = data["model"] == model_identity(config)
@@ -99,6 +110,7 @@ class SavedConversation:
     def _record(self):
         return {
             "history": [m.to_dict() for m in self.history],
+            "compaction": self.compaction_state,
             "transcript": self.transcript.to_records(),
             "model": model_identity(self._config()),
             "status": self.status.session_state(),
@@ -179,7 +191,32 @@ class SavedConversation:
         self.checkpoint(transcript=transcript, emit=emit)
         return self.history
 
+    def commit_compaction(self, history, state):
+        """Persist the replacement before exposing it to the next model request."""
+        old_history, old_state = self.history, self.compaction_state
+        self.history, self.compaction_state = tuple(history), state
+        self.status.reset_context()
+        self.status.initialize_context(self.runtime, self.history)
+        try:
+            self.store.save(self._record())
+        except BaseException:
+            self.history, self.compaction_state = old_history, old_state
+            self.status.reset_context()
+            self.status.initialize_context(self.runtime, old_history)
+            raise
+        self._chat(f"[上下文已压缩：≈{state['before']} → ≈{state['after']} tokens；原文已归档]\n")
+
+    def compact(self):
+        try:
+            self.compactor.compact()
+        finally:
+            # Account for successful API calls even if validation/cancellation failed.
+            self.checkpoint()
+        state = self.compaction_state
+        return f"上下文已压缩：≈{state['before']} → ≈{state['after']} tokens；原文已归档"
+
     def clear(self, *, transcript=None, emit=print):
+        self.compaction_state = None
         self._chat("[上下文已清空；对话记录保留]\n")
         self.history = ()
         self.pending_task = None
@@ -192,13 +229,14 @@ class SavedConversation:
         self.checkpoint(transcript=transcript, strict=True)
         old_id, old_data = self.store.id, self.store.data
         record = self._record()
-        record.update(history=[], transcript=[], pending_task=None)
+        record.update(history=[], transcript=[], pending_task=None, compaction=None)
         record["status"].update(
             calls=0,
             totals={"input_tokens": 0, "output_tokens": 0},
             reported={"input_tokens": 0, "output_tokens": 0},
             context_tokens=None,
             context_input_tokens=None,
+            context_cached_input_tokens=None,
             context_note="待请求",
         )
         self.store.id = uuid4().hex
@@ -216,5 +254,6 @@ class SavedConversation:
         self.pending_task = None
         self.transcript = Transcript()
         self.status.reset_session()
+        self.compaction_state = None
         self.notice = f"已启动新会话：{self.label}；文件修改保留"
         return self.notice

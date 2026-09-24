@@ -1,4 +1,4 @@
-"""Explicit NVIDIA device grants for Linux native (no daemon or privileged helper)."""
+"""Detect and grant NVIDIA devices for Linux native without privileged helpers."""
 
 import re
 import stat
@@ -6,6 +6,11 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .policy import SandboxPolicy
+
+
+def _nvidia_cards():
+    return sorted(p for p in Path("/dev").glob("nvidia*")
+                  if re.fullmatch(r"nvidia[0-9]+", p.name))
 
 
 @dataclass(frozen=True)
@@ -38,6 +43,19 @@ class NativeGPU:
     cuda_home: Path | None = None
 
     @classmethod
+    def detect(cls):
+        """No NVIDIA device means standard; broken detected devices still fail.
+
+        WSL's dxg also exists for non-NVIDIA GPUs. Require the Windows-provided
+        CUDA library before treating that shared device as an NVIDIA candidate.
+        Discovery only assembles mounts; the backend must still run its CUDA probe.
+        """
+        cuda = Path("/usr/lib/wsl/lib/libcuda.so.1")
+        if _nvidia_cards() or (Path("/dev/dxg").exists() and (cuda.exists() or cuda.is_symlink())):
+            return cls.discover("all")
+        return None
+
+    @classmethod
     def discover(cls, selection):
         SandboxPolicy(gpus=selection)  # Share CLI syntax, never interpolate shell text.
         if Path("/dev/dxg").exists():
@@ -47,8 +65,7 @@ class NativeGPU:
                 raise ValueError("WSL2 缺少 /usr/lib/wsl/lib/libcuda.so.1；请检查 Windows NVIDIA 驱动")
             gpu = cls("wsl2", selection, (DeviceNode.read(Path("/dev/dxg")),))
         else:
-            cards = sorted(p for p in Path("/dev").glob("nvidia*")
-                           if re.fullmatch(r"nvidia[0-9]+", p.name))
+            cards = _nvidia_cards()
             if not cards:
                 raise ValueError("未找到 NVIDIA GPU 设备；native CUDA 不会回退 CPU 或未隔离执行")
             nodes = [Path("/dev/nvidiactl"), Path("/dev/nvidia-uvm"), *cards]

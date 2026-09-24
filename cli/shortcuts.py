@@ -23,7 +23,7 @@ def shortcut_help() -> str:
     text = (
         f"{shortcut_label('Alt+Enter')} 换行；"
         f"{shortcut_label('F2')} 改名；"
-        f"{shortcut_label('PgUp')}/{shortcut_label('PgDn')} 浏览历史；"
+        f"滚轮或 {shortcut_label('PgUp')}/{shortcut_label('PgDn')} 浏览历史；"
         f"{shortcut_label('Ctrl+End')} 恢复跟随。"
     )
     if sys.platform == "darwin":

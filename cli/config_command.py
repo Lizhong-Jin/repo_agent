@@ -26,7 +26,7 @@ from .settings import (
     writeback_mode,
 )
 
-SECRET_KEYS = {provider.api_key_env for provider in PROVIDERS.values()}
+SECRET_KEYS = {provider.api_key_env for provider in PROVIDERS.values()} | {"BRAVE_SEARCH_API_KEY"}
 BUILTINS = {key: "" if value is None else str(value) for _, key, value, _ in RUNTIME_OPTIONS}
 BUILTINS.update(
     {
@@ -37,6 +37,8 @@ BUILTINS.update(
         "AGENT_LOG_DIR": "",
         "AGENT_SANDBOX_WRITEBACK": "manual",
         "AGENT_SANDBOX_VERIFY_COMMAND": "",
+        "AGENT_WEB_SEARCH_PROVIDER": "off",
+        "AGENT_WEB_FETCH_ENABLED": "false",
     }
 )
 KEYS = [
@@ -97,7 +99,11 @@ def validate_value(key, value):
     try:
         if key == "LLM_PROVIDER":
             return get_provider(value).name
-        if key in {"LLM_STREAM", "LLM_THINKING_RECALL"}:
+        if key == "AGENT_WEB_SEARCH_PROVIDER":
+            if value.lower() not in {"off", "brave"}:
+                raise ValueError
+            return value.lower()
+        if key in {"LLM_STREAM", "LLM_THINKING_RECALL", "AGENT_WEB_FETCH_ENABLED", "AGENT_AUTO_COMPACT"}:
             return "true" if stream_value(value) else "false"
         if key == "AGENT_SANDBOX_WRITEBACK":
             return writeback_mode(value)
@@ -115,6 +121,12 @@ def validate_value(key, value):
             if not isinstance(parsed, dict):
                 raise ValueError
             json.dumps(parsed, allow_nan=False)
+        elif key in {"AGENT_COMPACT_THRESHOLD", "AGENT_COMPACT_TARGET"}:
+            if not 0 < float(value) < 1:
+                raise ValueError
+        elif key in {"AGENT_COMPACT_KEEP_TOKENS", "AGENT_COMPACT_SUMMARY_TOKENS"}:
+            if int(value) < 256:
+                raise ValueError
         elif key in {
             "AGENT_MAX_STEPS",
             "AGENT_MAX_OUTPUT_TOKENS",
@@ -184,6 +196,13 @@ def validate_values(values):
         flag.replace("-", "_"): kind(values[key]) if values.get(key) else default
         for flag, key, default, kind in RUNTIME_OPTIONS
     }
+    from agent.compaction import CompactionSettings
+
+    CompactionSettings(
+        auto=options["auto_compact"], threshold=options["compact_threshold"],
+        target=options["compact_target"], keep_tokens=options["compact_keep_tokens"],
+        summary_tokens=options["compact_summary_tokens"],
+    )
     ceiling = options["recovery_max_output_tokens"]
     if ceiling is not None and ceiling < options["max_output_tokens"]:
         raise ValueError("AGENT_RECOVERY_MAX_OUTPUT_TOKENS 不能低于 AGENT_MAX_OUTPUT_TOKENS")
@@ -233,6 +252,9 @@ def validate_configuration(root, *, user_only=False):
         warnings.append("未设置 LLM_MODEL；可运行 repo-agent config model")
     if not values.get(provider.api_key_env, "").strip():
         warnings.append(f"未设置 {provider.api_key_env}；可运行 repo-agent config model")
+    if (values.get("AGENT_WEB_SEARCH_PROVIDER", "").lower() == "brave"
+            and not values.get("BRAVE_SEARCH_API_KEY", "").strip()):
+        warnings.append("已启用 Brave 搜索但未设置 BRAVE_SEARCH_API_KEY")
     return warnings
 
 
@@ -319,7 +341,9 @@ def main(argv=None):
             if args.action == "restore":
                 backup = restore_config(path, args.name, validate_file)
             else:
-                template = Path(__file__).resolve().parents[1] / ".env.example"
+                from .paths import resource_path
+
+                template = resource_path("default.env")
                 validate_file(template)
                 backup = reset_config(path, template)
             action = (

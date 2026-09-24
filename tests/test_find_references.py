@@ -7,7 +7,7 @@ import logging
 import pytest
 
 from tools import FindReferencesTool, GoToDefinitionsTool, create_default_tools
-from tools.lsp_client import LspResponseError, LspTimeoutError, LspUnsupportedError
+from tools._internal.lsp_client import LspResponseError, LspTimeoutError, LspUnsupportedError
 
 SPAN = {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}}
 

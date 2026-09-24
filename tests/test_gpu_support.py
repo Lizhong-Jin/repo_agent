@@ -11,8 +11,8 @@ from agent.skills import SkillRegistry
 from sandbox import SandboxPolicy, SandboxSession, compute_probe, operator_smoke
 from sandbox.docker import DockerBackend
 from tools import create_default_tools
-from tools.lsp_config import default_lsp_registry
-from tools.process_runner import ProcessRunner
+from tools._internal.lsp_config import default_lsp_registry
+from tools._internal.process_runner import ProcessRunner
 
 
 def test_cuda_routes_and_python_frameworks():

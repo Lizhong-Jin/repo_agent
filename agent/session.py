@@ -13,7 +13,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from llm import LLMError, LLMRequest, Message
-from tools.file_policy import session_state_root
+from tools._internal.file_policy import session_state_root
 
 SESSION_ID = re.compile(r"[0-9a-f]{32}")
 MAX_BYTES = 64 * 1024 * 1024
@@ -39,6 +39,37 @@ def validate_history(values):
         if state is not None and state.fingerprint != message.fingerprint():
             raise ValueError("会话原生消息状态与正文不匹配")
     return history
+
+
+def validate_compaction(state, history):
+    if state is None:
+        return
+    try:
+        if not isinstance(state, dict) or set(state) != {
+            "snapshot", "pins", "prefix", "before", "after"
+        }:
+            raise ValueError
+        if not isinstance(state["snapshot"], str) or not SESSION_ID.fullmatch(state["snapshot"]):
+            raise ValueError
+        if any(type(state[k]) is not int or state[k] <= 0 for k in ("before", "after")):
+            raise ValueError
+        if state["after"] >= state["before"] or not isinstance(state["pins"], list):
+            raise ValueError
+        for pin in state["pins"]:
+            if not isinstance(pin, dict) or set(pin) != {"ref", "text"}:
+                raise ValueError
+            if not isinstance(pin["text"], str) or not isinstance(pin["ref"], str):
+                raise ValueError
+            if not re.fullmatch(r"[0-9a-f]{32}/m[0-9]+", pin["ref"]):
+                raise ValueError
+        prefix = validate_history(state["prefix"])
+        if len(prefix) != 2 or [m.role for m in prefix] != ["user", "assistant"]:
+            raise ValueError
+        body = tuple(m for m in validate_history(history) if m.role != "system")
+        if body[:2] != prefix:
+            raise ValueError
+    except (KeyError, TypeError, ValueError, LLMError):
+        raise ValueError("会话压缩元数据无效") from None
 
 
 class SessionStore:
@@ -116,6 +147,7 @@ class SessionStore:
             ):
                 raise ValueError
             validate_history(data["history"])
+            validate_compaction(data.get("compaction"), data["history"])
             self.id, self.data = sid, data
         except (KeyError, TypeError, ValueError, OSError, LLMError) as error:
             raise ValueError(
@@ -148,6 +180,7 @@ class SessionStore:
             "updated_at": datetime.now(UTC).isoformat(),
         }
         validate_history(record["history"])
+        validate_compaction(record.get("compaction"), record["history"])
         with self.catalog.locked() as index:
             metadata = index["sessions"][self.id]
             record.update({key: metadata[key] for key in ("name", "sequence", "created_at")})

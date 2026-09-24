@@ -19,8 +19,8 @@ if __package__:
         user_config_path,
     )
     from .maintenance import environment_report, print_report, probe
+    from .paths import installation_root
 else:
-    from dependencies import available_mode, native_preflight, service_report
     from install_transaction import TRANSACTION
     from installation import (
         COMMANDS,
@@ -31,6 +31,9 @@ else:
         user_config_path,
     )
     from maintenance import environment_report, print_report, probe
+    from paths import installation_root
+
+    from dependencies import available_mode, native_preflight, service_report
 
 
 def diagnose(root, workspace, *, mode=None, docker=None):
@@ -57,6 +60,16 @@ def diagnose(root, workspace, *, mode=None, docker=None):
     record = None
     try:
         record = load_record(root)
+        if record and record.get("pending_languages"):
+            pending = [
+                name for name in record["pending_languages"] if name in {"typescript", "go", "cpp"}
+            ]
+            if pending:
+                add(
+                    "WARN",
+                    "额外语言服务",
+                    "尚未完成；补齐：repo-agent toolchains install " + " ".join(pending),
+                )
         add(
             "OK" if record and record["status"] == "installed" else "WARN",
             "安装记录",
@@ -81,7 +94,7 @@ def diagnose(root, workspace, *, mode=None, docker=None):
             add("WARN", "PATH 重复命令", ", ".join(sorted(candidates)))
     try:
         result = probe(
-            [str(root / ".venv/bin/python"), "-c", "import cli.main, sandbox.build"], cwd=root
+            [str(root / ".venv/bin/python"), "-I", "-c", "import cli.main, sandbox.build"], cwd=root
         )
         add(
             "OK" if result.returncode == 0 else "ERROR",
@@ -170,7 +183,7 @@ def main(argv=None):
         help="兼容选项：仅检查 local 模式，不检查执行沙箱和语言服务",
     )
     args = parser.parse_args(argv)
-    root = Path(__file__).resolve().parents[1]
+    root = installation_root()
     try:
         ok = print_report(
             diagnose(

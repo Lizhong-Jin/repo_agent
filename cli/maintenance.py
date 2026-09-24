@@ -1,8 +1,12 @@
 """Standard-library maintenance checks and cooperative process locks (macOS/Linux)."""
 
 import fcntl
+import importlib
 import json
 import os
+import platform
+import re
+import shlex
 import ssl
 import subprocess
 import sys
@@ -28,6 +32,104 @@ def probe(command, *, timeout=15, cwd=None):
     return subprocess.run(command, capture_output=True, text=True, timeout=timeout, cwd=cwd)
 
 
+def python_component_guidance():
+    """Suggest repairs for the selected interpreter, without running package managers."""
+    version = f"{sys.version_info[0]}.{sys.version_info[1]}"
+    prefix = Path(sys.base_prefix)
+    executable = str(getattr(sys, "_base_executable", None) or sys.executable)
+    retry_python = shlex.quote(executable)
+    instructions = [
+        f"当前解释器：{sys.executable}；基础 Python：{prefix}",
+        "venv/ensurepip 由 Python 发行版提供，不能通过 pip install venv/ensurepip 补齐。",
+    ]
+    if (prefix / "conda-meta").is_dir():
+        instructions += [
+            "检测到 Conda/Anaconda；修复这个环境中的 Python（不要装到其他 Conda 环境）：",
+            f"  conda install --prefix {shlex.quote(str(prefix))} --force-reinstall python={version}",
+        ]
+    else:
+        brew_python = re.search(r"/(?:Cellar|opt)/(python(?:@3\.\d+)?)/", str(prefix) + "/")
+        if brew_python:
+            formula = brew_python.group(1)
+            instructions += [
+                "检测到 Homebrew Python；重装其标准库组件：",
+                f"  brew reinstall {formula}",
+            ]
+            # A Homebrew reinstall can change the versioned Cellar directory.
+            retry_python = f'"$(brew --prefix {formula})/libexec/bin/python3"'
+        elif sys.platform == "darwin":
+            instructions += [
+                "macOS：可安装完整 Homebrew Python（已有 Homebrew 时执行）：",
+                "  brew install python",
+                "没有 Homebrew 时，可从 https://www.python.org/downloads/macos/ 安装完整 Python 3.11+，",
+                "然后通过 AGENT_PYTHON 指定新解释器的绝对路径。",
+            ]
+            retry_python = '"$(brew --prefix python)/libexec/bin/python3"'
+        elif sys.platform == "linux" and str(prefix) == "/usr":
+            try:
+                release = platform.freedesktop_os_release()
+            except OSError:
+                release = {}
+            family = {release.get("ID", ""), *release.get("ID_LIKE", "").split()}
+            if family & {"debian", "ubuntu"}:
+                instructions += [
+                    "Debian/Ubuntu：安装与当前解释器次版本一致的 venv 包：",
+                    "  sudo apt-get update",
+                    f"  sudo apt-get install python{version}-venv",
+                    "若找不到该包，请检查提供此 Python 版本的软件源；不要安装其他版本的 venv 包替代。",
+                ]
+            elif family & {"fedora", "rhel", "centos"}:
+                instructions += [
+                    "Fedora/RHEL：先查询当前 Python 标准库组件所属的软件包：",
+                    f"  dnf provides '*/python{version}/venv/__init__.py' '*/python{version}/ensurepip/__init__.py'",
+                    "再用 sudo dnf install 安装查询到的匹配包；已经安装但文件缺失时用 sudo dnf reinstall 修复。",
+                ]
+            elif "arch" in family:
+                instructions += [
+                    "Arch Linux：安装或修复完整 Python 标准库：",
+                    "  sudo pacman -S python",
+                ]
+            else:
+                instructions.append(
+                    "请用本发行版的软件包管理器安装或修复当前版本的 Python 标准库，包含 venv 和 ensurepip。"
+                )
+        else:
+            instructions += [
+                "当前为自定义或未识别来源的 Python（例如 pyenv、源码构建）。",
+                "请用原安装方式修复或重装完整 Python 3.11+，保留 venv 和 ensurepip 标准库组件；",
+                "也可改用其他完整 Python：https://www.python.org/downloads/，并通过 AGENT_PYTHON 指定其绝对路径。",
+            ]
+    instructions += [
+        "修复后，在安装目录用同一个解释器重新检查（保留原先的 --mode 等选项）：",
+        f"  AGENT_PYTHON={retry_python} ./install.sh --check",
+        "检查通过后去掉 --check 重新安装；若换用其他解释器，请将 AGENT_PYTHON 改为新解释器的绝对路径。",
+    ]
+    return "\n".join(instructions)
+
+
+def python_components_report():
+    missing = []
+    for name in ("venv", "ensurepip"):
+        try:
+            module = importlib.import_module(name)
+            if name == "venv":
+                if not callable(module.EnvBuilder):
+                    raise ImportError
+            elif not module.version():
+                raise ImportError
+        except (ImportError, AttributeError):
+            missing.append(name)
+    if missing:
+        return [
+            (
+                "ERROR",
+                "安装组件",
+                "缺少或不可用：" + ", ".join(missing) + "\n" + python_component_guidance(),
+            )
+        ]
+    return [("OK", "安装组件", "venv 和 ensurepip 可用")]
+
+
 def environment_report(root, *, docker=True):
     """Read-only checks; never echo subprocess errors, which may contain credentials."""
     rows = []
@@ -40,15 +142,7 @@ def environment_report(root, *, docker=True):
         "Python",
         f"{sys.executable} ({sys.version.split()[0]})；可用 AGENT_PYTHON 指定解释器",
     )
-    try:
-        import ensurepip
-        import venv
-
-        if not ensurepip.version() or not venv.EnvBuilder:
-            raise ImportError
-        add("OK", "安装组件", "venv 和 ensurepip 可用")
-    except ImportError:
-        add("ERROR", "安装组件", "缺少 venv 或 ensurepip；请安装完整 Python 环境")
+    rows.extend(python_components_report())
     for name in ("pyproject.toml", ".env.example"):
         if not (root / name).is_file():
             add("ERROR", "安装目录", f"缺少 {name}：{root}")

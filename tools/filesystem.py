@@ -5,6 +5,7 @@ Includes tools related to file operations:
 ReadFileTool: Read UTF-8 text files with line ranges and bounded output.
 WriteFileTool: Create or replace UTF-8 text files with bounded content.
 EditFileTool: replace one or multiple text fragments in an existing UTF-8 workspace file.
+ApplyPatchTool: Apply strict context-based patches to existing UTF-8 workspace files
 ListFilesTool: List files in a directory with optional filtering and recursion.
 SearchFilesTool: Search for a text fragment in files with optional filtering and recursion.
 MakeDirectoryTool: Create a directory and optionally its parents.
@@ -15,29 +16,31 @@ GetPathInfoTool: Inspect filesystem metadata for one workspace path.
 All tools enforce workspace-relative paths and prevent access to credential files.
 """
 
+import errno
+import hashlib
 import logging
 import os
-import errno
 import re
-import copy
+from dataclasses import dataclass
 from pathlib import Path
-from stat import S_ISREG, S_ISDIR, S_ISLNK
-from dataclasses import asdict, dataclass, field
-from typing import Any
-import hashlib
-from fnmatch import fnmatch
+from stat import S_ISDIR, S_ISLNK, S_ISREG
 from tempfile import NamedTemporaryFile
+from typing import Any, Literal
 
 from llm import ToolDefinition
 
-from .base import ToolResult
-from .errors import ToolErrorCode, tool_error
-from .file_policy import is_credential_path
+from ._internal._file_entries import inspect_entry, iter_search_candidates
+from ._internal._file_io import FileSnapshot, StagedWrites, read_snapshot
+from ._internal._workspace import WorkspaceTool
+from ._internal._workspace import serialized_file_write as _serialized_file_write
+from ._internal.base import ToolResult
+from ._internal.errors import ToolErrorCode, tool_error
+from ._internal.file_policy import is_credential_path
 
 logger = logging.getLogger(__name__)
 
 # ReadFileTool
-class ReadFileTool:
+class ReadFileTool(WorkspaceTool):
     """Read one or multiple UTF-8 source files with 1-based inclusive line ranges and bounded output."""
 
     def __init__(
@@ -48,19 +51,12 @@ class ReadFileTool:
         max_file_bytes: int = 2 * 1024 * 1024,
         max_output_chars: int = 256 * 1024,
     ) -> None:
-        self.workspace_root = Path(workspace_root).resolve(strict=True)
-        if not self.workspace_root.is_dir():
-            raise ValueError("workspace_root must be an existing directory")
-        for name, value in (
-            ("max_reads", max_reads),
-            ("max_file_bytes", max_file_bytes),
-            ("max_output_chars", max_output_chars),
-        ):
-            if type(value) is not int or value <= 0:
-                raise ValueError(f"{name} must be a positive integer")
-        self.max_reads = max_reads
-        self.max_file_bytes = max_file_bytes
-        self.max_output_chars = max_output_chars
+        super().__init__(
+            workspace_root,
+            max_reads=max_reads,
+            max_file_bytes=max_file_bytes,
+            max_output_chars=max_output_chars,
+        )
 
     @property
     def definition(self) -> ToolDefinition:
@@ -184,18 +180,13 @@ class ReadFileTool:
             info = target.stat()
             if not S_ISREG(info.st_mode):
                 return tool_error(ToolErrorCode.NOT_A_FILE)
-            if info.st_size > self.max_file_bytes:
-                return tool_error(
-                    ToolErrorCode.FILE_TOO_LARGE,
-                    f"File exceeds {self.max_file_bytes} bytes.",
-                )
-            with target.open("rb") as source:
-                raw = source.read(self.max_file_bytes + 1)
-            if len(raw) > self.max_file_bytes:
-                return tool_error(
-                    ToolErrorCode.FILE_TOO_LARGE,
-                    f"File exceeds {self.max_file_bytes} bytes.",
-                )
+            snapshot = read_snapshot(
+                target, target, info, self.max_file_bytes,
+                size_message=f"File exceeds {self.max_file_bytes} bytes.",
+            )
+            if isinstance(snapshot, ToolResult):
+                return snapshot
+            raw = snapshot.raw
             if b"\x00" in raw:
                 return tool_error(ToolErrorCode.BINARY_FILE)
             # utf-8-sig also accepts plain UTF-8 and strips an optional BOM.
@@ -250,13 +241,13 @@ class ReadFileTool:
                 "total_lines": total,
                 "truncated": truncated,
                 "next_start_line": actual_end + 1 if truncated else None,
-                "sha256": hashlib.sha256(raw).hexdigest(),
+                "sha256": snapshot.sha256,
             },
         )
 
 
 # WriteFileTool
-class WriteFileTool:
+class WriteFileTool(WorkspaceTool):
     """Create or replace bounded UTF-8 text files inside a workspace."""
 
     def __init__(
@@ -265,15 +256,10 @@ class WriteFileTool:
         *,
         max_content_bytes: int = 2 * 1024 * 1024,
     ) -> None:
-        self.workspace_root = Path(workspace_root).resolve(strict=True)
-        if not self.workspace_root.is_dir():
-            raise ValueError("workspace_root must be an existing directory")
-        for name, value in (
-            ("max_content_bytes", max_content_bytes),
-        ):
-            if type(value) is not int or value <= 0:
-                raise ValueError(f"{name} must be a positive integer")
-        self.max_content_bytes = max_content_bytes
+        super().__init__(
+            workspace_root,
+            max_content_bytes=max_content_bytes,
+        )
 
     @property
     def definition(self) -> ToolDefinition:
@@ -314,6 +300,7 @@ class WriteFileTool:
             },
         )
 
+    @_serialized_file_write
     def execute(self, arguments: dict[str, Any]) -> ToolResult:
         """Validate model arguments and turn expected filesystem failures into tool errors."""
         if not isinstance(arguments, dict):
@@ -372,30 +359,10 @@ class WriteFileTool:
                     return tool_error(ToolErrorCode.NOT_A_FILE)
                 if not overwrite:
                     return tool_error(ToolErrorCode.FILE_EXISTS)
-                old_mode = target.stat().st_mode
+                old_mode = info.st_mode
 
-            # Write the file atomically by writing to a temporary file and renaming it.
-            temp_path: Path | None = None
-            try:
-                with NamedTemporaryFile(mode="wb", dir=parent, delete=False) as temp_file:
-                    # Save the path before any write/flush/fsync can fail.
-                    temp_path = Path(temp_file.name)
-                    temp_file.write(encoded)
-                    temp_file.flush()
-                    os.fsync(temp_file.fileno())
-                if existed:
-                    os.chmod(temp_path, old_mode)
-                temp_path.replace(target)
-            finally:
-                if temp_path is not None:
-                    try:
-                        # Successful replace already removed the temporary path.
-                        temp_path.unlink(missing_ok=True)
-                    except OSError:
-                        # Cleanup failure must not replace the original write error.
-                        logger.warning(
-                            "Unable to remove temporary file %s", temp_path, exc_info=True
-                        )
+            with StagedWrites(temp_factory=NamedTemporaryFile, logger=logger) as staged:
+                staged.replace(target, encoded, old_mode if existed else None)
 
         except PermissionError:
             return tool_error(ToolErrorCode.PERMISSION_DENIED)
@@ -433,7 +400,7 @@ class _PreparedEdit:
     start_line: int
 
 # EditFileTool
-class EditFileTool:
+class EditFileTool(WorkspaceTool):
     """replace one or multiple text fragments in an existing UTF-8 workspace file."""
 
     def __init__(
@@ -444,19 +411,12 @@ class EditFileTool:
         max_content_bytes: int = 2 * 1024 * 1024,
         max_total_edit_bytes: int = 256 * 1024,
     ) -> None:
-        self.workspace_root = Path(workspace_root).resolve(strict=True)
-        if not self.workspace_root.is_dir():
-            raise ValueError("workspace_root must be an existing directory")
-        for name, value in (
-            ("max_edits", max_edits),
-            ("max_content_bytes", max_content_bytes),
-            ("max_total_edit_bytes", max_total_edit_bytes),
-        ):
-            if type(value) is not int or value <= 0:
-                raise ValueError(f"{name} must be a positive integer")
-        self.max_edits = max_edits
-        self.max_content_bytes = max_content_bytes
-        self.max_total_edit_bytes = max_total_edit_bytes
+        super().__init__(
+            workspace_root,
+            max_edits=max_edits,
+            max_content_bytes=max_content_bytes,
+            max_total_edit_bytes=max_total_edit_bytes,
+        )
 
     @property
     def definition(self) -> ToolDefinition:
@@ -525,6 +485,7 @@ class EditFileTool:
             },
         )
 
+    @_serialized_file_write
     def execute(self, arguments: dict[str, Any]) -> ToolResult:
         """Validate model arguments and turn expected filesystem failures into tool errors."""
         if not isinstance(arguments, dict):
@@ -608,18 +569,13 @@ class EditFileTool:
                 return tool_error(ToolErrorCode.PATH_IS_SYMLINK)
             if not S_ISREG(info.st_mode):
                 return tool_error(ToolErrorCode.NOT_A_FILE)
-            if info.st_size > self.max_content_bytes:
-                return tool_error(
-                    ToolErrorCode.FILE_TOO_LARGE,
-                    f"File exceeds {self.max_content_bytes} bytes.",
-                )
-            with target.open("rb") as source:
-                raw = source.read(self.max_content_bytes + 1)
-            if len(raw) > self.max_content_bytes:
-                return tool_error(
-                    ToolErrorCode.FILE_TOO_LARGE,
-                    f"File exceeds {self.max_content_bytes} bytes.",
-                )
+            snapshot = read_snapshot(
+                target, target, info, self.max_content_bytes,
+                size_message=f"File exceeds {self.max_content_bytes} bytes.",
+            )
+            if isinstance(snapshot, ToolResult):
+                return snapshot
+            raw = snapshot.raw
             if b"\x00" in raw:
                 return tool_error(ToolErrorCode.BINARY_FILE)
             text = raw.decode("utf-8-sig")
@@ -634,7 +590,7 @@ class EditFileTool:
         except (OSError, RuntimeError):
             return tool_error(ToolErrorCode.READ_ERROR)
 
-        sha256_before = hashlib.sha256(raw).hexdigest()
+        sha256_before = snapshot.sha256
         if expected_sha256 is not None and sha256_before != expected_sha256.lower():
             return tool_error(ToolErrorCode.FILE_CHANGED)
 
@@ -711,30 +667,13 @@ class EditFileTool:
         old_hash = sha256_before
         new_hash = hashlib.sha256(encoded).hexdigest()
         old_mode = info.st_mode & 0o777
-        temp_path: Path | None = None
-
         try:
-            with NamedTemporaryFile(mode="wb", dir=target.parent, delete=False) as temp_file:
-                temp_path = Path(temp_file.name)
-                temp_file.write(encoded)
-                temp_file.flush()
-                os.fsync(temp_file.fileno())
-            os.chmod(temp_path, old_mode)
-            temp_path.replace(target)
+            with StagedWrites(temp_factory=NamedTemporaryFile, logger=logger) as staged:
+                staged.replace(target, encoded, old_mode)
         except PermissionError:
             return tool_error(ToolErrorCode.PERMISSION_DENIED)
         except (OSError, RuntimeError):
             return tool_error(ToolErrorCode.WRITE_ERROR)
-        finally:
-            if temp_path is not None:
-                try:
-                    # Successful replace already removed the temporary path.
-                    temp_path.unlink(missing_ok=True)
-                except OSError:
-                    # Cleanup failure must not replace the original write error.
-                    logger.warning(
-                        "Unable to remove temporary file %s", temp_path, exc_info=True
-                    )
         changes = [
             {
                 "edit_index": edit.index,
@@ -805,8 +744,784 @@ class EditFileTool:
             return 0
         return text.count("\n") + (0 if text.endswith("\n") else 1)
 
+
+@dataclass(frozen=True)
+class _PatchLine:
+    kind: Literal["context", "add", "remove"]
+    text: str
+
+
+@dataclass(frozen=True)
+class _PatchHunk:
+    index: int
+    hint: str | None
+    lines: tuple[_PatchLine, ...]
+
+
+@dataclass(frozen=True)
+class _FilePatch:
+    path: str
+    hunks: tuple[_PatchHunk, ...]
+
+
+@dataclass(frozen=True)
+class _ParsedPatch:
+    files: tuple[_FilePatch, ...]
+
+
+@dataclass(frozen=True)
+class _LoadedFile:
+    requested_path: str
+    target: Path
+    raw: bytes
+    text: str
+    normalized_text: str
+    lines: tuple[str, ...]
+    newline: str
+    bom: bytes
+    mode: int
+    sha256: str
+    signature: tuple[int, ...]
+    final_newline: bool
+
+
+@dataclass(frozen=True)
+class _PreparedHunk:
+    index: int
+    start: int
+    end: int
+    start_line: int
+    old_lines: tuple[str, ...]
+    new_lines: tuple[str, ...]
+    added_lines: int
+    removed_lines: int
+    replacement: str
+
+
+@dataclass(frozen=True)
+class _PreparedFile:
+    loaded: _LoadedFile
+    hunks: tuple[_PreparedHunk, ...]
+    encoded: bytes
+    new_sha256: str
+    lines_added: int
+    lines_removed: int
+
+
+class _PatchParseError(ValueError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+# ApplyPatchTool
+class ApplyPatchTool(WorkspaceTool):
+    """Apply strict context-based patches to existing UTF-8 workspace files."""
+
+    def __init__(
+        self,
+        workspace_root: str | Path,
+        *,
+        max_patch_bytes: int = 512 * 1024,
+        max_files: int = 32,
+        max_hunks: int = 128,
+        max_content_bytes: int = 2 * 1024 * 1024,
+        max_added_lines: int = 10_000,
+    ) -> None:
+        super().__init__(
+            workspace_root,
+            max_patch_bytes=max_patch_bytes,
+            max_files=max_files,
+            max_hunks=max_hunks,
+            max_content_bytes=max_content_bytes,
+            max_added_lines=max_added_lines,
+        )
+
+    @property
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="apply_patch",
+            description=(
+                "Apply a structured line-based patch to one or more existing UTF-8 "
+                "files inside the workspace. Use this for multi-line, multi-location, "
+                "or multi-file changes. Patch context must match exactly and uniquely; "
+                "fuzzy matching is never used. All files and hunks are validated before "
+                "any target file is changed. For a small exact replacement, prefer "
+                "edit_file. For replacing an entire file, prefer write_file. "
+                "Only '*** Update File:' sections are supported; file creation, deletion, "
+                "rename, mode changes, and binary patches are intentionally unsupported."
+                " Files are rechecked before commit, but external writers are not locked "
+                "and multi-file commits are not atomic. On commit failure inspect data.committed, "
+                "data.not_committed and data.changes before retrying. Trailing text after @@ "
+                "is a diagnostic label, not a location selector."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "patch": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": (
+                            "Patch in the form:\\n"
+                            "*** Begin Patch\\n"
+                            "*** Update File: path/to/file.py\\n"
+                            "@@\\n"
+                            " context line\\n"
+                            "-old line\\n"
+                            "+new line\\n"
+                            " context line\\n"
+                            "*** End Patch"
+                        ),
+                    },
+                    "expected_files": {
+                        "type": "array",
+                        "maxItems": self.max_files,
+                        "description": (
+                            "Optional optimistic-concurrency checks. If a file was read "
+                            "before constructing the patch, provide its SHA-256 here."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                },
+                                "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[0-9a-fA-F]{64}$",
+                                },
+                            },
+                            "required": ["path", "sha256"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["patch"],
+                "additionalProperties": False,
+            },
+        )
+
+    @_serialized_file_write
+    def execute(self, arguments: dict[str, Any]) -> ToolResult:
+        """Validate model arguments and turn expected filesystem failures into tool errors."""
+        if not isinstance(arguments, dict):
+            return tool_error(ToolErrorCode.INVALID_ARGUMENTS)
+        if set(arguments) - {"patch", "expected_files"}:
+            return tool_error(
+                ToolErrorCode.INVALID_ARGUMENTS,
+                "Allowed arguments: patch, expected_files.",
+            )
+        patch_text = arguments.get("patch")
+        expected_files = arguments.get("expected_files")
+        if not isinstance(patch_text, str) or not patch_text or "\x00" in patch_text:
+            return tool_error(
+                ToolErrorCode.INVALID_ARGUMENTS,
+                "patch must be a non-empty string without NUL.",
+            )
+        try:
+            patch_size = len(patch_text.encode("utf-8"))
+        except UnicodeEncodeError:
+            return tool_error(ToolErrorCode.UNSUPPORTED_ENCODING, "patch must be valid UTF-8 text.")
+        if patch_size > self.max_patch_bytes:
+            return tool_error(
+                "PATCH_TOO_LARGE", f"Patch exceeds {self.max_patch_bytes} UTF-8 bytes."
+            )
+        expected_or_error = self._parse_expected_files(expected_files)
+        if isinstance(expected_or_error, ToolResult):
+            return expected_or_error
+        expected_files = expected_or_error
+
+        try:
+            parsed = self._parse_patch(patch_text)
+        except _PatchParseError as exc:
+            return tool_error(exc.code, exc.message)
+        if len(parsed.files) > self.max_files:
+            return tool_error(
+                "TOO_MANY_PATCH_FILES",
+                f"Patch contains {len(parsed.files)} files; limit is {self.max_files}.",
+            )
+        total_hunks = sum(len(file_patch.hunks) for file_patch in parsed.files)
+        if total_hunks > self.max_hunks:
+            return tool_error(
+                "TOO_MANY_HUNKS",
+                f"Patch contains {total_hunks} hunks; limit is {self.max_hunks}.",
+            )
+        patch_paths = {file_patch.path for file_patch in parsed.files}
+        unused_expected = sorted(set(expected_files) - patch_paths)
+        if unused_expected:
+            return tool_error(
+                ToolErrorCode.INVALID_ARGUMENTS,
+                "expected_files contains paths not modified by the patch: "
+                + ", ".join(unused_expected),
+            )
+
+        prepared_files: list[_PreparedFile] = []
+        total_added_lines = 0
+        seen_targets: set[Path] = set()
+        seen_identities: set[tuple[int, int]] = set()
+
+        # Phase 1: validate and prepare every result without changing any target.
+        for file_patch in parsed.files:
+            loaded_or_error = self._load_file(file_patch.path)
+            if isinstance(loaded_or_error, ToolResult):
+                return loaded_or_error
+            loaded = loaded_or_error
+            identity = loaded.signature[:2]
+            if loaded.target in seen_targets or identity in seen_identities:
+                return tool_error(
+                    "DUPLICATE_FILE_SECTION",
+                    f"Multiple patch paths refer to the same file: {file_patch.path}",
+                )
+            seen_targets.add(loaded.target)
+            seen_identities.add(identity)
+
+            expected_hash = expected_files.get(file_patch.path)
+            if expected_hash is not None and loaded.sha256 != expected_hash:
+                return tool_error(
+                    ToolErrorCode.FILE_CHANGED, f"{file_patch.path} changed since it was read."
+                )
+
+            prepared_or_error = self._prepare_file(file_patch, loaded)
+            if isinstance(prepared_or_error, ToolResult):
+                return prepared_or_error
+            prepared = prepared_or_error
+
+            total_added_lines += prepared.lines_added
+            if total_added_lines > self.max_added_lines:
+                return tool_error(
+                    "TOO_MANY_ADDED_LINES", f"Patch adds more than {self.max_added_lines} lines."
+                )
+            prepared_files.append(prepared)
+
+        failure = self._commit_files(prepared_files)
+        if failure is not None:
+            return failure
+
+        changes = [self._change_summary(prepared) for prepared in prepared_files]
+
+        return ToolResult(
+            success=True,
+            data={
+                "files_changed": len(prepared_files),
+                "hunks_applied": total_hunks,
+                "lines_added": sum(item.lines_added for item in prepared_files),
+                "lines_removed": sum(item.lines_removed for item in prepared_files),
+                "changes": changes,
+            },
+        )
+
+    def _change_summary(self, prepared: _PreparedFile) -> dict[str, Any]:
+        loaded = prepared.loaded
+        return {
+            "path": loaded.target.relative_to(self.workspace_root).as_posix(),
+            "hunks": len(prepared.hunks),
+            "lines_added": prepared.lines_added,
+            "lines_removed": prepared.lines_removed,
+            "bytes_before": len(loaded.raw),
+            "bytes_after": len(prepared.encoded),
+            "old_sha256": loaded.sha256,
+            "new_sha256": prepared.new_sha256,
+            "hunk_changes": [
+                {
+                    "hunk_index": hunk.index,
+                    "start_line": hunk.start_line,
+                    "old_line_count": len(hunk.old_lines),
+                    "new_line_count": len(hunk.new_lines),
+                }
+                for hunk in prepared.hunks
+            ],
+        }
+
+    def _commit_failure(self, prepared_files, committed, code, message, failed_path):
+        count = len(committed)
+        return ToolResult(
+            False,
+            data={
+                "committed": [
+                    item.loaded.target.relative_to(self.workspace_root).as_posix()
+                    for item in committed
+                ],
+                "not_committed": [
+                    item.loaded.target.relative_to(self.workspace_root).as_posix()
+                    for item in prepared_files[count:]
+                ],
+                "changes": [self._change_summary(item) for item in committed],
+                "files_changed": count,
+                "failed_path": failed_path,
+            },
+            error_code=str(code),
+            error=message,
+        )
+
+    def _check_unchanged(self, loaded: _LoadedFile) -> ToolResult | None:
+        current = self._read_snapshot(loaded.requested_path)
+        if (
+            isinstance(current, ToolResult)
+            or current.target != loaded.target
+            or current.signature != loaded.signature
+            or current.sha256 != loaded.sha256
+        ):
+            return tool_error(
+                ToolErrorCode.FILE_CHANGED,
+                f"{loaded.requested_path} changed or cannot be verified before commit; re-read it.",
+            )
+        return None
+
+    def _commit_files(self, prepared_files: list[_PreparedFile]) -> ToolResult | None:
+        # All exits, including cancellation during preparation, clean staging files.
+        temp_paths: dict[Path, Path] = {}
+        committed: list[_PreparedFile] = []
+        phase = "prepare"
+        failed_path = None
+        with StagedWrites(temp_factory=NamedTemporaryFile, logger=logger) as staged:
+            try:
+                for prepared in prepared_files:
+                    loaded = prepared.loaded
+                    failed_path = loaded.requested_path
+                    temp_paths[loaded.target] = staged.stage(
+                        loaded.target, prepared.encoded, loaded.mode
+                    )
+
+                # Catch edits to ANY target before committing the first file.
+                phase = "validate"
+                for prepared in prepared_files:
+                    failure = self._check_unchanged(prepared.loaded)
+                    if failure is not None:
+                        return self._commit_failure(
+                            prepared_files,
+                            committed,
+                            failure.error_code,
+                            failure.error,
+                            prepared.loaded.requested_path,
+                        )
+
+                phase = "commit"
+                for prepared in prepared_files:
+                    loaded = prepared.loaded
+                    failed_path = loaded.requested_path
+                    # Check again immediately before each replacement. This narrows,
+                    # but cannot eliminate, races with uncooperative external writers.
+                    failure = self._check_unchanged(loaded)
+                    if failure is not None:
+                        return self._commit_failure(
+                            prepared_files, committed, failure.error_code, failure.error, failed_path
+                        )
+                    temp_paths[loaded.target].replace(loaded.target)
+                    committed.append(prepared)
+            except (OSError, RuntimeError) as error:
+                code = (
+                    "MULTI_FILE_COMMIT_FAILED"
+                    if phase == "commit"
+                    else (
+                        ToolErrorCode.PERMISSION_DENIED
+                        if isinstance(error, PermissionError)
+                        else ToolErrorCode.WRITE_ERROR
+                    )
+                )
+                return self._commit_failure(
+                    prepared_files,
+                    committed,
+                    code,
+                    f"Patch {phase} failed ({type(error).__name__}); inspect committed files before retrying.",
+                    failed_path,
+                )
+        return None
+
+    def _parse_expected_files(
+        self,
+        value: Any,
+    ) -> dict[str, str] | ToolResult:
+        if value is None:
+            return {}
+        if not isinstance(value, list) or len(value) > self.max_files:
+            return tool_error(
+                ToolErrorCode.INVALID_ARGUMENTS,
+                f"expected_files must be an array of at most {self.max_files} items.",
+            )
+
+        result: dict[str, str] = {}
+        for index, item in enumerate(value, start=1):
+            if not isinstance(item, dict):
+                return tool_error(
+                    ToolErrorCode.INVALID_ARGUMENTS, f"expected_files[{index}] must be an object."
+                )
+            if set(item) != {"path", "sha256"}:
+                return tool_error(
+                    ToolErrorCode.INVALID_ARGUMENTS,
+                    f"expected_files[{index}] requires exactly path and sha256.",
+                )
+            path = item.get("path")
+            sha256 = item.get("sha256")
+            if not isinstance(path, str) or not path.strip() or "\x00" in path:
+                return tool_error(
+                    ToolErrorCode.INVALID_ARGUMENTS,
+                    f"expected_files[{index}].path must be a non-empty string without NUL.",
+                )
+            if not isinstance(sha256, str) or re.fullmatch(r"[0-9a-fA-F]{64}", sha256) is None:
+                return tool_error(
+                    ToolErrorCode.INVALID_ARGUMENTS,
+                    f"expected_files[{index}].sha256 must be a 64-character hexadecimal SHA-256 digest.",
+                )
+            if path in result:
+                return tool_error(
+                    ToolErrorCode.INVALID_ARGUMENTS,
+                    f"expected_files contains duplicate path: {path}",
+                )
+            result[path] = sha256.lower()
+
+        return result
+
+    def _parse_patch(self, patch_text: str) -> _ParsedPatch:
+        text = patch_text.replace("\r\n", "\n").replace("\r", "\n")
+        lines = text.split("\n")
+
+        # A final newline after "*** End Patch" is fine.
+        if lines and lines[-1] == "":
+            lines.pop()
+        if not lines or lines[0] != "*** Begin Patch":
+            raise _PatchParseError("INVALID_PATCH", "Patch must start with '*** Begin Patch'.")
+        if lines[-1] != "*** End Patch":
+            raise _PatchParseError("INVALID_PATCH", "Patch must end with '*** End Patch'.")
+
+        file_patches: list[_FilePatch] = []
+        seen_paths: set[str] = set()
+        index = 1
+        while index < len(lines) - 1:
+            line = lines[index]
+            if not line.startswith("*** Update File: "):
+                raise _PatchParseError(
+                    "INVALID_PATCH", f"Expected '*** Update File:' at patch line {index + 1}."
+                )
+            path = line[len("*** Update File: ") :]
+            if not path.strip() or "\x00" in path:
+                raise _PatchParseError(
+                    "INVALID_PATCH_PATH", f"Invalid file path at patch line {index + 1}."
+                )
+            if path in seen_paths:
+                raise _PatchParseError(
+                    "DUPLICATE_FILE_SECTION", f"File appears more than once in patch: {path}"
+                )
+            seen_paths.add(path)
+            index += 1
+
+            hunks: list[_PatchHunk] = []
+            while index < len(lines) - 1:
+                line = lines[index]
+                if line.startswith("*** Update File: "):
+                    break
+                if not line.startswith("@@"):
+                    raise _PatchParseError(
+                        "INVALID_PATCH", f"Expected hunk header '@@' at patch line {index + 1}."
+                    )
+                hint = line[2:].strip() or None
+                hunk_index = len(hunks) + 1
+                index += 1
+
+                patch_lines: list[_PatchLine] = []
+                saw_change = False
+                while index < len(lines) - 1:
+                    line = lines[index]
+                    if line.startswith("@@") or line.startswith("*** Update File: "):
+                        break
+                    if not line:
+                        raise _PatchParseError(
+                            "INVALID_HUNK_LINE",
+                            f"Patch line {index + 1} is empty. Blank content "
+                            "lines must still carry a prefix: ' ', '+' or '-'.",
+                        )
+                    prefix = line[0]
+                    content = line[1:]
+                    if prefix == " ":
+                        kind: Literal["context", "add", "remove"] = "context"
+                    elif prefix == "+":
+                        kind = "add"
+                        saw_change = True
+                    elif prefix == "-":
+                        kind = "remove"
+                        saw_change = True
+                    else:
+                        raise _PatchParseError(
+                            "INVALID_HUNK_LINE",
+                            f"Patch line {index + 1} must start with " "' ', '+' or '-'.",
+                        )
+                    patch_lines.append(_PatchLine(kind=kind, text=content))
+                    index += 1
+
+                if not patch_lines:
+                    raise _PatchParseError(
+                        "EMPTY_HUNK",
+                        f"Hunk {hunk_index} in {path} is empty.",
+                    )
+                if not saw_change:
+                    raise _PatchParseError(
+                        "NO_CHANGES",
+                        f"Hunk {hunk_index} in {path} contains no additions or removals.",
+                    )
+
+                old_lines = [
+                    item.text for item in patch_lines if item.kind in ("context", "remove")
+                ]
+                if not old_lines:
+                    raise _PatchParseError(
+                        "INSERTION_WITHOUT_CONTEXT",
+                        f"Hunk {hunk_index} in {path} has no context/removal "
+                        "lines. Pure insertion without an anchor is unsupported.",
+                    )
+                hunks.append(
+                    _PatchHunk(
+                        index=hunk_index,
+                        hint=hint,
+                        lines=tuple(patch_lines),
+                    )
+                )
+
+            if not hunks:
+                raise _PatchParseError("EMPTY_FILE_PATCH", f"{path} contains no hunks.")
+            file_patches.append(_FilePatch(path=path, hunks=tuple(hunks)))
+
+        if not file_patches:
+            raise _PatchParseError(
+                "EMPTY_PATCH",
+                "Patch contains no file updates.",
+            )
+
+        return _ParsedPatch(files=tuple(file_patches))
+
+    def _read_snapshot(self, path: str) -> FileSnapshot | ToolResult:
+        try:
+            candidate = self.workspace_root / path
+            target = candidate.resolve()
+            if is_credential_path(candidate, target):
+                return tool_error(ToolErrorCode.PROTECTED_FILE)
+            if not target.is_relative_to(self.workspace_root):
+                return tool_error(ToolErrorCode.PATH_OUTSIDE_WORKSPACE)
+            info = candidate.lstat()
+            if S_ISLNK(info.st_mode):
+                return tool_error(ToolErrorCode.PATH_IS_SYMLINK)
+            if not S_ISREG(info.st_mode):
+                return tool_error(ToolErrorCode.NOT_A_FILE)
+            return read_snapshot(
+                candidate, target, info, self.max_content_bytes,
+                verify_identity=True,
+                size_message=f"{path} exceeds {self.max_content_bytes} bytes.",
+            )
+        except FileNotFoundError:
+            return tool_error(ToolErrorCode.FILE_NOT_FOUND, f"File not found: {path}")
+        except NotADirectoryError:
+            return tool_error(ToolErrorCode.NOT_A_DIRECTORY)
+        except PermissionError:
+            return tool_error(ToolErrorCode.PERMISSION_DENIED)
+        except (OSError, RuntimeError):
+            return tool_error(ToolErrorCode.READ_ERROR)
+
+    def _load_file(self, path: str) -> _LoadedFile | ToolResult:
+        snapshot = self._read_snapshot(path)
+        if isinstance(snapshot, ToolResult):
+            return snapshot
+        raw = snapshot.raw
+        if b"\x00" in raw:
+            return tool_error(ToolErrorCode.BINARY_FILE)
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return tool_error(ToolErrorCode.UNSUPPORTED_ENCODING)
+        newline_or_error = self._detect_newline(text, path)
+        if isinstance(newline_or_error, ToolResult):
+            return newline_or_error
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        return _LoadedFile(
+            requested_path=path,
+            target=snapshot.target,
+            raw=raw,
+            text=text,
+            normalized_text=normalized,
+            lines=tuple(normalized.removesuffix("\n").split("\n")) if normalized else (),
+            newline=newline_or_error,
+            bom=b"\xef\xbb\xbf" if raw.startswith(b"\xef\xbb\xbf") else b"",
+            mode=snapshot.info.st_mode & 0o777,
+            sha256=snapshot.sha256,
+            signature=snapshot.signature,
+            final_newline=normalized.endswith("\n"),
+        )
+
+    def _detect_newline(
+        self,
+        text: str,
+        path: str,
+    ) -> str | ToolResult:
+        crlf_count = text.count("\r\n")
+        without_crlf = text.replace("\r\n", "")
+        lf_count = without_crlf.count("\n")
+        cr_count = without_crlf.count("\r")
+
+        kinds = sum((crlf_count > 0, lf_count > 0, cr_count > 0))
+        if kinds > 1:
+            return tool_error(
+                "MIXED_LINE_ENDINGS",
+                f"{path} contains mixed line endings; patching is refused.",
+            )
+        if crlf_count:
+            return "\r\n"
+        if cr_count:
+            return "\r"
+        return "\n"
+
+    def _prepare_file(
+        self,
+        file_patch: _FilePatch,
+        loaded: _LoadedFile,
+    ) -> _PreparedFile | ToolResult:
+        source_lines = list(loaded.lines)
+        prepared_hunks: list[_PreparedHunk] = []
+
+        for hunk in file_patch.hunks:
+            old_lines = tuple(
+                item.text for item in hunk.lines if item.kind in ("context", "remove")
+            )
+            new_lines = tuple(item.text for item in hunk.lines if item.kind in ("context", "add"))
+
+            matches = self._find_subsequence(source_lines, old_lines)
+            if not matches:
+                hint_suffix = f" ({hunk.hint})" if hunk.hint else ""
+                return tool_error(
+                    "CONTEXT_NOT_FOUND",
+                    f"{file_patch.path}: hunk {hunk.index}{hint_suffix} "
+                    "did not match the original file.",
+                )
+            if len(matches) > 1:
+                candidate_lines = [item + 1 for item in matches[:20]]
+                return tool_error(
+                    "AMBIGUOUS_CONTEXT",
+                    f"{file_patch.path}: hunk {hunk.index} matched more than "
+                    f"once; candidate start lines: {candidate_lines}. "
+                    "Add more surrounding context.",
+                )
+
+            start = matches[0]
+            end = start + len(old_lines)
+            # Preserve actual context-line terminators. In particular, deleting
+            # an unterminated last line must not strip its predecessor's newline.
+            fragments = []
+            cursor = start
+            for item in hunk.lines:
+                if item.kind == "context":
+                    terminated = cursor < len(source_lines) - 1 or loaded.final_newline
+                    fragments.append(item.text + ("\n" if terminated else ""))
+                    cursor += 1
+                elif item.kind == "remove":
+                    cursor += 1
+                else:
+                    fragments.append(item.text + "\n")
+            last_output_kind = next(
+                (item.kind for item in reversed(hunk.lines) if item.kind != "remove"), None
+            )
+            if (
+                fragments
+                and end == len(source_lines)
+                and not loaded.final_newline
+                and last_output_kind == "add"
+            ):
+                fragments[-1] = fragments[-1].removesuffix("\n")
+            # Appending after an unterminated context line needs a separator.
+            for i in range(len(fragments) - 1):
+                if not fragments[i].endswith("\n"):
+                    fragments[i] += "\n"
+            prepared_hunks.append(
+                _PreparedHunk(
+                    index=hunk.index,
+                    start=start,
+                    end=end,
+                    start_line=start + 1,
+                    old_lines=old_lines,
+                    new_lines=new_lines,
+                    added_lines=sum(item.kind == "add" for item in hunk.lines),
+                    removed_lines=sum(item.kind == "remove" for item in hunk.lines),
+                    replacement="".join(fragments),
+                )
+            )
+
+        ordered = sorted(prepared_hunks, key=lambda item: (item.start, item.end))
+        for previous, current in zip(ordered, ordered[1:]):
+            # v1 deliberately rejects overlap of the whole matched hunk,
+            # including overlapping context, because this is simpler and safer.
+            if current.start < previous.end:
+                return tool_error(
+                    "OVERLAPPING_HUNKS",
+                    f"{file_patch.path}: hunk {previous.index} and "
+                    f"hunk {current.index} overlap in the original file.",
+                )
+
+        updated_lines = [
+            line + ("\n" if i < len(source_lines) - 1 or loaded.final_newline else "")
+            for i, line in enumerate(source_lines)
+        ]
+        for hunk in sorted(prepared_hunks, key=lambda item: item.start, reverse=True):
+            updated_lines[hunk.start : hunk.end] = [hunk.replacement]
+
+        updated_normalized = "".join(updated_lines)
+        updated_text = updated_normalized.replace("\n", loaded.newline)
+        try:
+            encoded = loaded.bom + updated_text.encode("utf-8")
+        except UnicodeEncodeError:
+            return tool_error(ToolErrorCode.UNSUPPORTED_ENCODING)
+
+        if len(encoded) > self.max_content_bytes:
+            return tool_error(
+                "PATCH_RESULT_TOO_LARGE",
+                f"{file_patch.path} would exceed {self.max_content_bytes} bytes after patching.",
+            )
+
+        if encoded == loaded.raw:
+            return tool_error(
+                "NO_CHANGES",
+                f"{file_patch.path}: patch produces no byte-level change.",
+            )
+
+        return _PreparedFile(
+            loaded=loaded,
+            hunks=tuple(sorted(prepared_hunks, key=lambda item: item.start)),
+            encoded=encoded,
+            new_sha256=hashlib.sha256(encoded).hexdigest(),
+            lines_added=sum(item.added_lines for item in prepared_hunks),
+            lines_removed=sum(item.removed_lines for item in prepared_hunks),
+        )
+
+    @staticmethod
+    def _find_subsequence(
+        lines: list[str],
+        pattern: tuple[str, ...],
+    ) -> list[int]:
+        if not pattern or len(pattern) > len(lines):
+            return []
+
+        # KMP: no candidate slices and O(n + m) line comparisons, including
+        # repetitive input with a long near-match. Two matches prove ambiguity.
+        prefix = [0] * len(pattern)
+        matched = 0
+        for i in range(1, len(pattern)):
+            while matched and pattern[i] != pattern[matched]:
+                matched = prefix[matched - 1]
+            if pattern[i] == pattern[matched]:
+                matched += 1
+            prefix[i] = matched
+        matches = []
+        matched = 0
+        for i, line in enumerate(lines):
+            while matched and line != pattern[matched]:
+                matched = prefix[matched - 1]
+            if line == pattern[matched]:
+                matched += 1
+            if matched == len(pattern):
+                matches.append(i - len(pattern) + 1)
+                if len(matches) == 2:
+                    break
+                matched = prefix[matched - 1]
+        return matches
+
 # ListFileTool
-class ListFileTool:
+class ListFileTool(WorkspaceTool):
     """List files in a directory with optional filtering and recursion."""
 
     def __init__(
@@ -815,15 +1530,10 @@ class ListFileTool:
         *,
         max_entries: int = 200,
     ) -> None:
-        self.workspace_root = Path(workspace_root).resolve(strict=True)
-        if not self.workspace_root.is_dir():
-            raise ValueError("workspace_root must be an existing directory")
-        for name, value in (
-            ("max_entries", max_entries),
-        ):
-            if type(value) is not int or value <= 0:
-                raise ValueError(f"{name} must be a positive integer")
-        self.max_entries = max_entries
+        super().__init__(
+            workspace_root,
+            max_entries=max_entries,
+        )
 
     @property
     def definition(self) -> ToolDefinition:
@@ -873,8 +1583,9 @@ class ListFileTool:
             return tool_error(ToolErrorCode.INVALID_ARGUMENTS, "include_hidden must be a boolean.")
 
         try:
+            policy = self.path_policy()
             target = (self.workspace_root / path).resolve()
-            if is_credential_path(self.workspace_root / path, target):
+            if policy.is_protected(self.workspace_root / path, target):
                 return tool_error(ToolErrorCode.PROTECTED_FILE)
             if not target.is_relative_to(self.workspace_root):
                 return tool_error(ToolErrorCode.PATH_OUTSIDE_WORKSPACE)
@@ -885,23 +1596,11 @@ class ListFileTool:
                 if not include_hidden and entry.name.startswith("."):
                     continue
                 try:
-                    if is_credential_path(entry, entry.resolve()):
+                    metadata = inspect_entry(entry, policy)
+                    if metadata is None:
                         continue
-                    if entry.is_symlink():
-                        entry_type = "symlink"
-                        size = None
-                    elif entry.is_dir():
-                        entry_type = "directory"
-                        size = None
-                    elif entry.is_file():
-                        entry_type = "file"
-                        try:
-                            size = entry.stat().st_size
-                        except OSError:
-                            size = None
-                    else:
-                        entry_type = "other"
-                        size = None
+                    entry_type = metadata.kind
+                    size = metadata.info.st_size if entry_type == "file" else None
                 except OSError:
                     entry_type = "other"
                     size = None
@@ -947,7 +1646,7 @@ class ListFileTool:
         )
 
 # FindFileTool
-class FindFileTool:
+class FindFileTool(WorkspaceTool):
     """Find files or directories by glob pattern inside the workspace."""
 
     def __init__(
@@ -956,15 +1655,10 @@ class FindFileTool:
         *,
         max_results: int = 200,
     ) -> None:
-        self.workspace_root = Path(workspace_root).resolve(strict=True)
-        if not self.workspace_root.is_dir():
-            raise ValueError("workspace_root must be an existing directory")
-        for name, value in (
-            ("max_results", max_results),
-        ):
-            if type(value) is not int or value <= 0:
-                raise ValueError(f"{name} must be a positive integer")
-        self.max_results = max_results
+        super().__init__(
+            workspace_root,
+            max_results=max_results,
+        )
 
     @property
     def definition(self) -> ToolDefinition:
@@ -1056,9 +1750,10 @@ class FindFileTool:
             return tool_error(ToolErrorCode.INVALID_ARGUMENTS, "include_hidden must be a boolean.")
 
         try:
+            policy = self.path_policy()
             abs_path = self.workspace_root / path
             target = abs_path.resolve()
-            if is_credential_path(abs_path, target):
+            if policy.is_protected(abs_path, target):
                 return tool_error(ToolErrorCode.PROTECTED_FILE)
             if not target.is_relative_to(self.workspace_root):
                 return tool_error(ToolErrorCode.PATH_OUTSIDE_WORKSPACE)
@@ -1068,23 +1763,16 @@ class FindFileTool:
             total_matches = 0
             for candidate in target.glob(pattern):
                 try:
-                    resolved = candidate.resolve()
-                    if is_credential_path(candidate, resolved):
+                    metadata = inspect_entry(candidate, policy)
+                    if metadata is None:
                         continue
-                    if not resolved.is_relative_to(self.workspace_root):
+                    if not metadata.resolved.is_relative_to(self.workspace_root):
                         continue
                     relative_to_search = candidate.relative_to(target)
                     if not include_hidden:
                         if any(part.startswith(".") for part in relative_to_search.parts):
                             continue
-                    if candidate.is_symlink():
-                        candidate_type = "symlink"
-                    elif candidate.is_dir():
-                        candidate_type = "directory"
-                    elif candidate.is_file():
-                        candidate_type = "file"
-                    else:
-                        candidate_type = "other"
+                    candidate_type = metadata.kind
                     if entry_type == "file" and candidate_type != "file":
                         continue
                     if entry_type == "directory" and candidate_type != "directory":
@@ -1099,10 +1787,7 @@ class FindFileTool:
                         "type": candidate_type,
                     }
                     if candidate_type == "file":
-                        try:
-                            item["size"] = candidate.stat().st_size
-                        except OSError:
-                            pass
+                        item["size"] = metadata.info.st_size
                     matches.append(item)
                 except (OSError, RuntimeError):
                     continue
@@ -1138,7 +1823,7 @@ class FindFileTool:
         )
 
 # SearchFilesTool
-class SearchFilesTool:
+class SearchFilesTool(WorkspaceTool):
     """Search for files in a directory with optional filtering and recursion."""
 
     def __init__(
@@ -1151,23 +1836,14 @@ class SearchFilesTool:
         max_files_scanned: int = 10_000,
         max_output_chars: int = 20_000,
     ) -> None:
-        self.workspace_root = Path(workspace_root).resolve(strict=True)
-        if not self.workspace_root.is_dir():
-            raise ValueError("workspace_root must be an existing directory")
-        for name, value in (
-            ("max_results", max_results),
-            ("max_file_bytes", max_file_bytes),
-            ("max_line_chars", max_line_chars),
-            ("max_files_scanned", max_files_scanned),
-            ("max_output_chars", max_output_chars)
-        ):
-            if type(value) is not int or value <= 0:
-                raise ValueError(f"{name} must be a positive integer")
-        self.max_results = max_results
-        self.max_file_bytes = max_file_bytes
-        self.max_line_chars = max_line_chars
-        self.max_files_scanned = max_files_scanned
-        self.max_output_chars = max_output_chars
+        super().__init__(
+            workspace_root,
+            max_results=max_results,
+            max_file_bytes=max_file_bytes,
+            max_line_chars=max_line_chars,
+            max_files_scanned=max_files_scanned,
+            max_output_chars=max_output_chars,
+        )
 
     @property
     def definition(self) -> ToolDefinition:
@@ -1263,9 +1939,10 @@ class SearchFilesTool:
                 )
 
         try:
+            policy = self.path_policy()
             requested = self.workspace_root / path
             target = requested.resolve()
-            if is_credential_path(requested, target):
+            if policy.is_protected(requested, target):
                 return tool_error(ToolErrorCode.PROTECTED_FILE)
             if not target.is_relative_to(self.workspace_root):
                 return tool_error(ToolErrorCode.PATH_OUTSIDE_WORKSPACE)
@@ -1292,28 +1969,30 @@ class SearchFilesTool:
                 return line.casefold().find(query_lower)
 
         try:
-            files = self._iter_files(target, include_hidden=include_hidden, glob=glob)
-            for file in files:
+            files = self._iter_files(
+                target, include_hidden=include_hidden, glob=glob, policy=policy,
+            )
+            for file, info in files:
                 if files_scanned >= self.max_files_scanned:
                     truncated = True
                     truncation_reason = "max_files_scanned"
                     break
                 files_scanned += 1
                 try:
-                    resolved = file.resolve()
-                    if (
-                        not resolved.is_relative_to(self.workspace_root)
-                        or is_credential_path(file, resolved)
-                    ):
+                    metadata = inspect_entry(file, policy, info=info)
+                    if metadata is None or not metadata.resolved.is_relative_to(self.workspace_root):
                         skipped_files += 1
                         continue
-                    info = file.stat()
+                    info = metadata.info
                     if not S_ISREG(info.st_mode) or info.st_size > self.max_file_bytes:
                         skipped_files += 1
                         continue
-                    with file.open("rb") as source:
-                        raw = source.read(self.max_file_bytes + 1)
-                    if len(raw) > self.max_file_bytes or b"\x00" in raw:
+                    snapshot = read_snapshot(file, file, info, self.max_file_bytes)
+                    if isinstance(snapshot, ToolResult):
+                        skipped_files += 1
+                        continue
+                    raw = snapshot.raw
+                    if b"\x00" in raw:
                         skipped_files += 1
                         continue
                     try:
@@ -1372,45 +2051,11 @@ class SearchFilesTool:
             },
         )
 
-    def _iter_files(
-        self,
-        target: Path,
-        *,
-        include_hidden: bool,
-        glob: str | None,
-    ):
-        # Apply the hidden-directory rule to explicit paths as well as recursion.
-        relative = target.relative_to(self.workspace_root)
-        if not include_hidden and any(part.startswith(".") for part in relative.parts):
-            return
-        if target.is_file():
-            if glob is None or fnmatch(relative.as_posix(), glob):
-                yield target
-            return
-        if not target.is_dir():
-            return
-        for root, dirnames, filenames in os.walk(target, followlinks=False):
-            dirnames.sort(key=lambda x: (x.casefold(), x))
-            filenames.sort(key=lambda x: (x.casefold(), x))
-            root_path = Path(root)
-            if not include_hidden:
-                dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-                filenames = [f for f in filenames if not f.startswith(".")]
-            # Prune protected directories before os.walk can descend into them.
-            dirnames[:] = [
-                name for name in dirnames
-                if not is_credential_path(root_path / name, (root_path / name).resolve())
-            ]
-            for file in filenames:
-                candidate = root_path / file
-                try:
-                    if candidate.is_symlink():
-                        continue
-                except OSError:
-                    continue
-                relative = candidate.relative_to(self.workspace_root).as_posix()
-                if glob is None or fnmatch(relative, glob):
-                    yield candidate
+    def _iter_files(self, target: Path, *, include_hidden: bool, glob: str | None, policy):
+        return iter_search_candidates(
+            self.workspace_root, target,
+            include_hidden=include_hidden, glob=glob, policy=policy,
+        )
 
     def _truncate_matching_line(
         self,
@@ -1436,16 +2081,14 @@ class SearchFilesTool:
 
 
 # MakeDirectoryTool
-class MakeDirectoryTool:
+class MakeDirectoryTool(WorkspaceTool):
     """Create directories inside a bounded workspace."""
 
     def __init__(
         self,
         workspace_root: str | Path,
     ) -> None:
-        self.workspace_root = Path(workspace_root).resolve(strict=True)
-        if not self.workspace_root.is_dir():
-            raise ValueError("workspace_root must be an existing directory")
+        super().__init__(workspace_root)
 
     @property
     def definition(self) -> ToolDefinition:
@@ -1479,6 +2122,7 @@ class MakeDirectoryTool:
             },
         )
 
+    @_serialized_file_write
     def execute(self, arguments: dict[str, Any]) -> ToolResult:
         """Validate model arguments and turn expected filesystem failures into tool errors."""
         if not isinstance(arguments, dict):
@@ -1549,16 +2193,14 @@ class MakeDirectoryTool:
 
 
 # DeleteFileTool
-class DeleteFileTool:
+class DeleteFileTool(WorkspaceTool):
     """Delete a file inside a bounded workspace."""
 
     def __init__(
         self,
         workspace_root: str | Path,
     ) -> None:
-        self.workspace_root = Path(workspace_root).resolve(strict=True)
-        if not self.workspace_root.is_dir():
-            raise ValueError("workspace_root must be an existing directory")
+        super().__init__(workspace_root)
 
     @property
     def definition(self) -> ToolDefinition:
@@ -1584,6 +2226,7 @@ class DeleteFileTool:
             },
         )
 
+    @_serialized_file_write
     def execute(self, arguments: dict[str, Any]) -> ToolResult:
         """Validate model arguments and turn expected filesystem failures into tool errors."""
         if not isinstance(arguments, dict):
@@ -1633,16 +2276,14 @@ class DeleteFileTool:
         )
 
 # MoveFileTool
-class MoveFileTool:
+class MoveFileTool(WorkspaceTool):
     """Move or rename one regular file inside a bounded workspace."""
 
     def __init__(
         self,
         workspace_root: str | Path,
     ) -> None:
-        self.workspace_root = Path(workspace_root).resolve(strict=True)
-        if not self.workspace_root.is_dir():
-            raise ValueError("workspace_root must be an existing directory")
+        super().__init__(workspace_root)
 
     @property
     def definition(self) -> ToolDefinition:
@@ -1683,6 +2324,7 @@ class MoveFileTool:
             },
         )
 
+    @_serialized_file_write
     def execute(self, arguments: dict[str, Any]) -> ToolResult:
         """Validate model arguments and turn expected filesystem failures into tool errors."""
         if not isinstance(arguments, dict):
@@ -1765,16 +2407,14 @@ class MoveFileTool:
         )
 
 # GetPathInfoTool
-class GetPathInfoTool:
+class GetPathInfoTool(WorkspaceTool):
     """Inspect filesystem metadata for one workspace path."""
 
     def __init__(
         self,
         workspace_root: str | Path,
     ) -> None:
-        self.workspace_root = Path(workspace_root).resolve(strict=True)
-        if not self.workspace_root.is_dir():
-            raise ValueError("workspace_root must be an existing directory")
+        super().__init__(workspace_root)
 
     @property
     def definition(self) -> ToolDefinition:

@@ -2,11 +2,59 @@
 
 [返回 README](../README.md)
 
-安装目录保存源码和专用 `.venv`；用户配置与命令入口可以由多个安装共用。卸载以安装记录和当前文件状态为依据，源码、Git 修改、任务项目、历史日志、沙箱副本及回写备份始终保留。
+提供源码安装和独立发行版安装两种方式。源码安装目录保存源码和专用 `.venv`；发行版运行环境保存在用户数据目录，下载目录可以删除。用户配置与命令入口可以由多个安装共用。卸载以安装记录和当前文件状态为依据，源码、Git 修改、任务项目、历史日志、沙箱副本及回写备份始终保留。
 
-## 安装与首次启动
+## 独立发行版安装
 
-需要 macOS / Linux、Python 3.11+；默认使用 native 模式，无需 Docker；macOS 使用 Seatbelt，Linux 使用 Bubblewrap + seccomp。首次安装联网下载依赖。在源码目录执行：
+普通用户可以使用维护者构建的 `repo-agent-<版本>.tar.gz`，无需 Git、源码 checkout 或 uv。发行包尚需维护者自行上传至 GitHub Releases，本项目的构建命令不会发布文件。安装仍需要可用的 Python 3.11+（含 venv/ensurepip），并联网下载锁定的 Python 依赖；不内置 Python 或系统工具链。
+
+解压到一个空目录后，在该目录运行：
+
+```bash
+./install-release.sh --check
+./install-release.sh
+```
+
+已有源码时，也可以直接安装构建好的压缩包：
+
+```bash
+./install-release.sh --archive dist/repo-agent-0.1.0.tar.gz
+# 使用从可信发布来源取得的 SHA256 做整个压缩包校验
+./install-release.sh --archive dist/repo-agent-0.1.0.tar.gz --sha256 <SHA256>
+```
+
+默认位置：
+
+| 内容 | 位置 |
+| --- | --- |
+| 发行版文件和独立 `.venv` | `${XDG_DATA_HOME:-~/.local/share}/repo-agent/versions/<版本>/` |
+| 命令 | `~/.local/bin/repo-agent`、`repo-agent-build-sandbox` |
+| 模型和 API Key 配置 | `${XDG_CONFIG_HOME:-~/.config}/repo-agent/.env`，支持原有 `AGENT_CONFIG_DIR` 覆盖 |
+| 安装记录、恢复信息及下载日志 | `${XDG_STATE_HOME:-~/.local/state}/repo-agent/` |
+
+`--data-dir` 自定义整个 `repo-agent` 数据目录；`--bin-dir`、`--no-path`、`--mode`、`--languages`、`--with-toolchains`、`--skip-toolchains`、`--skip-sandbox` 与源码安装语义相同。安装不询问模型或 Key，只创建缺失的用户配置。命令保留调用时的工作目录。
+
+安装完成后可删除下载目录及原源码。发行版以普通 wheel 安装，默认配置模板、内置 Skills、语言服务锁文件和 Docker 构建上下文均包含在发行包内。
+
+```bash
+repo-agent version                 # 版本、安装类型、安装位置、Python 路径
+repo-agent config show
+repo-agent config reset            # 先备份用户配置，再恢复该发行版的默认模板
+repo-agent toolchains list
+repo-agent-build-sandbox
+repo-agent uninstall --dry-run
+repo-agent uninstall
+```
+
+卸载沿用归属检查：删除当前版本的 `.venv` 和仍指向它的命令，默认保留用户配置、系统工具链、发行版文件及恢复入口，不回退至旧安装。需要重装时可在该版本目录运行 `./install-release.sh`。如需删除已卸载版本的剩余文件，请先确认不再需要该目录内的恢复入口或修改后再手动删除。
+
+相同发行包允许重复安装。同版本号但内容不同的发行包会被拒绝，维护者应递增版本号；如确需替换，先卸载并手动移走原版本目录。安装其他版本时，发现旧命令会先询问确认；核心安装失败保留旧命令和旧环境。失败后保留已校验的版本文件以便重试，继续使用原安装命令即可；仅恢复事务可以在该版本目录执行 `./install-release.sh --recover`。当前没有自动检查更新、下载更新或回滚命令。
+
+压缩包 SHA256 和包内逐文件哈希用于发现损坏、文件缺失和内容不一致，不等同于发行者签名；请从可信来源取得安装器和发行包。
+
+## 源码安装与首次启动
+
+需要 macOS / Linux、Python 3.11+；安装器遍历 PATH 中的候选解释器，并检查版本、venv 和 ensurepip，自动跳过不完整的 Python。显式设置 AGENT_PYTHON 时只使用该解释器，失败会显示修复步骤；不会替换成其他 Python。默认使用 native 模式，无需 Docker；macOS 使用 Seatbelt，Linux 使用 Bubblewrap + seccomp。首次安装联网下载依赖。在源码目录执行：
 
 ```bash
 ./install.sh --check
@@ -30,7 +78,7 @@
 
 Debian/Ubuntu 先安装 `bubblewrap libseccomp2`，Fedora 安装 `bubblewrap libseccomp`；需要 Bubblewrap 0.8+ 和可用的非特权 user namespace。随后可运行 `./install.sh --mode native --skip-toolchains`。基础安装准备 Python 语言服务；额外语言需要预先安装 Node.js/npm、Go 1.25+、clangd，再运行补齐命令。Linux 不使用 Homebrew 自动安装系统工具，不调用 sudo；内核或 AppArmor 禁止 namespace 时，安装后的实际沙箱检查会失败并恢复安装。详见[原生沙箱说明](native-sandbox.md)。
 
-## 升级与重建镜像
+## 源码升级与重建镜像
 
 先退出本安装中正在运行的 Agent，再在安装目录执行：
 
@@ -45,7 +93,7 @@ git pull
 repo-agent-build-sandbox
 ```
 
-构建不读取模型配置，以安装目录源码为构建上下文。`--profile auto|standard|cuda` 选择环境，`--image` 指定标签。构建与启动共用 Docker 主机环境检测，规则见 [GPU 指南](gpu-operators.md)。重启 Agent 会按当前配置重新建立执行后端；`--new-session` 还会创建新的工作副本。
+构建不读取模型配置。源码安装使用源码构建上下文；独立发行版将内置构建资源解压到临时目录，构建结束后自动清理。`--profile auto|standard|cuda` 选择环境，`--image` 指定标签。构建与启动共用 Docker 主机环境检测，规则见 [GPU 指南](gpu-operators.md)。重启 Agent 会按当前配置重新建立执行后端；`--new-session` 还会创建新的工作副本。
 
 ## 切换安装目录
 
@@ -121,11 +169,29 @@ repo-agent doctor --root /path/to/project
 
 安装前检查 Python 3.11+、venv/ensurepip、项目文件、已有虚拟环境路径和版本、CA 信任库；native 按系统检查 sandbox-exec 或 bubblewrap/libseccomp，以及所选工具链，Docker 模式才检查 Docker 服务。检查证书文件和本地信任库不会访问 PyPI，不能保证网络、代理或远端证书可用。证书失败时应修复 Python 信任库或通过 `PIP_CERT` 提供可信 CA，不关闭校验。
 
+缺少 `venv` 或 `ensurepip` 时，检查会列出具体缺失项、当前解释器和基础 Python 路径，并按来源提供修复步骤。Debian/Ubuntu 系统 Python 提示安装匹配次版本的 `pythonX.Y-venv`；Homebrew 提示重装对应 Python formula；Conda 提示修复指定环境中的 Python。Fedora/RHEL 提供所属包查询命令，Arch 提示修复 Python 包；自定义 Python 提示通过原安装方式修复，避免误装到系统解释器。
+
+这些提示只展示命令，不会自动运行系统包管理器。修复后，按输出中的 `AGENT_PYTHON=... ./install.sh --check` 重新检查，保留此前的 `--mode` 等选项；通过后去掉 `--check` 安装。`venv` 和 `ensurepip` 属于 Python 发行版组件，不使用 `pip install venv/ensurepip` 修复。包名与命令参考 [Ubuntu 包信息](https://packages.ubuntu.com/en/noble-updates/python3.12-venv)、[Homebrew Python](https://docs.brew.sh/Language-Runtimes-and-Packages)、[Conda install](https://docs.conda.io/projects/conda/en/stable/commands/install.html)。
+
 每次重装都重新创建 `.venv` 中的 Python 环境和命令入口，避免复用复制来的解释器；native 的受管 JS/TS、Go 服务可保留复用。旧环境临时保存在安装目录的 `.repo-agent-install-transaction/venv`。新环境在最终路径构建，避免移动后命令的解释器路径失效；**同目录重装期间请先退出本安装的 Agent 会话，不要同时启动命令**。这不是零停机升级。
 
-安装会验证 `pip check`、核心模块导入和两个命令的 `--help`。native 还会在实际原生沙箱中查询各语言示例的符号，失败会触发恢复；Docker 构建内也包含各语言符号测试。Docker 镜像先构建到临时标签，构建成功后才更新默认标签；若后续切换失败，恢复原标签。成功安装后仍使用共享默认标签，本功能不提供多个安装之间的永久镜像版本隔离。恢复不会删除构建缓存或强制清理容器。
+安装会验证 `pip check`、核心模块导入和两个命令的 `--help`。native 核心阶段会在实际原生沙箱中查询 Python 示例的符号，失败会触发恢复；Docker 构建内也包含各语言符号测试。Docker 镜像先构建到临时标签，构建成功后才更新默认标签；若后续切换失败，恢复原标签。成功安装后仍使用共享默认标签，本功能不提供多个安装之间的永久镜像版本隔离。恢复不会删除构建缓存或强制清理容器。
 
-普通异常和 Ctrl+C 会触发恢复；进程被强制结束后，下次安装会先处理恢复记录，也可独立执行 `--recover`。如果文件或链接被其他程序替换，或恢复镜像时 Docker 不可用，会保留恢复记录并提示处理，不覆盖外部修改。已存在的用户配置和安装新建的默认模板都保留。
+核心安装阶段的普通异常和 Ctrl+C 会触发恢复；进程被强制结束后，下次安装会先处理恢复记录，也可独立执行 `--recover`。如果文件或链接被其他程序替换，或恢复镜像时 Docker 不可用，会保留恢复记录并提示处理，不覆盖外部修改。已存在的用户配置和安装新建的默认模板都保留。
+
+native 安装分两阶段：先完成核心依赖、Python 语言服务、沙箱验证、配置和命令安装，并提交安装记录；然后逐个补齐或验证额外语言。额外工具链缺失、下载失败或符号验证失败只产生 WARN，不撤销核心安装，并继续尝试其余语言；补齐期间 Ctrl+C 停止后续语言，核心安装仍保留。核心成功后安装命令返回 0，即使部分额外语言未完成；需要严格检查单个补齐结果时运行 `repo-agent toolchains install <语言>`（失败返回 1）。未完成的语言记入安装记录，doctor 提示重试命令，成功补齐后清除提示。`--check --with-toolchains` 仍可严格检查额外工具链的前提条件，不安装任何内容。
+
+下载步骤（pip、npm、Go、Homebrew）统一分类错误：证书、认证、包版本/下载源和构建错误不盲目重试；DNS、代理连接、临时连接错误、限流和超时有限重试，默认最多额外重试 2 次，间隔 2、4 秒。每次尝试沿用工具自身的下载缓存，不清理全局缓存；这不保证从中断的字节处继续下载。单步默认超时 600 秒，可根据构建速度调整。Docker 构建沿用自身输出及恢复流程，不纳入该下载重试器。
+
+```bash
+AGENT_INSTALL_RETRIES=2 AGENT_INSTALL_TIMEOUT=900 ./install.sh
+AGENT_INSTALL_PROXY=http://127.0.0.1:7890 ./install.sh
+AGENT_INSTALL_GOPROXY=https://your-go-proxy.example repo-agent toolchains install go
+```
+
+`AGENT_INSTALL_RETRIES` 支持 0–5，`AGENT_INSTALL_TIMEOUT` 支持 1–3600 秒。`AGENT_INSTALL_PYPI_INDEX`、`AGENT_INSTALL_NPM_REGISTRY`、`AGENT_INSTALL_GOPROXY` 分别指定 Python、npm 和 Go 下载源；`AGENT_INSTALL_PROXY` 指定 HTTP(S) 代理。这些设置只传给安装子进程，不修改全局配置；未指定时继续使用已有包源/代理设置。证书使用既有的 `PIP_CERT` 等设置，不关闭证书校验。
+
+下载输出保存到 `${XDG_STATE_HOME:-~/.local/state}/repo-agent/install-logs/`，终端显示步骤、重试次数、失败分类及日志路径。日志文件权限为 600，过滤环境中的密钥及常见 URL/认证凭据；日志保留用于失败后的排查。排查后可自行删除该日志目录。`--check` 不下载、不创建这些日志。
 
 `doctor` 不修改配置或任务项目、不发送模型请求、不拉取镜像。它检查当前命令实际指向、PATH 重复入口、运行依赖、配置来源与参数冲突、失效安装记录，并按模式实测语言服务。测试使用自动清理的临时示例；Docker 测试使用断网、只读、无项目挂载的临时容器。ERROR 返回退出码 1，仅 WARN 返回 0；尚未填写模型/Key 是 WARN。诊断不会显示密钥。虚拟环境损坏导致全局命令无法启动时，可在安装目录执行：
 
@@ -159,14 +225,22 @@ repo-agent toolchains install all               # 补齐全部支持的语言
 ./install.sh --with-toolchains --languages go   # 免交互补齐 Python 和 Go
 ```
 
-列表展示宿主机 native 模式的 Python、JS/TS（含 JSX/TSX）、Go、C/C++/CUDA 文件服务。CUDA 文件复用 clangd，完整 CUDA 编译环境仍需 CUDA 镜像。该列表的“已安装”表示程序可启动，实际符号查询由补齐命令和 `doctor` 验证；Docker 镜像状态用 `repo-agent doctor --mode docker` 检查。
+列表展示宿主机 native 模式的 Python、JS/TS（含 JSX/TSX）、Go、C/C++/CUDA 文件服务。CUDA 文件复用 clangd；Linux / WSL2 native 的实际编译需预装本机 CUDA Toolkit 和所需框架，Docker 则使用 CUDA 镜像。符号查询成功不代表 GPU 或编译环境可用。该列表的“已安装”表示程序可启动，实际符号查询由补齐命令和 `doctor` 验证；Docker 镜像状态用 `repo-agent doctor --mode docker` 检查。
 
 补齐命令用于 macOS / Linux 宿主机，不切换默认模式、不重装 Agent、不修改模型配置。成功补齐的语言会记入安装记录；失败时可重试同一命令，此前已完成的语言和系统工具链保留。JS/TS、Go 先下载到临时目录，下载或验证失败不会替换原有服务；Python 使用当前虚拟环境的 pip 安装，失败后可能保留已安装的 Python 包。执行补齐前先退出当前安装的 Agent，完成后重启。
 
-后续 `doctor` 验证该安装记录中的语言范围。首次缺少 Homebrew 时会明确提示访问 https://brew.sh，不执行远程脚本安装 Homebrew。Homebrew 包已存在但版本过旧或仍不可用时，会尝试更新对应包；升级后的工具链仍需通过检查。
+后续 `doctor` 验证该安装记录中的语言范围。首次缺少 Homebrew 时会明确提示访问 https://brew.sh，不执行远程脚本安装 Homebrew。Homebrew 包已存在但版本过旧或仍不可用时，会尝试更新对应包；升级后的工具链仍需通过检查。额外检查失败不会撤销已经成功的核心安装。
 
 Python 依赖、`gopls` 和 npm 的 JS/TS 语言服务位于本安装 `.venv` 内，失败恢复和卸载会一起处理。npm 安装不使用全局安装，也不执行依赖的生命周期脚本。运行时会使用这些受管目录和常见 Homebrew 工具链路径，Go 缓存位于沙箱的私有临时目录。
 
 **Homebrew 安装或更新的 Node.js、Go、LLVM 属于共享系统工具，不在失败恢复和卸载时删除或降级。** Homebrew/npm/Go 的下载缓存也不进行全局清理。安装前须退出本安装的 Agent 会话。
 
-普通安装不包含开发工具；需要测试和静态检查时，另行安装 `.[dev]`。GPU 相关依赖继续由 CUDA 镜像配置提供，native 安装不会在 macOS 上安装 CUDA/Triton。
+普通安装不包含开发工具；需要测试和静态检查时，另行安装 `.[dev]`。Docker 的 GPU 依赖由 CUDA 镜像提供；Linux / WSL2 native 使用用户预装的驱动、Agent Python 环境中的 PyTorch/Triton 及系统 Toolkit。native 安装不会自动安装这些计算依赖，macOS native 不提供本项目的 NVIDIA CUDA GPU 支持。
+
+## 依赖锁定
+
+`uv.lock` 是 Python 依赖的统一版本来源；`requirements-core.lock`、`requirements-lsp.lock`、`requirements-build.lock` 是带哈希的 pip 安装清单，分别用于核心运行、包含 Python 语言服务的运行环境和源码构建。源码安装和发行版安装均使用锁文件，不在安装时重新解析范围依赖。发行版安装 wheel 时不触发构建或隐式安装依赖；源码安装在固定构建依赖下保留 editable 模式。
+
+Python 安装启用 `--require-hashes --only-binary=:all:`，平台/Python 版本没有匹配 wheel 时会明确失败，不静默回退到本地编译。可选语言服务失败仍不阻断核心安装，网络代理、证书提示、重试及事务恢复机制继续有效。
+
+JS/TS 使用 `dependencies/node/package-lock.json` 和 `npm ci`，固定传递依赖并校验 npm integrity；原生补齐和 Docker 镜像使用同一清单。Go 的 gopls 继续固定版本并使用 Go 模块校验。系统 Python、Node.js、Go、LLVM、Linux 系统包及 Docker 基础镜像不属于应用锁文件；已有兼容工具链仍会复用。CUDA 镜像额外的 pytest/ninja 等工具也不在本次 Python 核心锁内，因此不宣称整个系统或 GPU 镜像可以逐字节复现。

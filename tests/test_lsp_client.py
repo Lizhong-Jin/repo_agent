@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.lsp_client import (
+from tools._internal.lsp_client import (
     LspClient,
     LspError,
     LspResponseError,
@@ -132,3 +132,41 @@ def test_missing_executable(tmp_path):
     with pytest.raises(OSError):
         connection.start()
     connection.close()
+
+
+def test_workspace_capabilities_and_per_document_language(tmp_path, monkeypatch):
+    connection = client(tmp_path)
+    sent = []
+    original_send = connection._send
+
+    def capture(message):
+        sent.append(message)
+        return original_send(message)
+
+    monkeypatch.setattr(connection, "_send", capture)
+    with connection:
+        path = tmp_path / "kernel.cu"
+        connection.sync_document(path, text="int example;", language_id="cuda")
+        document = connection.request("test/documents")[path.as_uri()]
+        assert document["textDocument"]["languageId"] == "cuda"
+        initialize = next(message for message in sent if message.get("method") == "initialize")
+        symbols = initialize["params"]["capabilities"]["workspace"]["symbol"]
+        assert symbols["resolveSupport"]["properties"] == ["location.range"]
+        assert symbols["symbolKind"]["valueSet"] == list(range(1, 27))
+
+
+@pytest.mark.parametrize("timeout", [True, 0, -1, float("inf"), float("nan")])
+def test_reject_invalid_request_timeouts_before_start(tmp_path, timeout):
+    connection = client(tmp_path)
+    with pytest.raises(ValueError, match="timeout"):
+        connection.request("test/documents", timeout=timeout)
+    assert connection._process is None
+
+
+def test_per_request_timeout_overrides_session_default(tmp_path):
+    with client(tmp_path, timeout_seconds=10) as connection:
+        start = time.monotonic()
+        with pytest.raises(LspTimeoutError):
+            connection.request("test/hang", timeout=0.05)
+        assert time.monotonic() - start < 3
+        assert connection._process.poll() is not None

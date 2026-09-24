@@ -56,6 +56,21 @@ def test_show_without_config_uses_code_defaults_not_install_template(tmp_path, c
     assert list(tmp_path.iterdir()) == []
 
 
+def test_web_search_configuration_and_secret_masking(tmp_path, capsys):
+    config_command.main(["set", "AGENT_WEB_SEARCH_PROVIDER", "brave"])
+    save_user_config({"BRAVE_SEARCH_API_KEY": "private-search-key"})
+    config_command.main(["show"])
+    output = capsys.readouterr().out
+    assert 'AGENT_WEB_SEARCH_PROVIDER = "brave"' in output
+    assert "BRAVE_SEARCH_API_KEY = [已设置，已隐藏]" in output
+    assert "private-search-key" not in output
+    with pytest.raises(ValueError):
+        config_command.validate_value("AGENT_WEB_SEARCH_PROVIDER", "unknown")
+    save_user_config({"BRAVE_SEARCH_API_KEY": ""})
+    assert any("BRAVE_SEARCH_API_KEY" in warning for warning in
+               config_command.validate_configuration(tmp_path))
+
+
 def test_show_uses_root_and_explicit_project_file(tmp_path, monkeypatch, capsys):
     project = tmp_path / "project"
     project.mkdir()
@@ -75,6 +90,7 @@ def test_show_uses_root_and_explicit_project_file(tmp_path, monkeypatch, capsys)
     [
         ("LLM_TIMEOUT", "60", "60"),
         ("LLM_STREAM", "FALSE", "false"),
+        ("AGENT_WEB_FETCH_ENABLED", "TRUE", "true"),
         ("LLM_PROVIDER", "claude", "anthropic"),
         ("LLM_BASE_URL", "", ""),
         ("LLM_TIMEOUT", "1e-12", "1e-12"),
@@ -104,6 +120,7 @@ def test_set_updates_only_user_configuration(tmp_path, capsys, key, value, store
         ("LLM_TIMEOUT", "0"),
         ("LLM_TIMEOUT", "nan"),
         ("LLM_STREAM", "maybe"),
+        ("AGENT_WEB_FETCH_ENABLED", "maybe"),
         ("AGENT_MAX_STEPS", "-1"),
         ("LLM_MAX_RETRIES", "11"),
         ("LLM_TEMPERATURE", "3"),
@@ -183,7 +200,7 @@ def test_config_model_sets_values_without_agent(monkeypatch, capsys):
     monkeypatch.setattr(
         config_command,
         "prompt_model",
-        lambda wizard: ModelSelection("qwen", "model-name", "fake-key"),
+        lambda wizard: ModelSelection("qwen", "qwen-plus", "fake-key"),
     )
     config_command.main(["model"])
     assert read_config(user_config_path())["DASHSCOPE_API_KEY"] == "fake-key"

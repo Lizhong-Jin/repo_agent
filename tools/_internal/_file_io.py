@@ -1,0 +1,115 @@
+"""Bounded byte snapshots and staged atomic replacements, independent of text formats."""
+
+import hashlib
+import logging
+import os
+from dataclasses import dataclass
+from functools import cached_property
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+
+from .base import ToolResult
+from .errors import ToolErrorCode, tool_error
+
+
+def file_signature(info: os.stat_result) -> tuple[int, ...]:
+    return (
+        info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_size,
+        info.st_mtime_ns, info.st_ctime_ns,
+    )
+
+
+@dataclass(frozen=True)
+class FileSnapshot:
+    target: Path
+    raw: bytes
+    info: os.stat_result
+
+    @cached_property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.raw).hexdigest()
+
+    @property
+    def signature(self) -> tuple[int, ...]:
+        return file_signature(self.info)
+
+
+def read_snapshot(
+    candidate: Path,
+    target: Path,
+    info: os.stat_result,
+    max_bytes: int,
+    *,
+    verify_identity: bool = False,
+    size_message: str | None = None,
+) -> FileSnapshot | ToolResult:
+    """Caller checks path policy and regular-file type, and maps I/O exceptions.
+
+    Identity verification preserves the strict patch reader's before/after checks.
+    Plain readers retain their existing symlink policy. No text decoding occurs here.
+    """
+    if info.st_size > max_bytes:
+        return tool_error(ToolErrorCode.FILE_TOO_LARGE, size_message)
+    if verify_identity:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        descriptor = os.open(target, flags)
+        try:
+            source = os.fdopen(descriptor, "rb")
+        except BaseException:
+            os.close(descriptor)
+            raise
+        with source:
+            before = os.fstat(source.fileno())
+            if file_signature(before) != file_signature(info):
+                return tool_error(ToolErrorCode.FILE_CHANGED)
+            raw = source.read(max_bytes + 1)
+            after = os.fstat(source.fileno())
+        if (
+            file_signature(before) != file_signature(after)
+            or file_signature(candidate.lstat()) != file_signature(after)
+        ):
+            return tool_error(ToolErrorCode.FILE_CHANGED)
+        info = after
+    else:
+        with target.open("rb") as source:
+            raw = source.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        return tool_error(ToolErrorCode.FILE_TOO_LARGE, size_message)
+    return FileSnapshot(target=target, raw=raw, info=info)
+
+
+class StagedWrites:
+    """Own temporary files through success, failure and cancellation.
+
+    Each replacement is atomic; a group of replacements is not a transaction.
+    Callers own conflict checks and partial-commit reporting.
+    """
+
+    def __init__(self, *, temp_factory=NamedTemporaryFile, logger=None) -> None:
+        self._temp_factory = temp_factory
+        self._logger = logger or logging.getLogger(__name__)
+        self._paths: list[Path] = []
+
+    def __enter__(self):
+        return self
+
+    def stage(self, target: Path, content: bytes, mode: int | None = None) -> Path:
+        with self._temp_factory(mode="wb", dir=target.parent, delete=False) as temp:
+            path = Path(temp.name)
+            self._paths.append(path)  # Register before write/flush/fsync can fail.
+            temp.write(content)
+            temp.flush()
+            os.fsync(temp.fileno())
+        if mode is not None:
+            os.chmod(path, mode)
+        return path
+
+    def replace(self, target: Path, content: bytes, mode: int | None = None) -> None:
+        self.stage(target, content, mode).replace(target)
+
+    def __exit__(self, *_exc) -> None:
+        for path in self._paths:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                self._logger.warning("Unable to remove temporary file %s", path, exc_info=True)

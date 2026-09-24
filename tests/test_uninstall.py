@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from cli import install_network
 from cli.installation import (
     COMMANDS,
     MANIFEST,
@@ -21,6 +22,13 @@ from cli.setup import configure_path, configure_user, install_command
 from cli.uninstall import uninstall
 
 SOURCE = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def download_executor_for_installer_mocks(monkeypatch):
+    monkeypatch.setattr(
+        install_network, "execute", lambda command, **kw: subprocess.run(command, **kw)
+    )
 
 
 @pytest.fixture
@@ -243,6 +251,9 @@ def test_invalid_install_is_rejected_before_creating_environment(installations, 
         "cli/install_transaction.py",
         "cli/config_storage.py",
         "cli/dependencies.py",
+        "cli/paths.py",
+        "cli/install_network.py",
+        "cli/toolchains.py",
     ):
         shutil.copy2(SOURCE / name, root / name)
     # Missing project metadata must fail preflight, before creating an environment.
@@ -398,6 +409,9 @@ def test_shell_install_cancellation_precedes_all_writes(installations, tmp_path,
         "cli/install_transaction.py",
         "cli/config_storage.py",
         "cli/dependencies.py",
+        "cli/paths.py",
+        "cli/install_network.py",
+        "cli/toolchains.py",
     ):
         shutil.copy2(SOURCE / name, new / name)
     before = snapshot(tmp_path)
@@ -442,6 +456,9 @@ def test_bootstrap_confirms_once_before_creating_environment(installations, tmp_
             if command[1:3] != ["-m", "pip"] or command[3] == "check":
                 events.append("smoke")
                 return
+            if "--require-hashes" in command:
+                events.append("locked")
+                return
             assert command[:5] == [str(new / ".venv/bin/python"), "-m", "pip", "install", "-e"]
             events.append("pip")
             (new / ".venv/bin").mkdir()
@@ -467,7 +484,7 @@ def test_bootstrap_confirms_once_before_creating_environment(installations, tmp_
         ],
     )
     setup.main()
-    assert events == ["confirm", "venv", "pip", "smoke", "smoke", "smoke", "smoke"]
+    assert events == ["confirm", "venv", "locked", "pip", "smoke", "smoke", "smoke", "smoke"]
     for name in COMMANDS:
         assert (bins / name).resolve() == new / ".venv/bin" / name
 

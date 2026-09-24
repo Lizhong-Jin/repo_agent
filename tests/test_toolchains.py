@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cli import dependencies, setup, toolchains
+from cli import dependencies, install_network, setup, toolchains
 from cli.installation import COMMANDS, begin_install, load_record, prepare_venv, save_record
 
 
@@ -15,6 +15,13 @@ def states(services=()):
         {"language": name, "toolchain": True, "service": name in services}
         for name in dependencies.LANGUAGES
     ]
+
+
+@pytest.fixture(autouse=True)
+def download_executor_for_installer_mocks(monkeypatch):
+    monkeypatch.setattr(
+        install_network, "execute", lambda command, **kw: subprocess.run(command, **kw)
+    )
 
 
 @pytest.fixture
@@ -66,7 +73,7 @@ def test_skip_installs_python_without_brew_or_server_downloads(installed, monkey
     monkeypatch.setattr(setup, "preparation_report", lambda *a: [("ERROR", "Homebrew", "missing")])
     monkeypatch.setattr(
         setup,
-        "prepare_toolchains",
+        "install_missing",
         lambda *a: pytest.fail("skip must not install tools"),
     )
     monkeypatch.setattr(
@@ -76,9 +83,15 @@ def test_skip_installs_python_without_brew_or_server_downloads(installed, monkey
     )
     monkeypatch.setattr(setup, "print_language_status", lambda root: None)
     requested = []
-    monkeypatch.setattr(
-        setup, "install_language_servers", lambda root, names: requested.extend(names)
-    )
+
+    def supplement(root, names):
+        assert preserve
+        requested.extend(names)
+        record = load_record(root)
+        record["languages"] += names
+        save_record(record)
+
+    monkeypatch.setattr(setup, "install_missing", supplement)
     verified = []
     monkeypatch.setattr(
         setup,
@@ -88,7 +101,10 @@ def test_skip_installs_python_without_brew_or_server_downloads(installed, monkey
 
     def run(command, **kw):
         if command[1:4] == ["-m", "pip", "install"]:
-            assert command[-1] == str(root) + "[lsp]"
+            if "--require-hashes" in command:
+                assert str(root / "requirements-lsp.lock") in command
+                return SimpleNamespace(returncode=0)
+            assert str(root) + "[lsp]" in command
             (root / ".venv/bin").mkdir()
             for name in COMMANDS:
                 (root / ".venv/bin" / name).write_text("new entry")
@@ -100,9 +116,9 @@ def test_skip_installs_python_without_brew_or_server_downloads(installed, monkey
         sys, "argv", ["setup", "--bootstrap", "--agent-home", str(root), "--no-path"]
     )
     setup.main()
-    assert requested == []
-    assert verified == (["python", "go"] if preserve else ["python"])
-    assert load_record(root)["languages"] == verified
+    assert requested == (["go"] if preserve else [])
+    assert verified == ["python"]
+    assert load_record(root)["languages"] == (["python", "go"] if preserve else ["python"])
     if preserve:
         assert (root / ".venv/bin/gopls").read_text() == "keep gopls"
         assert (root / ".venv/lsp/marker").read_text() == "keep npm"

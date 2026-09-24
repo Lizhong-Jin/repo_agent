@@ -27,7 +27,8 @@ from .errors import (
     RateLimitError,
 )
 from .events import RequestEvents
-from .model_limits import fetch_context_limit
+from .model_catalog import model_info
+from .model_limits import ModelContextLimit, fetch_context_limit
 from .providers import get_provider
 from .schemas import LLMRequest, LLMResponse
 from .streaming import StreamAssembler
@@ -225,6 +226,12 @@ class LLMClient(_ClientCore):
                 self.provider.api_format,
                 self.config.model,
             )
+            if self._context_limit is None:
+                info = model_info(self.provider.name, self.config.model)
+                if info is not None and info.context_window is not None:
+                    self._context_limit = ModelContextLimit(
+                        info.context_window, info.context_kind, "内置模型目录（标准 API 规格）"
+                    )
             self._context_limit_loaded = True
         return self._context_limit
 

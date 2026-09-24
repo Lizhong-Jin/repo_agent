@@ -1,12 +1,14 @@
 # Repo Agent
 
-在终端中读取、修改和验证代码的 Coding Agent。支持多家模型 API、按项目保存会话、工具调用、Docker 沙箱，以及 CUDA / Triton / PyTorch 算子开发。
+在终端中读取、修改和验证代码的 Coding Agent。支持多家模型 API、按项目保存会话、工具调用、native / Docker 沙箱，以及 CUDA / Triton / PyTorch 算子开发。
 
 ## 快速开始
 
 需要 macOS / Linux 和 Python 3.11+。首次默认 native 模式，支持 macOS（Seatbelt）和 Linux（Bubblewrap + seccomp），不需要 Docker。Linux 需预先安装 bubblewrap 和 libseccomp，并允许非特权 user namespace；首次安装需要联网下载依赖。
 
-在源码目录安装：
+普通用户可使用独立发行包，解压后运行 `./install-release.sh`；运行环境保存在用户数据目录，安装后可删除下载目录。构建与使用步骤见[独立发行版安装](docs/installation.md#独立发行版安装)。
+
+开发者在源码目录安装：
 
 ```bash
 ./install.sh
@@ -27,7 +29,7 @@ repo-agent
 
 ```bash
 repo-agent --sandbox native                      # macOS / Linux 原生沙箱
-repo-agent --sandbox native --sandbox-profile cuda # Linux / WSL2：显式开放 NVIDIA GPU
+repo-agent --sandbox native --sandbox-profile standard # 强制关闭 GPU；Linux / WSL2 默认自动检测
 repo-agent --sandbox local                       # 仅文件/Git 工具，不执行命令
 repo-agent-build-sandbox                         # Docker 模式首次使用前构建
 repo-agent --sandbox docker --sandbox-writeback manual
@@ -42,12 +44,16 @@ Docker 会话可使用 `/diff` 查看副本变更、`/apply` 回写原项目；l
 | 模型接入 | 9 个厂商预设，支持 Chat Completions、OpenAI Responses、Anthropic Messages、Gemini generateContent；[供应商列表](docs/llm.md#接入模型) |
 | 对话界面 | 流式回复、可滚动历史、思考内容显示、模型切换、累计用量与上下文占比 |
 | 会话管理 | 按项目保存，默认恢复最后一次会话；支持命名、改名、列表和日志跟随 |
-| 文件与检索 | 文件读写、编辑、批量编辑、目录操作、文件查找、内容搜索、Git 状态与差异 |
+| 上下文管理 | `/compact` 手动压缩、按预算自动压缩、原始消息归档及只读历史回查；[使用说明](docs/context-compaction.md) |
+| 文件与检索 | 文件读写、局部编辑、多文件严格补丁、目录操作、文件查找、内容搜索、Git 状态与差异 |
 | 隔离执行 | macOS / Linux 原生沙箱直接运行本机工具；Docker 使用工作副本，支持回写、冲突检查与备份恢复 |
-| 代码符号 | Python、JS/TS、Go、C/C++、CUDA 文件的语言服务器查询 |
-| Skills | 内置 `debug-and-fix`、`gpu-kernel-development`；支持项目 `skills/` 目录 |
-| GPU 开发 | Docker 自动检测，Linux / WSL2 native 显式授权 NVIDIA GPU；CUDA / Triton 环境自检 |
+| 代码语义 | Python、JS/TS、Go、C/C++、CUDA 文件的符号、定义、引用、诊断、悬浮信息和工作区符号查询；具体能力取决于语言服务器 |
+| 环境查询 | `get_execution_environment` 报告实际执行模式、工具链、权限、超时与可选 GPU 状态 |
+| Skills | 内置 `coding`、`debug-and-fix`、`gpu-kernel-development`；通用系统提示词配合按需加载的专业技能，支持项目 `skills/` 目录 |
+| GPU 开发 | Docker、Linux / WSL2 native 默认自动检测 NVIDIA GPU；CUDA / Triton 环境自检 |
 | 诊断与追踪 | 配置校验及恢复、安装诊断、对话日志、模型和工具调用记录 |
+| Web 搜索 | 可选 Brave Search API，支持批量查询、域名过滤及逐项错误；由主进程联网，命令沙箱保持断网，见 [Web 搜索](docs/web-search.md) |
+| 网页读取 | 公开 HTML、纯文本和 JSON 的受控抓取、正文提取与缓存分页；不需要搜索密钥，见 [Web 页面读取](docs/web-fetch.md) |
 
 ## 常用命令
 
@@ -91,7 +97,9 @@ repo-agent doctor                               # 按安装模式诊断依赖和
 | `--sandbox native`（默认，macOS / Linux） | 原项目 | 可用，平台原生隔离，工具断网 | 直接修改原项目，无回写备份 |
 | `--sandbox docker` | 项目工作副本 | 可用，工具运行时断网 | 手动或按配置自动回写 |
 
-Docker 失败不会自动切换为 local。每次工具调用使用独立容器：工作副本文件保留，进程和 `/tmp` 不跨调用保留。GPU 环境需要 Linux NVIDIA 主机和已配置的 NVIDIA Container Toolkit，详见[GPU 算子开发](docs/gpu-operators.md)。
+Docker 失败不会自动切换为 local。每次工具调用使用独立容器：工作副本文件保留，进程和 `/tmp` 不跨调用保留。Docker GPU 模式需要可用的 NVIDIA 驱动和 NVIDIA Container Toolkit；Linux / WSL2 native GPU 使用本机驱动及已准备的框架/Toolkit，无需 Docker。两者均需在实际执行环境核验依赖，详见[GPU 算子开发](docs/gpu-operators.md)。
+
+`get_execution_environment` 在各模式均可用，local 不启动环境探测子进程。可选 `web_search` / `web_fetch` 由主进程联网，独立于上表的命令、Python 和语言服务器权限。
 
 当前支持文本和自定义函数工具；尚无多模态输入、自动上下文压缩、跨会话知识记忆、多 Agent 协作、并行工具执行或整项任务的费用预算。保存会话用于延续对话，不会自动提炼长期知识。模型正常结束回答不等于验证通过，应结合实际测试和工具结果判断。
 
