@@ -32,10 +32,8 @@ logs/
 .env.*
 !.env.example
 
-# Local review and benchmark reports
-docs/project-review*
-docs/native-scan-benchmark*
-#docs/NATIVE*
+# Local diagnostics, test reports, and design proposals
+/notes/
 
 # Local installation ownership journal, lock, and recovery state
 .repo-agent-install.json
