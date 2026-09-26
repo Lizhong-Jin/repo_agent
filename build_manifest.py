@@ -252,9 +252,15 @@ def verify_wheel(wheel, root):
         _verify_tar(archive.read(CONTEXT_ARCHIVE), context)
 
 
-def verify_release_archive(archive, bundle):
+def verify_release_archive(archive, bundle, *, prefix=None):
     expected = {
-        path.relative_to(bundle).as_posix(): path for path in bundle.rglob("*") if path.is_file()
+        (
+            (Path(prefix) / path.relative_to(bundle)).as_posix()
+            if prefix
+            else path.relative_to(bundle).as_posix()
+        ): path
+        for path in bundle.rglob("*")
+        if path.is_file()
     }
     _verify_tar(archive.read_bytes(), expected)
 

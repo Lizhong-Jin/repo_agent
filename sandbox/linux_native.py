@@ -5,27 +5,18 @@ Existing protected paths are masked on every invocation. Unlike Seatbelt, Linux
 mount rules do not filter future filenames; see docs/native-sandbox.md.
 """
 
-import errno
 import json
 import os
 import shutil
 import stat
 import sys
 from pathlib import Path
-
-from tools._internal.file_policy import is_protected_name
+from time import perf_counter
 
 from .linux_gpu import NativeGPU
+from .linux_policy import PolicyPlan, PolicyScan
+from .linux_policy import outermost as _outermost
 from .native import NativeBackend
-
-
-def _outermost(paths):
-    """Keep path spelling (including /bin aliases) when pruning nested mounts."""
-    result = []
-    for path in sorted(set(paths), key=lambda p: (len(p.parts), str(p))):
-        if not any(path.is_relative_to(parent) for parent in result):
-            result.append(path)
-    return result
 
 
 class LinuxNativeBackend(NativeBackend):
@@ -72,73 +63,50 @@ class LinuxNativeBackend(NativeBackend):
         return tuple(sorted((p for p in paths if p.exists()), key=str))
 
     def _check_workspace(self):
+        self._check_workspace_layout()
+        super()._check_workspace()
+
+    def _prepare_workspace(self):
+        # File metadata checks are performed in _mount_policy, even for direct
+        # _run calls and startup probes. Never carry observations to another run.
+        self._check_workspace_layout()
+        self.last_workspace_check_ms = 0.0
+
+    def _check_workspace_layout(self):
         for path in self.read_paths:
             if self.workspace.is_relative_to(path):
                 raise ValueError("Linux native 工作区不能位于只读系统或解释器目录内")
         for path in (Path("/proc"), Path("/dev"), Path("/sys")):
             if self.workspace.is_relative_to(path) or path.is_relative_to(self.workspace):
                 raise ValueError("Linux native 工作区与系统虚拟文件系统冲突")
-        super()._check_workspace()
 
     def _check_workspace_file(self, path: str, info: os.stat_result):
         super()._check_workspace_file(path, info)
         if not (stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)):
             raise ValueError("Linux native 工作区含 socket/FIFO/设备等特殊文件，拒绝执行")
 
+    def _policy_plan(self):
+        # Only configuration is reusable across calls. Resolve aliases and inspect
+        # existence/permissions again on every scan, including startup probes.
+        key = (self.workspace, tuple(self.read_paths), tuple(self.protected_paths))
+        plan = getattr(self, "_compiled_policy_plan", None)
+        if plan is None or (plan.workspace, plan.read_paths, plan.protected_paths) != key:
+            plan = self._compiled_policy_plan = PolicyPlan.compile(*key)
+        return plan
+
     def _mount_policy(self, read_paths, *, git_read):
-        masks, git_paths = [], []
-        roots = _outermost([self.workspace, *read_paths])
-
-        def inaccessible(error):
-            # Read-only system trees can contain root-only directories (e.g.
-            # WSL's /lib/modules/.../lost+found). Lack of list permission does
-            # NOT prevent opening known filenames in an execute-only directory.
-            # Hide the entire unscanned subtree, never simply skip its contents.
-            if (not isinstance(error, PermissionError)
-                    or error.errno not in {errno.EACCES, errno.EPERM}
-                    or not error.filename):
-                raise error
-            path = Path(error.filename)
-            if (not path.is_absolute() or not path.is_relative_to(root)
-                    or path.is_relative_to(self.workspace)
-                    or path.resolve(strict=True).is_relative_to(self.workspace)):
-                raise error
-            masks.append(path)
-
-        def protected(path):
-            if any(path == p or path.is_relative_to(p) for p in self.protected_paths):
-                return True
-            if path.name.lower() == ".git" and git_read:
-                git_paths.append(path)
-                return False
-            # Check the leaf: a readable .git must still hide its credential/log children.
-            return is_protected_name(path.name)
-
-        for root in roots:
-            if protected(root):
-                masks.append(root)
-                continue
-            if not root.is_dir():
-                continue
-            for directory, dirs, names in os.walk(root, followlinks=False, onerror=inaccessible):
-                for name in list(dirs) + names:
-                    path = Path(directory) / name
-                    if protected(path):
-                        # Read-only toolchains often contain cert.pem symlinks. Hide
-                        # their containing directory instead of following a mount
-                        # target into another subtree. Workspace aliases fail closed.
-                        masks.append(path.parent if path.is_symlink()
-                                     and not path.is_relative_to(self.workspace) else path)
-                        if name in dirs:
-                            dirs.remove(name)
-        masks = _outermost(masks)
-        for path in (*masks, *git_paths):
-            if path.is_symlink():
-                raise ValueError(f"Linux native 受保护挂载点不能是符号链接：{path}")
-        return masks, git_paths
+        self._check_workspace_layout()
+        scan = PolicyScan(self._policy_plan(), git_read=git_read,
+                          check_workspace_file=self._check_workspace_file)
+        try:
+            return scan.run(read_paths)
+        finally:
+            self.last_policy_metrics = scan.metrics
 
     def _sandbox_command(self, command, control, scratch, read_paths, *, git_read=False):
         masks, git_paths = self._mount_policy(read_paths, git_read=git_read)
+        materialization_started = perf_counter()
+        plan = self._policy_plan()
         # Placeholders are never exposed by a writable mount, even with project code
         # running as the same UID. Empty files/dirs deny reads as well as writes.
         hidden_file, hidden_dir = control / "hidden-file", control / "hidden-dir"
@@ -157,16 +125,21 @@ class LinuxNativeBackend(NativeBackend):
         # A directory that is a mountpoint cannot be renamed. Guard ancestors of
         # fixed protected paths and embedded runtimes, otherwise a command could
         # move their parent and expose the original data on the next invocation.
-        guards = set()
-        for path in (*self.protected_paths, *read_paths):
+        guards = set(plan.guard_candidates)
+        # Per-call request files normally live outside the workspace. Keep this
+        # path general without retaining their locations in the static plan.
+        extra_paths = tuple(path for path in read_paths if path not in plan.read_paths)
+        for path in extra_paths:
             for parent in path.parents:
                 if parent == self.workspace or not parent.is_relative_to(self.workspace):
                     break
-                if parent.is_dir():
-                    guards.add(parent)
+                guards.add(parent)
         for path in sorted(guards, key=lambda p: (len(p.parts), str(p))):
-            argv.extend(["--bind", str(path), str(path)])
-        for path in _outermost(read_paths):
+            if path.is_dir():
+                argv.extend(["--bind", str(path), str(path)])
+        mounts = (plan.mount_roots if tuple(read_paths) == plan.read_paths
+                  else _outermost(read_paths))
+        for path in mounts:
             argv.extend(["--ro-bind", str(path), str(path)])
         for path in git_paths:
             argv.extend(["--ro-bind", str(path), str(path)])
@@ -179,6 +152,9 @@ class LinuxNativeBackend(NativeBackend):
             "--remount-ro", "/", "--remount-ro", "/tmp", "--",
             str(self.python), "-I", str(self.runtime / "sandbox/linux_exec.py"), *command,
         ])
+        self.last_policy_metrics["materialization_ms"] = (
+            perf_counter() - materialization_started
+        ) * 1000
         return argv
 
     def _environment(self, scratch):
@@ -231,50 +207,39 @@ class LinuxNativeBackend(NativeBackend):
             self.gpu = self.gpu.select(inventory.stdout)
         denied = self.directory / "denied.txt"
         denied.write_text("private host data")
-        # Exercise namespaces AND the seccomp launcher. Missing files in the private
-        # mount namespace are expected ENOENT rather than Seatbelt's EPERM.
-        code = f'''
-import ctypes, errno, os, pathlib, socket, subprocess, sys, tempfile
-def blocked(action):
-    try:
-        action()
-    except OSError as e:
-        assert e.errno in (errno.EPERM, errno.EACCES, errno.ENOENT, errno.EROFS), repr(e)
-    else:
-        raise AssertionError('native restriction missing')
-blocked(lambda: pathlib.Path({str(denied)!r}).read_text())
-blocked(lambda: pathlib.Path({str(denied)!r}).write_text('changed'))
-blocked(lambda: socket.socket())
-blocked(lambda: socket.socket(socket.AF_UNIX))
-blocked(lambda: pathlib.Path('/proc/1/root' + {str(denied)!r}).read_text())
-libc = ctypes.CDLL(None, use_errno=True)
-assert libc.unshare(0x10000000) == -1 and ctypes.get_errno() == errno.EPERM
-p = pathlib.Path(tempfile.gettempdir()) / 'probe'
-p.write_text('ok'); assert p.read_text() == 'ok'; p.unlink()
-with tempfile.NamedTemporaryFile(dir={str(self.workspace)!r}, prefix='.native-probe-') as f:
-    f.write(b'probe'); f.flush()
-    blocked(lambda: os.link(f.name, str(p)))
-child = subprocess.run([sys.executable, '-I', '-c', 'import socket; socket.socket()'], capture_output=True)
-assert child.returncode != 0
-print('native-ok')
-'''
-        result = self._run([str(self.python), "-I", "-c", code], timeout=30)
-        if result.exit_code != 0 or result.stdout.strip() != "native-ok" or not self.healthy:
-            raise ValueError(
-                "Linux 原生沙箱自检失败；需要 bubblewrap、libseccomp 以及可用的非特权 user namespace。"
-                "系统 AppArmor、sysctl 或外层容器可能限制 namespace；不会退回未隔离执行。\n"
-                + result.stderr[:2000]
-            )
+        command = [
+            str(self.python), "-I", str(self.runtime / "sandbox/linux_preflight.py"),
+            "--workspace", str(self.workspace), "--denied", str(denied),
+        ]
         if self.gpu:
-            self._gpu_preflight()
-
-    def _gpu_preflight(self):
-        result = self._run([
-            str(self.python), "-I", str(self.runtime / "sandbox/native_gpu_probe.py"),
-        ], timeout=90)
+            command.append("--gpu")
+        # One policy/namespace, separate 30s isolation and 90s CUDA child deadlines.
+        result = self._run(command, timeout=125 if self.gpu else 35)
         try:
             report = json.loads(result.stdout)
-            valid = (report["cuda_kernel_verified"] is True
+            isolation = report["isolation"]
+            valid = (isolation["exit_code"] == 0 and isolation["timed_out"] is False
+                     and isolation["stdout"].strip() == "native-ok")
+        except (ValueError, KeyError, TypeError, AttributeError):
+            report, isolation, valid = {}, {}, False
+        if (not valid or result.timed_out or result.stdout_truncated or not self.healthy
+                or (not self.gpu and result.exit_code != 0)):
+            raise ValueError(
+                "Linux 原生沙箱自检失败；需要 bubblewrap、libseccomp 以及可用的非特权 "
+                "user namespace。系统 AppArmor、sysctl 或外层容器可能限制 namespace；"
+                "不会退回未隔离执行。\n"
+                + str(isolation.get("stderr", ""))[:2000] + result.stderr[:2000]
+            )
+        self.preflight_metrics = {"isolation_ms": isolation.get("duration_ms")}
+        if self.gpu:
+            self._validate_gpu_preflight(report.get("gpu"), result)
+            self.preflight_metrics["gpu_ms"] = report["gpu"].get("duration_ms")
+
+    def _validate_gpu_preflight(self, check, result):
+        try:
+            report = json.loads(check["stdout"])
+            valid = (check["exit_code"] == 0 and check["timed_out"] is False
+                     and report["cuda_kernel_verified"] is True
                      and isinstance(report["devices"], list) and bool(report["devices"]))
             if self.gpu.visible_uuid:
                 valid = valid and report["devices"] == [self.gpu.visible_uuid]
@@ -282,10 +247,11 @@ print('native-ok')
             valid = False
         if (result.exit_code != 0 or result.timed_out or result.stdout_truncated
                 or not self.healthy or not valid):
+            diagnostic = check.get("stderr", "") if isinstance(check, dict) else ""
             raise ValueError(
                 "Linux native CUDA 自检失败；未退回 CPU 或放宽隔离。"
                 "请检查驱动、UVM 设备权限、libcuda/PTX JIT 库和所选 GPU；MIG/NVSwitch 暂不支持。\n"
                 "如需关闭 GPU，可显式使用 --sandbox-profile standard。\n"
-                + result.stderr[:2000]
+                + str(diagnostic)[:2000] + result.stderr[:2000]
             )
         self.gpu_probe = report

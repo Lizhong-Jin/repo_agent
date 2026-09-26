@@ -15,7 +15,7 @@ from llm import (
     ToolCall,
     ToolDefinition,
 )
-from tools import ReadFileTool, ToolResult
+from tools import ExecutionKind, ReadFileTool, ToolResult
 
 
 def reply(text="", calls=(), finish=None):
@@ -41,6 +41,7 @@ class ScriptedLLM:
 
 
 class RecordingTool:
+    execution_kind = ExecutionKind.HOST_CONTROL
     definition = ToolDefinition("record", "Record a value")
 
     def __init__(self):
@@ -109,6 +110,7 @@ def test_file_error_then_model_corrects_path(tmp_path):
 @pytest.mark.parametrize("invalid_result", [False, True])
 def test_tool_exception_or_invalid_result_is_observation(invalid_result):
     class BrokenTool(RecordingTool):
+        execution_kind = ExecutionKind.HOST_CONTROL
         def execute(self, arguments):
             if invalid_result:
                 return "not a ToolResult"

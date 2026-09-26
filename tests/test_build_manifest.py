@@ -227,3 +227,15 @@ def test_source_docker_entry_rejects_stale_allowlist(source, monkeypatch):
     with paths.docker_build_context() as context:
         assert context == source
         assert "!cli/new_module.py" in (context / ".dockerignore").read_text()
+
+
+def test_release_verification_checks_enclosing_folder(tmp_path):
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / ".env.example").write_text("template")
+    archive = tmp_path / "release.tar.gz"
+    with tarfile.open(archive, "w:gz") as output:
+        output.add(bundle / ".env.example", arcname="repo-agent-0.1.0/.env.example")
+    manifest.verify_release_archive(archive, bundle, prefix="repo-agent-0.1.0")
+    with pytest.raises(ValueError):
+        manifest.verify_release_archive(archive, bundle, prefix="repo-agent-0.2.0")

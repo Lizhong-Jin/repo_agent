@@ -18,7 +18,7 @@ from cli.session import SavedConversation
 from cli.tui import ConversationUI
 from llm import LLMConfig, LLMRequest, LLMResponse, Message, ToolCall, Usage
 from llm.schemas import ProviderState
-from tools import ToolResult
+from tools import ExecutionKind, ToolResult
 
 
 class Model:
@@ -179,6 +179,7 @@ def test_automatic_compacts_during_tool_loop_and_preserves_pending_task(conversa
     )
 
     class LargeTool:
+        execution_kind = ExecutionKind.HOST_CONTROL
         definition = HistoryTool(conv.archive, "read").definition
         executions = 0
 

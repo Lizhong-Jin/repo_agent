@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from llm import Message, ToolDefinition
 from llm.token_estimation import estimate_context_tokens
-from tools import ToolResult
+from tools import ExecutionKind, ToolResult
 
 from .session import SESSION_ID, validate_history
 
@@ -206,6 +206,8 @@ class HistoryArchive:
 
 
 class HistoryTool:
+    execution_kind = ExecutionKind.HOST_CONTROL
+
     def __init__(self, archive, operation):
         self.archive, self.operation = archive, operation
 

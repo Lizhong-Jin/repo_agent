@@ -5,7 +5,7 @@ from typing import Any
 
 from llm import ToolDefinition
 
-from ._internal.base import Tool, ToolResult
+from ._internal.base import ExecutionKind, Tool, ToolResult
 from ._internal.errors import ToolErrorCode, tool_error
 from ._internal.web_backend import (
     MAX_BATCH,
@@ -18,6 +18,8 @@ from ._internal.web_http import MAX_URL_CHARS
 
 
 class WebSearchTool:
+    execution_kind = ExecutionKind.TRUSTED_NETWORK
+
     def __init__(self, backend: WebBackend):
         self.backend = backend
 
@@ -104,6 +106,8 @@ class WebSearchTool:
 
 
 class WebFetchTool:
+    execution_kind = ExecutionKind.TRUSTED_NETWORK
+
     def __init__(self, backend: WebBackend):
         self.backend = backend
 

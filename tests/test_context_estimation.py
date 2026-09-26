@@ -8,6 +8,7 @@ from cli.live import SessionStatus
 from llm import Message, ToolCall, Usage
 from llm.schemas import ProviderState, ToolDefinition
 from llm.token_estimation import estimate_context_tokens
+from tools import ExecutionKind
 
 
 class OfflineModel:
@@ -16,6 +17,7 @@ class OfflineModel:
 
 
 class Tool:
+    execution_kind = ExecutionKind.HOST_CONTROL
     definition = ToolDefinition("read_file", "Read a file", {
         "type": "object", "properties": {"path": {"type": "string"}},
     })

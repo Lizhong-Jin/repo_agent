@@ -289,6 +289,8 @@ def test_single_task_cli_applies_after_run_and_signals_failure(
 
     monkeypatch.setattr(cli, "AgentRuntime", lambda *a, **kw: SimpleNamespace(
         run=run, llm=a[0], _task_number=0, estimate_context_tokens=lambda history=(): 0,
+        restore_tool_groups=lambda names: (), loaded_tool_groups=(),
+        reset_tool_groups=lambda: None,
     ))
     if failed:
         with pytest.raises(SystemExit) as error:

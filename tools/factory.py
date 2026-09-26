@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from ._internal.base import Tool
+from ._internal.base import Tool, validate_tools
 from ._internal.lsp_config import LspRegistry, default_lsp_registry
 from .execute import (
     GetExecutionEnvironmentTool,
@@ -38,6 +38,23 @@ from .semantic import (
 )
 
 
+def create_file_tools(workspace_root: str | Path) -> list[Tool]:
+    """Only audited, built-in file implementations may run in the lightweight layer."""
+    return validate_tools([
+        ReadFileTool(workspace_root),
+        WriteFileTool(workspace_root),
+        EditFileTool(workspace_root),
+        ApplyPatchTool(workspace_root),
+        ListFileTool(workspace_root),
+        FindFileTool(workspace_root),
+        SearchFilesTool(workspace_root),
+        MakeDirectoryTool(workspace_root),
+        DeleteFileTool(workspace_root),
+        MoveFileTool(workspace_root),
+        GetPathInfoTool(workspace_root),
+    ])
+
+
 def create_default_tools(
     workspace_root: str | Path,
     *,
@@ -54,7 +71,7 @@ def create_default_tools(
     """
     if type(isolated_execution) is not bool:
         raise ValueError("isolated_execution must be a boolean")
-    return [
+    return validate_tools([
         GetExecutionEnvironmentTool(
             workspace_root,
             execution_allowed=isolated_execution,
@@ -62,18 +79,7 @@ def create_default_tools(
             command_timeout_seconds=command_timeout_seconds,
             python_timeout_seconds=python_timeout_seconds,
         ),
-        # filesystem tools
-        ReadFileTool(workspace_root),
-        WriteFileTool(workspace_root),
-        EditFileTool(workspace_root),
-        ApplyPatchTool(workspace_root),
-        ListFileTool(workspace_root),
-        FindFileTool(workspace_root),
-        SearchFilesTool(workspace_root),
-        MakeDirectoryTool(workspace_root),
-        DeleteFileTool(workspace_root),
-        MoveFileTool(workspace_root),
-        GetPathInfoTool(workspace_root),
+        *create_file_tools(workspace_root),
         # command and code_intelligence tools
         *(
             [
@@ -138,4 +144,4 @@ def create_default_tools(
         # git tools
         GitDiffTool(workspace_root, execution_allowed=isolated_execution),
         GitStatusTool(workspace_root, execution_allowed=isolated_execution),
-    ]
+    ])

@@ -14,6 +14,7 @@ def test_interactive_file_tasks_with_default_tools(tmp_path, monkeypatch, capsys
     # Script only the remote model. All local file operations and message conversions are real.
     rounds = iter(
         [
+            [("load_tool_group", {"group": "file_editing"})],
             [("make_directory", {"path": "demo"})],
             [
                 ("write_file", {"path": "demo/math.py", "content": source}),
@@ -119,13 +120,17 @@ def test_interactive_file_tasks_with_default_tools(tmp_path, monkeypatch, capsys
     assert "tokens：" not in output
     assert "已修复加法函数。" in output
     assert "已删除临时文件，保留修复后的代码。" in output
-    assert "模型调用=6 次，工具调用=8 次" in trace_text
+    assert "模型调用=7 次，工具调用=9 次" in trace_text
     assert "模型调用=2 次，工具调用=1 次" in trace_text
-    assert "输入=600，输出=120，合计=720" in trace_text.replace(",", "，").replace(" ", "")
+    assert "输入=700，输出=140，合计=840" in trace_text.replace(",", "，").replace(" ", "")
     assert "输入=200，输出=40，合计=240" in trace_text.replace(",", "，").replace(" ", "")
     assert "工具 edit_file" in trace_text
     assert "总耗时=" in trace_text
-    assert len(requests) == 8
+    assert len(requests) == 9
+    initial_tools = {item["function"]["name"] for item in requests[0]["tools"]}
+    loaded_tools = {item["function"]["name"] for item in requests[1]["tools"]}
+    assert "load_tool_group" in initial_tools and "write_file" not in initial_tools
+    assert "write_file" in loaded_tools and "git_diff" not in loaded_tools
     assert requests[0]["messages"][0]["content"] == "You are a test coding assistant."
     assert output.count("┏") == 3
     assert output.count("┗") == 3
@@ -133,9 +138,9 @@ def test_interactive_file_tasks_with_default_tools(tmp_path, monkeypatch, capsys
     assert len([m for m in requests[-1]["messages"] if m["role"] == "user"]) == 2
     assert (tmp_path / "demo/math.py").read_text() == corrected
     assert not (tmp_path / "demo/scratch.txt").exists()
-    assert "return a + b" in observations["step5_0"]["results"][0]["data"]["content"]
-    assert observations["step5_1"]["matches"][0]["path"] == "demo/math.py"
-    assert {entry["name"] for entry in observations["step5_2"]["entries"]} == {
+    assert "return a + b" in observations["step6_0"]["results"][0]["data"]["content"]
+    assert observations["step6_1"]["matches"][0]["path"] == "demo/math.py"
+    assert {entry["name"] for entry in observations["step6_2"]["entries"]} == {
         "math.py",
         "scratch.txt",
     }

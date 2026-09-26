@@ -195,6 +195,15 @@ def result(stdout, **kwargs):
                            timed_out=False, stdout_truncated=False, **kwargs)
 
 
+def startup_report(*, gpu=None):
+    report = {"isolation": {"exit_code": 0, "timed_out": False,
+                             "stdout": "native-ok\n", "stderr": "", "duration_ms": 1}}
+    if gpu is not None:
+        report["gpu"] = {"exit_code": 0, "timed_out": False,
+                         "stdout": json.dumps(gpu), "stderr": "", "duration_ms": 2}
+    return report
+
+
 @pytest.mark.parametrize("failure", ["driver", "timeout", "cleanup", "protocol", "wrong_device", "cpu"])
 def test_gpu_preflight_never_accepts_cpu_fallback_or_wrong_device(backend, monkeypatch, failure):
     backend.gpu = NativeGPU("nvidia", "0", (), visible_uuid=UUID0)
@@ -212,9 +221,10 @@ def test_gpu_preflight_never_accepts_cpu_fallback_or_wrong_device(backend, monke
         outcome.stdout = json.dumps({**report, "devices": [UUID1]})
     else:
         outcome.stdout = json.dumps({"cuda_kernel_verified": False, "devices": []})
-    monkeypatch.setattr(backend, "_run", lambda *a, **kw: outcome)
+    check = {"stdout": outcome.stdout, "stderr": outcome.stderr,
+             "exit_code": outcome.exit_code, "timed_out": outcome.timed_out}
     with pytest.raises(ValueError, match="CUDA 自检失败"):
-        backend._gpu_preflight()
+        backend._validate_gpu_preflight(check, outcome)
 
 
 def test_gpu_preflight_selects_then_checks_isolation_and_kernel(backend, monkeypatch):
@@ -227,16 +237,17 @@ def test_gpu_preflight_selects_then_checks_isolation_and_kernel(backend, monkeyp
         calls.append((command, backend.gpu))
         if len(calls) == 1:
             return result("inventory")
-        if len(calls) == 2:
-            return result("native-ok")
-        return result(json.dumps({"cuda_kernel_verified": True, "devices": [UUID1]}))
+        return result(json.dumps(startup_report(
+            gpu={"cuda_kernel_verified": True, "devices": [UUID1]},
+        )))
 
     monkeypatch.setattr("sandbox.linux_native.shutil.which", lambda *a, **kw: "/usr/bin/nvidia-smi")
     monkeypatch.setattr(NativeGPU, "select", lambda self, text: selected)
     monkeypatch.setattr(backend, "_run", run)
     backend._preflight()
     assert calls[0][1] == gpu
-    assert calls[1][1] == calls[2][1] == selected
+    assert len(calls) == 2 and calls[1][1] == selected
+    assert "--gpu" in calls[1][0]
     assert backend.gpu_probe["devices"] == [UUID1]
 
 
@@ -324,16 +335,19 @@ def test_default_constructor_probes_detected_gpu_and_propagates_failure(tmp_path
 
     def run(self, command, **kwargs):
         calls.append(command)
-        outcome = result("native-ok")
-        if command[-1].endswith("native_gpu_probe.py"):
-            outcome.exit_code = 1
+        report = startup_report()
+        if "--gpu" in command:
+            report["gpu"] = {"exit_code": 1, "timed_out": False,
+                             "stdout": "", "stderr": "driver failed"}
+        outcome = result(json.dumps(report))
+        outcome.exit_code = 1 if gpu_present else 0
         return outcome
 
     monkeypatch.setattr(LinuxNativeBackend, "_run", run)
     if gpu_present:
         with pytest.raises(ValueError, match="CUDA 自检失败"):
             LinuxNativeBackend(tmp_path)
-        assert len(calls) == 2  # No retry without GPU or unrestricted fallback.
+        assert len(calls) == 1  # No retry without GPU or unrestricted fallback.
     else:
         backend = LinuxNativeBackend(tmp_path)
         try:

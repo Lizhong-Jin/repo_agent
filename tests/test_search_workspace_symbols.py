@@ -379,10 +379,14 @@ def test_exact_output_budget_preserves_all_symbols(setup):
     assert result.success and result.data == original.data
 
 
-def test_single_oversized_symbol_returns_explicit_omission(setup):
+@pytest.mark.parametrize("max_output_chars", [None, 20_000, 51_200])
+def test_single_oversized_symbol_returns_explicit_omission(setup, max_output_chars):
     root, peer, make = setup
-    peer.result = [symbol(root / "a.py", "x" * 30_000)]
-    result = query(make(), limit=1)
+    tool = make(**({} if max_output_chars is None else {"max_output_chars": max_output_chars}))
+    # Exceed the actual configured budget, independent of changes to the default.
+    peer.result = [symbol(root / "a.py", "x" * (tool.max_output_chars + 1))]
+    result = query(tool, limit=1)
     assert result.success and result.data["symbols"] == []
     assert result.data["omitted_oversized_symbols"] == 1
     assert result.data["truncated"]
+    assert len(json.dumps(result.data, ensure_ascii=False)) <= tool.max_output_chars

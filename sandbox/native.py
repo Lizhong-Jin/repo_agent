@@ -8,12 +8,14 @@ import sys
 import tempfile
 from dataclasses import asdict, replace
 from pathlib import Path
+from time import perf_counter
 
-from tools._internal.base import ToolResult
+from tools._internal.base import ExecutionKind, ToolResult, execution_kind_of
+from tools._internal.file_access import FileAccess
 from tools._internal.file_policy import PROTECTED_NAMES, PROTECTED_SUFFIXES, runtime_protected_paths
 from tools._internal.process_runner import ProcessRunner, _BoundedCapture
 from tools.execute import GetExecutionEnvironmentTool, RunCommandTool, RunPythonTool
-from tools.factory import create_default_tools
+from tools.factory import create_default_tools, create_file_tools
 
 
 def _quoted(value):
@@ -79,9 +81,14 @@ def seatbelt_profile(workspace, scratch, read_paths, protected_paths, *, git_rea
 
 
 class NativeTool:
-    def __init__(self, definition, backend):
+    def __init__(self, definition, backend, execution_kind):
         self.definition = definition
         self.backend = backend
+        self.execution_kind = execution_kind
+        if execution_kind_of(self) not in {
+            ExecutionKind.TRUSTED_FILE, ExecutionKind.SANDBOXED_PROCESS,
+        }:
+            raise ValueError("Native proxies only accept file/process tools")
 
     def execute(self, arguments):
         return self.backend.execute(self.backend.workspace, self.definition.name, arguments)
@@ -128,6 +135,9 @@ class NativeBackend:
     })
 
     def __init__(self, workspace, *, profile="auto", gpus=None):
+        initialization_started = perf_counter()
+        self.startup_metrics = {}
+        self._performance_runs = []
         if profile not in {"auto", "standard", "cuda"}:
             raise ValueError("profile must be auto, standard or cuda")
         if profile == "standard" and gpus is not None:
@@ -152,20 +162,29 @@ class NativeBackend:
             self.runtime = self.directory / "runtime"
             from .resources import trusted_code_root
             source = trusted_code_root()
+            copy_started = perf_counter()
             # Freeze trusted tool code before allowing edits to the agent's own repository.
             for package in ("tools", "llm", "sandbox"):
                 shutil.copytree(
                     source / package, self.runtime / package,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
                 )
+            self.startup_metrics["runtime_copy_ms"] = (perf_counter() - copy_started) * 1000
             self.python = Path(sys.executable).absolute()
             self.read_paths = self._read_paths()
             self.protected_paths = tuple(runtime_protected_paths(self.workspace))
-            self._check_workspace()
+            self._prepare_workspace()
+            self.startup_metrics["workspace_check_ms"] = self.last_workspace_check_ms
             self._preflight()
+            if hasattr(self, "preflight_metrics"):
+                self.startup_metrics["checks"] = self.preflight_metrics
         except BaseException:
             self.close()
             raise
+        finally:
+            self.startup_metrics["total_ms"] = (perf_counter() - initialization_started) * 1000
+            self.startup_metrics["runs"] = self._performance_runs
+            del self._performance_runs
 
     def _read_paths(self):
         paths = {
@@ -185,6 +204,17 @@ class NativeBackend:
             if path and Path(path).name in {"site-packages", "dist-packages"}
         )
         return tuple(sorted(paths, key=str))
+
+    def _prepare_workspace(self):
+        """macOS validates here; Linux validates during each mount-policy scan."""
+        self._measure_workspace_check()
+
+    def _measure_workspace_check(self):
+        started = perf_counter()
+        try:
+            self._check_workspace()
+        finally:
+            self.last_workspace_check_ms = (perf_counter() - started) * 1000
 
     def _check_workspace(self):
         # A pre-existing hard link would let an allowed path modify an outside inode.
@@ -209,6 +239,8 @@ class NativeBackend:
             "mode": "native", "platform": self.platform_name, "isolation": self.isolation,
             "network": "disabled", "changes_apply_to": "original_project",
             "writeback_mode": "direct",
+            "file_tools": "trusted_host_file_service",
+            "process_tools": "os_sandbox",
             "writable_paths": [str(self.workspace), "per-call temporary directory"],
             "resources": {"memory_limit": None, "cpu_limit": None, "pids_limit": None},
             "persistence": {
@@ -238,6 +270,25 @@ class NativeBackend:
 
     def _run(self, command=None, *, request=None, git_read=False, timeout=130,
              cwd=None, max_output_bytes=4 * 1024 * 1024):
+        started = perf_counter()
+        metrics = {"preparation_ms": 0.0, "process_ms": 0.0, "total_ms": 0.0,
+                   "complete": False}
+        try:
+            result = self._run_measured(
+                command, request=request, git_read=git_read, timeout=timeout,
+                cwd=cwd, max_output_bytes=max_output_bytes, metrics=metrics,
+            )
+            metrics["complete"] = True
+            return result
+        finally:
+            metrics["total_ms"] = (perf_counter() - started) * 1000
+            self.last_run_metrics = metrics
+            if hasattr(self, "_performance_runs"):
+                self._performance_runs.append(metrics)
+
+    def _run_measured(self, command, *, request, git_read, timeout,
+                      cwd, max_output_bytes, metrics):
+        preparation_started = perf_counter()
         with tempfile.TemporaryDirectory(prefix="call-", dir=self.directory) as call:
             control = Path(call)
             scratch = control / "scratch"
@@ -255,11 +306,18 @@ class NativeBackend:
                     f"{str(self.workspace)!r})"
                 )
                 command = [str(self.python), "-I", "-c", bootstrap]
-            invocation = self._sandbox_command(
-                command, control, scratch, read_paths, git_read=git_read
-            )
+            self.last_policy_metrics = None
+            try:
+                invocation = self._sandbox_command(
+                    command, control, scratch, read_paths, git_read=git_read
+                )
+            finally:
+                metrics["preparation_ms"] = (perf_counter() - preparation_started) * 1000
+                if self.last_policy_metrics is not None:
+                    metrics["policy"] = dict(self.last_policy_metrics)
             runner = ProcessRunner(max_output_bytes=max_output_bytes,
                                    base_env=self._environment(scratch), supervise_tree=True)
+            process_started = perf_counter()
             try:
                 result = runner.run(
                     invocation,
@@ -269,6 +327,8 @@ class NativeBackend:
                 if runner.last_cleanup_status == "unknown":
                     self.healthy = False
                 raise
+            finally:
+                metrics["process_ms"] = (perf_counter() - process_started) * 1000
             if result.cleanup_error or (result.timed_out and result.cleanup_status != "confirmed"):
                 self.healthy = False
                 self.last_cleanup = {
@@ -320,17 +380,66 @@ class NativeBackend:
             )
 
     def tools(self):
-        return [NativeTool(tool.definition, self) for tool in
-                create_default_tools(self.workspace, isolated_execution=True,
-                                     **self._tool_limits())]
+        return [NativeTool(tool.definition, self, execution_kind_of(tool))
+                for tool in self._tool_catalog().values()]
+
+    def _tool_catalog(self):
+        if not hasattr(self, "_native_tools"):
+            self._native_tools = {tool.definition.name: tool for tool in create_default_tools(
+                self.workspace, isolated_execution=True, **self._tool_limits(),
+            )}
+        return self._native_tools
+
+    def _file_tools(self):
+        # Only factory-owned built-ins are eligible; a plugin's self-declared
+        # attribute or model argument cannot grant host execution privileges.
+        if not hasattr(self, "_trusted_file_tools"):
+            self._trusted_file_tools = {
+                tool.definition.name: tool for tool in create_file_tools(self.workspace)
+                if execution_kind_of(tool) is ExecutionKind.TRUSTED_FILE
+            }
+        return self._trusted_file_tools
+
+    def _execute_file(self, tool, arguments):
+        protected = tuple(getattr(self, "protected_paths", ())) + tuple(
+            runtime_protected_paths(self.workspace))
+        access = FileAccess(self.workspace, protected_paths=protected,
+                            read_only_paths=self.read_paths)
+        try:
+            with access.activate():
+                result = tool.execute(arguments)
+        except OSError:
+            result = ToolResult(False, error_code="PERMISSION_DENIED",
+                                error="无法安全访问工作区；请检查目录及文件权限")
+        return replace(result, data={**result.data, "execution_allowed": self.healthy})
 
     def _tool_limits(self):
         return {"command_timeout_seconds": self.command_timeout_seconds,
                 "python_timeout_seconds": self.python_timeout_seconds}
 
     def execute(self, workspace, name, arguments):
+        started = perf_counter()
+        self.last_workspace_check_ms = 0.0
+        self._performance_runs = []
+        try:
+            return self._execute(workspace, name, arguments)
+        finally:
+            self.last_tool_metrics = {
+                "tool": name, "total_ms": (perf_counter() - started) * 1000,
+                "workspace_check_ms": self.last_workspace_check_ms,
+                "runs": self._performance_runs,
+            }
+            del self._performance_runs
+
+    def _execute(self, workspace, name, arguments):
         if Path(workspace).resolve() != self.workspace:
             raise ValueError("Native 后端不能切换工作区")
+        tool = self._tool_catalog().get(name)
+        if tool is None:
+            return ToolResult(False, error_code="UNKNOWN_TOOL", error=f"Unknown tool: {name}")
+        kind = execution_kind_of(tool)
+        if kind not in {ExecutionKind.TRUSTED_FILE, ExecutionKind.SANDBOXED_PROCESS}:
+            raise ValueError(f"Native backend cannot execute host tool: {name}")
         if not self.healthy:
             if name == "get_execution_environment":
                 # Same machine, but no runtime/GPU probe processes while degraded.
@@ -348,7 +457,12 @@ class NativeBackend:
                                   error="进程清理未确认，暂停执行和写入；仍可读取文件和查询环境状态",
                                   data={"execution_allowed": False,
                                         "last_cleanup": getattr(self, "last_cleanup", {})})
-        self._check_workspace()
+        if kind is ExecutionKind.TRUSTED_FILE:
+            file_tool = self._file_tools().get(name)
+            if file_tool is None:
+                raise ValueError(f"Native file tool must be registered by create_file_tools: {name}")
+            return self._execute_file(file_tool, arguments)
+        self._prepare_workspace()
         if name in {"run_command", "run_python"}:
             # Keep argument/path validation identical to worker tools, but collect
             # program output directly outside the worker's final JSON protocol.

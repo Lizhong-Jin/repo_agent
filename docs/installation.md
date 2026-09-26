@@ -8,14 +8,18 @@
 
 普通用户可以使用维护者构建的 `repo-agent-<版本>.tar.gz`，无需 Git、源码 checkout 或 uv。发行包尚需维护者自行上传至 GitHub Releases，本项目的构建命令不会发布文件。安装仍需要可用的 Python 3.11+（含 venv/ensurepip），并联网下载锁定的 Python 依赖；不内置 Python 或系统工具链。
 
-解压到一个空目录后，在该目录运行：
+发行压缩包自带 `repo-agent-<版本>/` 顶层文件夹，直接解压即可，无需预先创建空目录。以 0.1.0 为例：
 
 ```bash
+tar -xzf repo-agent-0.1.0.tar.gz
+cd repo-agent-0.1.0
 ./install-release.sh --check
 ./install-release.sh
 ```
 
-已有源码时，也可以直接安装构建好的压缩包：
+`.env.example` 等隐藏文件包含在该文件夹内，保持发行文件原样，安装后再通过用户配置设置模型。
+
+已有源码时，也可以直接安装构建好的压缩包；更新后的安装器兼容新格式和旧版平铺格式：
 
 ```bash
 ./install-release.sh --archive dist/repo-agent-0.1.0.tar.gz

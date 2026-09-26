@@ -10,6 +10,7 @@ from tempfile import NamedTemporaryFile
 
 from .base import ToolResult
 from .errors import ToolErrorCode, tool_error
+from .file_access import current_file_access
 
 
 def file_signature(info: os.stat_result) -> tuple[int, ...]:
@@ -50,7 +51,19 @@ def read_snapshot(
     """
     if info.st_size > max_bytes:
         return tool_error(ToolErrorCode.FILE_TOO_LARGE, size_message)
-    if verify_identity:
+    access = current_file_access()
+    if access:
+        with access.open_read(target) as source:
+            before = os.fstat(source.fileno())
+            if file_signature(before) != file_signature(info):
+                return tool_error(ToolErrorCode.FILE_CHANGED)
+            raw = source.read(max_bytes + 1)
+            after = os.fstat(source.fileno())
+            access.regular(after)
+        if file_signature(before) != file_signature(after):
+            return tool_error(ToolErrorCode.FILE_CHANGED)
+        info = after
+    elif verify_identity:
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         descriptor = os.open(target, flags)
         try:
@@ -94,6 +107,11 @@ class StagedWrites:
         return self
 
     def stage(self, target: Path, content: bytes, mode: int | None = None) -> Path:
+        access = current_file_access()
+        if access:
+            staged = access.stage(target, content, mode)
+            self._paths.append(staged)
+            return staged
         with self._temp_factory(mode="wb", dir=target.parent, delete=False) as temp:
             path = Path(temp.name)
             self._paths.append(path)  # Register before write/flush/fsync can fail.

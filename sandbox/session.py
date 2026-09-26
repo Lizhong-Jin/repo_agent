@@ -12,7 +12,7 @@ from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
-from tools._internal.base import ToolResult
+from tools._internal.base import ExecutionKind, ToolResult, execution_kind_of
 from tools._internal.file_policy import runtime_protected_paths
 from tools.factory import create_default_tools
 
@@ -68,7 +68,12 @@ def files(
 
 
 class SandboxedTool:
-    def __init__(self, definition, session, *, writeback_mode=None):
+    def __init__(self, definition, session, *, execution_kind, writeback_mode=None):
+        self.execution_kind = execution_kind
+        if execution_kind_of(self) not in {
+            ExecutionKind.TRUSTED_FILE, ExecutionKind.SANDBOXED_PROCESS,
+        }:
+            raise ValueError("Docker proxies only accept file/process tools")
         if definition.name in {"run_command", "run_python"}:
             parameters = deepcopy(definition.parameters)
             parameters["properties"]["check_id"] = {
@@ -258,7 +263,8 @@ class SandboxSession:
         if writeback_mode not in {None, "manual", "on-success"}:
             raise ValueError("writeback_mode must be manual or on-success")
         return [
-            SandboxedTool(tool.definition, self, writeback_mode=writeback_mode)
+            SandboxedTool(tool.definition, self, execution_kind=execution_kind_of(tool),
+                          writeback_mode=writeback_mode)
             for tool in create_default_tools(
                 self.workspace, isolated_execution=True,
                 command_timeout_seconds=self.policy.command_timeout_seconds,

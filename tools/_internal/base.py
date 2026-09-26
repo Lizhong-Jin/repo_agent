@@ -1,16 +1,50 @@
 """Common tool result, ready to send back through the provider-neutral LLM interface."""
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Protocol
 
 from llm import Message, ToolCall, ToolDefinition
 
 
+class ExecutionKind(Enum):
+    """Trusted host metadata, never part of the model's argument schema."""
+
+    HOST_CONTROL = "host_control"
+    TRUSTED_FILE = "trusted_file"
+    TRUSTED_NETWORK = "trusted_network"
+    SANDBOXED_PROCESS = "sandboxed_process"
+
+
 class Tool(Protocol):
+    execution_kind: ExecutionKind
+
     @property
     def definition(self) -> ToolDefinition: ...
 
     def execute(self, arguments: dict[str, Any]) -> "ToolResult": ...
+
+
+def execution_kind_of(tool: Tool) -> ExecutionKind:
+    """Require a concrete declaration; subclasses must reconsider their boundary.
+
+    Proxy instances receive their declaration from the trusted tool factory.
+    Strings, inherited defaults and model arguments are never accepted.
+    """
+    kind = getattr(tool, "__dict__", {}).get(
+        "execution_kind", vars(type(tool)).get("execution_kind")
+    )
+    if not isinstance(kind, ExecutionKind):
+        raise ValueError(
+            f"{type(tool).__name__} must explicitly declare execution_kind as an ExecutionKind"
+        )
+    return kind
+
+
+def validate_tools(tools: list[Tool]) -> list[Tool]:
+    for tool in tools:
+        execution_kind_of(tool)
+    return tools
 
 
 @dataclass(frozen=True)

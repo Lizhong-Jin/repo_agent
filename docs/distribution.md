@@ -19,7 +19,7 @@ npm install --package-lock-only --ignore-scripts --prefix dependencies/node
 python3 scripts/build_release.py
 ```
 
-每次发布先更新 `pyproject.toml` 的版本号并重新生成锁文件。构建前检查 Python 锁文件一致性；构建器使用临时隔离环境和固定构建依赖，输出 `dist/repo_agent-<版本>-py3-none-any.whl`、`dist/repo-agent-<版本>.tar.gz` 及其 `.sha256`。不会上传或发布。
+每次发布先更新 `pyproject.toml` 的版本号并重新生成锁文件。构建前检查 Python 锁文件一致性；构建器使用临时隔离环境和固定构建依赖，输出 `dist/repo_agent-<版本>-py3-none-any.whl`、`dist/repo-agent-<版本>.tar.gz` 及其 `.sha256`。不会上传或发布。压缩包内所有文件放在 `repo-agent-<版本>/` 顶层目录中；直接解压后进入这个目录即可安装。wheel 文件与安装后的版本目录结构不变。
 
 发行包通过明确的文件清单收集源码、默认模板和资源，不复制 `.venv`、`.git`、项目 `.env`、日志或下载缓存。wheel 包含用于独立重建 Docker 镜像的源码资源压缩包。`release.json` 记录版本、wheel 和各文件 SHA256；独立安装先校验，再写入用户版本目录。安装器不搬迁已创建的虚拟环境，以免破坏入口脚本中的绝对路径。
 

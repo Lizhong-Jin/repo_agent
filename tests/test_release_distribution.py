@@ -199,11 +199,13 @@ def test_node_lock_matches_declared_versions():
     not os.environ.get("REPO_AGENT_TEST_ARCHIVE"),
     reason="requires an explicitly built release archive and network",
 )
-def test_real_release_survives_download_removal(tmp_path, monkeypatch):
+@pytest.mark.parametrize("install_from_archive", [False, True])
+def test_real_release_survives_download_removal(tmp_path, monkeypatch, install_from_archive):
     archive = Path(os.environ["REPO_AGENT_TEST_ARCHIVE"]).resolve()
     bundle = tmp_path / "download"
     bundle.mkdir()
     paths.extract_files(archive, bundle)
+    bundle = release_install.locate_release_root(bundle)
     manifest = read_release(bundle)
     env = {
         key: value
@@ -238,7 +240,11 @@ def test_real_release_survives_download_removal(tmp_path, monkeypatch):
     run(
         [
             "/bin/bash",
-            bundle / "install-release.sh",
+            *(
+                [SOURCE / "install-release.sh", "--archive", archive]
+                if install_from_archive
+                else [bundle / "install-release.sh"]
+            ),
             "--mode",
             "local",
             "--no-path",
@@ -246,7 +252,7 @@ def test_real_release_survives_download_removal(tmp_path, monkeypatch):
             tmp_path / "bin",
         ]
     )
-    shutil.rmtree(bundle)
+    shutil.rmtree(tmp_path / "download")
     command = tmp_path / "bin/repo-agent"
     info = json.loads(run([command, "version"]))
     root = tmp_path / "data/repo-agent/versions" / manifest["version"]
@@ -365,3 +371,71 @@ def test_release_dependency_failure_preserves_old_command_and_config(tmp_path, m
     assert not (target / ".venv").exists()
     assert read_release(target)  # verified payload remains available for a retry
     assert config.read_text() == "LLM_MODEL=keep-user-model\n"
+
+
+@pytest.mark.parametrize("prefix", [None, "repo-agent-0.1.0"])
+def test_archive_check_accepts_flat_and_wrapped_layout(tmp_path, monkeypatch, prefix):
+    bundle = bundle_at(tmp_path / "bundle")
+    archive = tmp_path / "release.tar.gz"
+    with tarfile.open(archive, "w:gz") as output:
+        for path in bundle.rglob("*"):
+            if path.is_file():
+                name = path.relative_to(bundle).as_posix()
+                output.add(path, arcname=f"{prefix}/{name}" if prefix else name, recursive=False)
+    seen = []
+
+    def setup(args, **kwargs):
+        root = Path(args[args.index("--agent-home") + 1])
+        seen.append(read_release(root))
+        if prefix:
+            assert root.name == prefix
+
+    monkeypatch.setattr(release_install.setup, "main", setup)
+    destination = tmp_path / "data"
+    release_install.main(
+        ["--archive", str(archive), "--check", "--mode", "local", "--data-dir", str(destination)]
+    )
+    assert seen[0] == read_release(bundle)
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("kind", ["multiple", "extra-file", "nested", "symlink"])
+def test_archive_root_rejects_ambiguous_or_linked_layout(tmp_path, kind):
+    extracted = tmp_path / "extracted"
+    extracted.mkdir()
+    root = bundle_at(extracted / "repo-agent-0.1.0")
+    if kind == "multiple":
+        bundle_at(extracted / "repo-agent-0.2.0")
+    elif kind == "extra-file":
+        (extracted / "unexpected").write_text("unrelated")
+    elif kind == "nested":
+        outer = extracted / "outer"
+        outer.mkdir()
+        root.rename(outer / root.name)
+    else:
+        moved = tmp_path / "outside"
+        root.rename(moved)
+        root.symlink_to(moved, target_is_directory=True)
+    with pytest.raises(ValueError, match="无法定位"):
+        release_install.locate_release_root(extracted)
+
+
+def test_wrapped_archive_still_checks_hidden_template(tmp_path, monkeypatch):
+    bundle = bundle_at(tmp_path / "bundle")
+    (bundle / ".env.example").write_text("modified")
+    archive = tmp_path / "release.tar.gz"
+    with tarfile.open(archive, "w:gz") as output:
+        for path in bundle.rglob("*"):
+            if path.is_file():
+                output.add(
+                    path,
+                    arcname="repo-agent-0.1.0/" + path.relative_to(bundle).as_posix(),
+                    recursive=False,
+                )
+    monkeypatch.setattr(
+        release_install.setup,
+        "main",
+        lambda *a, **kw: pytest.fail("corrupt bundle cannot be installed"),
+    )
+    with pytest.raises(SystemExit):
+        release_install.main(["--archive", str(archive), "--check"])

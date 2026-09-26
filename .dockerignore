@@ -113,6 +113,8 @@ agent/skills/builtin/gpu-kernel-development/**
 !sandbox/linux_exec.py
 !sandbox/linux_gpu.py
 !sandbox/linux_native.py
+!sandbox/linux_policy.py
+!sandbox/linux_preflight.py
 !sandbox/lsp_smoke.py
 !sandbox/native.py
 !sandbox/native_gpu_probe.py
@@ -130,6 +132,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !tools/_internal/_workspace.py
 !tools/_internal/base.py
 !tools/_internal/errors.py
+!tools/_internal/file_access.py
 !tools/_internal/file_policy.py
 !tools/_internal/lsp_client.py
 !tools/_internal/lsp_config.py
@@ -140,10 +143,12 @@ agent/skills/builtin/gpu-kernel-development/**
 !tools/_internal/web_errors.py
 !tools/_internal/web_http.py
 !tools/_internal/web_pages.py
+!tools/dispatch.py
 !tools/execute.py
 !tools/factory.py
 !tools/filesystem.py
 !tools/git_tools.py
 !tools/semantic.py
+!tools/tool_groups.py
 !tools/web_tools.py
 !uv.lock

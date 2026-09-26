@@ -35,6 +35,7 @@ logs/
 # Local review and benchmark reports
 docs/project-review*
 docs/native-scan-benchmark*
+#docs/NATIVE*
 
 # Local installation ownership journal, lock, and recovery state
 .repo-agent-install.json

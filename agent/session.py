@@ -92,6 +92,15 @@ def validate_compaction(state, history):
         raise ValueError("会话压缩元数据无效") from None
 
 
+def validate_loaded_tool_groups(names):
+    # Optional v1 field. Store names only; permissions and membership are rebuilt.
+    if (not isinstance(names, list) or len(names) > 1024
+            or any(not isinstance(name, str)
+                   or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", name) for name in names)
+            or len(set(names)) != len(names)):
+        raise ValueError("无效的已加载工具组列表")
+
+
 class SessionStore:
     def __init__(self, project, *, new=False, directory=None, name=None):
         self.project = Path(project).resolve(strict=True)
@@ -168,6 +177,7 @@ class SessionStore:
                 raise ValueError
             validate_history(data["history"])
             validate_compaction(data.get("compaction"), data["history"])
+            validate_loaded_tool_groups(data.get("loaded_tool_groups", []))
             self.id, self.data = sid, data
         except (KeyError, TypeError, ValueError, OSError, LLMError) as error:
             raise ValueError(
@@ -201,6 +211,7 @@ class SessionStore:
         }
         validate_history(record["history"])
         validate_compaction(record.get("compaction"), record["history"])
+        validate_loaded_tool_groups(record.get("loaded_tool_groups", []))
         with self.catalog.locked() as index:
             metadata = index["sessions"][self.id]
             record.update({key: metadata[key] for key in ("name", "sequence", "created_at")})

@@ -142,7 +142,7 @@ def test_command_validation_and_output_bypass_worker_protocol(bare_backend, monk
     assert result.data["execution_allowed"] and backend.healthy
 
 
-def test_degraded_backend_keeps_sandboxed_reads_and_passive_environment(bare_backend, monkeypatch):
+def test_degraded_backend_keeps_lightweight_reads_and_passive_environment(bare_backend, monkeypatch):
     backend = bare_backend
     backend.healthy = False
     calls = []
@@ -153,8 +153,9 @@ def test_degraded_backend_keeps_sandboxed_reads_and_passive_environment(bare_bac
                              "", False, None, 1, False, False, cleanup_status="confirmed")
 
     monkeypatch.setattr(backend, "_run", run)
+    (backend.workspace / "a.py").write_text("still readable")
     assert backend.execute(backend.workspace, "read_file", {"reads": [{"path": "a.py"}]}).success
-    assert calls[0]["request"]["name"] == "read_file"
+    assert calls == []
     assert not backend.healthy  # A successful read does not clear quarantine.
     assert backend.execute(backend.workspace, "run_command", {"command": ["echo"]}).error_code == "NATIVE_UNHEALTHY"
     monkeypatch.setattr("tools.execute.ProcessRunner.run", lambda *a, **kw: pytest.fail("Active environment probe"))
@@ -163,7 +164,7 @@ def test_degraded_backend_keeps_sandboxed_reads_and_passive_environment(bare_bac
     assert result.data["executor_healthy"] is False
     assert result.data["execution"]["mode"] == "native"
     assert result.data["execution"]["command_execution_allowed"] is False
-    assert len(calls) == 1
+    assert calls == []
 
 
 def test_worker_failure_retains_bounded_output(bare_backend, monkeypatch):
@@ -172,7 +173,7 @@ def test_worker_failure_retains_bounded_output(bare_backend, monkeypatch):
         None, "first" + "x" * 50000 + "last", "error", True, None, 130000,
         False, False, status="timed_out", cleanup_status="confirmed", output_complete=False,
     ))
-    result = backend.execute(backend.workspace, "list_files", {})
+    result = backend.execute(backend.workspace, "git_status", {})
     assert result.error_code == "NATIVE_EXECUTION_FAILED"
     assert result.data["stdout"].startswith("first") and result.data["stdout"].endswith("last")
     assert result.data["stdout_truncated"] and len(result.data["stdout"]) < 33000

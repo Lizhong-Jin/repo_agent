@@ -20,6 +20,20 @@ else:
     from release_manifest import digest, read_release
 
 
+def locate_release_root(extracted):
+    """Accept legacy flat archives or exactly one enclosing release directory."""
+    if (extracted / "release.json").exists() or (extracted / "release.json").is_symlink():
+        return extracted  # read_release performs the full integrity check afterwards.
+    children = list(extracted.iterdir())
+    if len(children) == 1:
+        root = children[0]
+        if root.is_dir() and not root.is_symlink() and (root / "release.json").is_file():
+            return root
+    raise ValueError(
+        "无法定位发行包：需要根目录中的 release.json，或唯一顶层文件夹内的 release.json"
+    )
+
+
 def prepare_release(bundle, destination):
     release = read_release(bundle)
     if destination.is_symlink():
@@ -70,6 +84,7 @@ def main(argv=None):
                     stack.enter_context(tempfile.TemporaryDirectory(prefix="repo-agent-release-"))
                 )
                 extract_files(archive, bundle)
+                bundle = locate_release_root(bundle)
             elif args.sha256:
                 raise ValueError("--sha256 需要同时提供 --archive")
             release = read_release(bundle)

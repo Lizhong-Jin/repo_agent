@@ -1,6 +1,6 @@
 """Tools available to the coding agent."""
 
-from ._internal.base import Tool, ToolResult
+from ._internal.base import ExecutionKind, Tool, ToolResult
 from ._internal.errors import ToolErrorCode, tool_error
 from ._internal.process_runner import ProcessResult, ProcessRunner, ProcessStartError
 from .execute import (
@@ -9,6 +9,8 @@ from .execute import (
     RunPythonTool,
 )
 from .factory import create_default_tools
+from .dispatch import ToolDispatcher
+from .tool_groups import DEFAULT_TOOL_GROUPS, LoadToolGroupTool, ToolGroup
 from .filesystem import (
     ApplyPatchTool,
     DeleteFileTool,
@@ -36,7 +38,7 @@ from .semantic import (
 )
 
 __all__ = [
-    # code_intelligence tools
+    # semantic tools
     "GetSymbolsTool",
     "GoToDefinitionsTool",
     "FindReferencesTool",
@@ -68,8 +70,13 @@ __all__ = [
     "ProcessStartError",
     # other
     "Tool",
+    "ExecutionKind",
+    "ToolDispatcher",
     "ToolResult",
     "ToolErrorCode",
     "tool_error",
     "create_default_tools",
+    "DEFAULT_TOOL_GROUPS",
+    "LoadToolGroupTool",
+    "ToolGroup",
 ]

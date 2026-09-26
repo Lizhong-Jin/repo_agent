@@ -44,6 +44,9 @@ class SavedConversation:
         runtime.before_request = self.compactor.before_request
         data = store.data
         self.notice = f"新会话：{store.label}"
+        dropped_groups = runtime.restore_tool_groups(
+            data.get("loaded_tool_groups", []) if data is not None else [],
+        )
         if data is not None:
             self.compaction_state = data.get("compaction")
             if self.compaction_state:
@@ -85,6 +88,9 @@ class SavedConversation:
                 self._interrupted()
                 self.notice += "；上次任务未完成，未自动重跑"
 
+        if dropped_groups:
+            status.reset_context()
+            self.notice += "；部分工具组在当前配置中不可用，已移除：" + ", ".join(dropped_groups)
         status.initialize_context(runtime, self.history)
         self._chat(f"\n[{'恢复' if data else '开始'}会话：{store.label}]\n")
 
@@ -110,6 +116,7 @@ class SavedConversation:
         return {
             "history": [m.to_dict() for m in self.history],
             "compaction": self.compaction_state,
+            "loaded_tool_groups": list(self.runtime.loaded_tool_groups),
             "transcript": self.transcript.to_records(),
             "model": model_identity(self._config()),
             "status": self.status.session_state(),
@@ -216,6 +223,7 @@ class SavedConversation:
 
     def clear(self, *, transcript=None, emit=print):
         self.compaction_state = None
+        self.runtime.reset_tool_groups()
         self._chat("[上下文已清空；对话记录保留]\n")
         self.history = ()
         self.pending_task = None
@@ -228,7 +236,8 @@ class SavedConversation:
         self.checkpoint(transcript=transcript, strict=True)
         old_id, old_data = self.store.id, self.store.data
         record = self._record()
-        record.update(history=[], transcript=[], pending_task=None, compaction=None)
+        record.update(history=[], transcript=[], pending_task=None, compaction=None,
+                      loaded_tool_groups=[])
         record["status"].update(
             calls=0,
             totals={"input_tokens": 0, "output_tokens": 0},
@@ -248,6 +257,7 @@ class SavedConversation:
         if self.tracer is not None:
             self.tracer.switch_session()
         self.log_error = None
+        self.runtime.reset_tool_groups()
         self._chat(f"[开始会话：{self.label}]\n")
         self.history = ()
         self.pending_task = None

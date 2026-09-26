@@ -20,7 +20,7 @@ from urllib.request import url2pathname
 
 from llm import ToolDefinition
 
-from ._internal.base import ToolResult
+from ._internal.base import ExecutionKind, ToolResult
 from ._internal.errors import ToolErrorCode, tool_error
 from ._internal.file_policy import is_credential_path, is_protected_name
 from ._internal.lsp_client import (
@@ -399,6 +399,8 @@ class GetSymbolsTool(LspToolBase):
     ``execution_allowed`` is a trusted caller switch, not an isolation mechanism.
     """
 
+    execution_kind = ExecutionKind.SANDBOXED_PROCESS
+
     def __init__(
         self,
         workspace_root: str | Path,
@@ -411,7 +413,7 @@ class GetSymbolsTool(LspToolBase):
         timeout_seconds: float | None = None,
         max_file_bytes: int = 2 * 1024 * 1024,
         max_symbols: int = 200,
-        max_output_chars: int = 20_000,
+        max_output_chars: int = 51200,
     ) -> None:
         super().__init__(
             workspace_root,
@@ -626,6 +628,8 @@ class GoToDefinitionsTool(LspToolBase):
     LSP positions are converted internally to zero-based coordinates.
     """
 
+    execution_kind = ExecutionKind.SANDBOXED_PROCESS
+
     def __init__(
         self,
         workspace_root: str | Path,
@@ -638,7 +642,7 @@ class GoToDefinitionsTool(LspToolBase):
         timeout_seconds: float | None = None,
         max_file_bytes: int = 2 * 1024 * 1024,
         max_definitions: int = 200,
-        max_output_chars: int = 20_000,
+        max_output_chars: int = 51200,
         allow_external_locations: bool = False,
     ) -> None:
         super().__init__(
@@ -854,6 +858,8 @@ class FindReferencesTool(LspToolBase):
     LSP positions are converted internally to zero-based coordinates.
     """
 
+    execution_kind = ExecutionKind.SANDBOXED_PROCESS
+
     def __init__(
         self,
         workspace_root: str | Path,
@@ -866,7 +872,7 @@ class FindReferencesTool(LspToolBase):
         timeout_seconds: float | None = None,
         max_file_bytes: int = 2 * 1024 * 1024,
         max_references: int = 200,
-        max_output_chars: int = 20_000,
+        max_output_chars: int = 51200,
         allow_external_locations: bool = False,
     ) -> None:
         super().__init__(
@@ -1136,6 +1142,8 @@ class GetDiagnosticsTool(LspToolBase):
     LSP positions are converted internally to zero-based coordinates.
     """
 
+    execution_kind = ExecutionKind.SANDBOXED_PROCESS
+
     def __init__(
         self,
         workspace_root: str | Path,
@@ -1148,7 +1156,7 @@ class GetDiagnosticsTool(LspToolBase):
         timeout_seconds: float | None = None,
         max_file_bytes: int = 2 * 1024 * 1024,
         max_diagnostics: int = 200,
-        max_output_chars: int = 20_000,
+        max_output_chars: int = 51200,
     ) -> None:
         super().__init__(
             workspace_root,
@@ -1474,6 +1482,8 @@ class GetHoverTool(LspToolBase):
     LSP positions are converted internally to zero-based coordinates.
     """
 
+    execution_kind = ExecutionKind.SANDBOXED_PROCESS
+
     def __init__(
         self,
         workspace_root: str | Path,
@@ -1486,7 +1496,7 @@ class GetHoverTool(LspToolBase):
         timeout_seconds: float | None = None,
         max_file_bytes: int = 2 * 1024 * 1024,
         max_hover_chars: int = 12_000,
-        max_output_chars: int = 20_000,
+        max_output_chars: int = 51200,
     ) -> None:
         super().__init__(
             workspace_root,
@@ -1894,6 +1904,8 @@ class SearchWorkspaceSymbolsTool(LspToolBase):
     instead of paginated across fresh server sessions.
     """
 
+    execution_kind = ExecutionKind.SANDBOXED_PROCESS
+
     def __init__(
         self,
         workspace_root: str | Path,
@@ -1906,7 +1918,7 @@ class SearchWorkspaceSymbolsTool(LspToolBase):
         timeout_seconds: float | None = None,
         max_query_chars: int = 256,
         max_symbols: int = 100,
-        max_output_chars: int = 20_000,
+        max_output_chars: int = 51200,
         allow_external_locations: bool = False,
         max_workspace_files: int = 64,
         max_workspace_entries: int = 5_000,

@@ -9,6 +9,8 @@ from typing import Any, Literal
 from llm import LLM, InvalidResponseError, LLMError, LLMRequest, LLMResponse, Message, ToolCall
 from llm.token_estimation import estimate_context_tokens
 from tools import Tool, ToolResult
+from tools.dispatch import ToolDispatcher
+from tools.tool_groups import LoadToolGroupTool, ToolGroup, ToolGroupRegistry
 
 from .skills import LoadSkillTool, SkillRegistry
 from .Tracing import RunStats, RunTrace
@@ -73,6 +75,7 @@ class AgentRuntime:
         request_extra: dict[str, Any] | None = None,
         on_event: Callable[[str, RunStats], None] | None = None,
         skills: SkillRegistry | None = None,
+        tool_groups: Sequence[ToolGroup] = (),
     ) -> None:
         if type(max_steps) is not int or max_steps < 0:
             raise ValueError("max_steps must be a non-negative integer (0 means unlimited)")
@@ -106,18 +109,44 @@ class AgentRuntime:
         self.before_request = None
         self.check_cancelled = lambda: None
         self.thinking_settings = None
-        self._tools: dict[str, Tool] = {}
+        self.dispatcher = ToolDispatcher()
+        self._tools = self.dispatcher.tools
         definitions = []
         registered_tools = [*tools, *([LoadSkillTool(skills)] if skills is not None else [])]
+        self.tool_groups = ToolGroupRegistry(
+            tool_groups, (tool.definition.name for tool in registered_tools),
+        )
+        if self.tool_groups.groups:
+            registered_tools.append(LoadToolGroupTool(self.tool_groups))
         for tool in registered_tools:
             definition = deepcopy(tool.definition)
-            if definition.name in self._tools:
-                raise ValueError(f"Duplicate tool name: {definition.name}")
-            self._tools[definition.name] = tool
+            self.dispatcher.register(tool)
             definitions.append(definition)
-        self._definitions = tuple(definitions)
+        self._all_definitions = tuple(definitions)
+        self._definition_by_name = {definition.name: definition for definition in definitions}
         # Validate request settings before an interactive session accepts its first task.
         self._request([Message("user", "Validate configuration")])
+
+    @property
+    def _definitions(self):
+        # Append groups in load order so prior schemas remain a stable prefix.
+        general = tuple(d for d in self._all_definitions if d.name not in self.tool_groups.membership)
+        specialized = tuple(
+            self._definition_by_name[name]
+            for group in self.tool_groups.loaded
+            for name in self.tool_groups.available_members(group)
+        )
+        return general + specialized
+
+    @property
+    def loaded_tool_groups(self) -> tuple[str, ...]:
+        return self.tool_groups.loaded
+
+    def restore_tool_groups(self, names: Sequence[str]) -> tuple[str, ...]:
+        return self.tool_groups.restore(names)
+
+    def reset_tool_groups(self) -> None:
+        self.tool_groups.restore(())
 
     def _request(
         self, messages: Sequence[Message], *, max_output_tokens: int | None = None
@@ -313,10 +342,11 @@ class AgentRuntime:
                     )
                 raise InvalidResponseError("Model returned missing or reused tool call IDs")
             used_call_ids.update(ids)
+            exposed_names = frozenset(definition.name for definition in request.tools)
             for call in response.tool_calls:
                 self.check_cancelled()
                 with trace.tool(step, call) as record:
-                    observation = self._execute(call)
+                    observation = self._execute(call, exposed_names=exposed_names)
                     messages.append(observation)
                     trace.tool_result(record, observation)
                     if (
@@ -364,17 +394,26 @@ class AgentRuntime:
             event("usage", "", record.response_seconds or 0.0)
         return response
 
-    def _execute(self, call: ToolCall) -> Message:
+    def _execute(self, call: ToolCall, *, exposed_names: frozenset[str] | None = None) -> Message:
         tool = self._tools.get(call.name)
         if tool is None:
             return ToolResult(
                 success=False,
                 error_code="UNKNOWN_TOOL",
-                error=f"Unknown tool. Available tools: {', '.join(self._tools) or '(none)'}.",
+                error=f"Unknown tool. Available tools: "
+                      f"{', '.join(d.name for d in self._definitions) or '(none)'}.",
+            ).to_message(call)
+        if (not self.tool_groups.enabled(call.name)
+                or (exposed_names is not None and call.name not in exposed_names)):
+            group = self.tool_groups.membership.get(call.name)
+            return ToolResult(
+                False, error_code="TOOL_NOT_LOADED",
+                error=f"Load tool group {group!r} with load_tool_group, then use this tool "
+                      "in the next model response after its definition is provided.",
             ).to_message(call)
         try:
             # A tool must not mutate the assistant history or its provider-specific state.
-            result = tool.execute(deepcopy(call.arguments))
+            result = self.dispatcher.execute(call.name, deepcopy(call.arguments))
             if not isinstance(result, ToolResult):
                 raise TypeError("Tools must return ToolResult")
             return result.to_message(call)

@@ -34,13 +34,14 @@ PROTECTED_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".jks", ".keystore")
 
 
 def is_protected_name(path: str | PurePath) -> bool:
-    return any(
-        part.lower() in PROTECTED_NAMES
-        or part.lower() == ".env"
-        or part.lower().startswith(".env.")
-        or part.lower().endswith(PROTECTED_SUFFIXES)
-        for part in PurePath(path).parts
-    )
+    return any(is_protected_leaf(part) for part in PurePath(path).parts)
+
+
+def is_protected_leaf(name: str) -> bool:
+    """Match one directory entry, without constructing or parsing a path."""
+    name = name.lower()
+    return (name in PROTECTED_NAMES or name == ".env"
+            or name.startswith(".env.") or name.endswith(PROTECTED_SUFFIXES))
 
 
 def session_state_root() -> Path:
@@ -60,12 +61,19 @@ def runtime_protected_paths(root=None):
 _UNSET = object()
 
 
+def _operation_protected_paths():
+    from .file_access import current_file_access
+
+    access = current_file_access()
+    return tuple(runtime_protected_paths()) + (access.protected_paths if access else ())
+
+
 @dataclass(frozen=True)
 class PathPolicy:
     """An operation-scoped policy snapshot; file metadata is never cached here."""
 
     protected_paths: tuple[Path, ...] = field(
-        default_factory=lambda: tuple(runtime_protected_paths())
+        default_factory=_operation_protected_paths
     )
 
     def protects_path(self, requested: Path, resolved: Path) -> bool:

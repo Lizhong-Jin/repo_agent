@@ -1,12 +1,14 @@
 """Loading returns a frozen skill; executable resources use existing sandbox tools."""
 
 from llm import ToolDefinition
-from tools._internal.base import ToolResult
+from tools._internal.base import ExecutionKind, ToolResult
 
 from .registry import SkillError, SkillRegistry
 
 
 class LoadSkillTool:
+    execution_kind = ExecutionKind.HOST_CONTROL
+
     def __init__(self, registry: SkillRegistry):
         self.registry = registry
 

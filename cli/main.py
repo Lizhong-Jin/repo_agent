@@ -18,6 +18,7 @@ from sandbox import SandboxPolicy, SandboxSession
 from sandbox.environment import DEFAULT_IMAGE, check_image_profile, detect_environment
 from sandbox.native import NativeBackend
 from tools import create_default_tools
+from tools.tool_groups import DEFAULT_TOOL_GROUPS
 from tools._internal.web_backend import WebBackend
 from tools.web_tools import create_web_tools
 
@@ -353,6 +354,7 @@ def _main() -> None:
             runtime = AgentRuntime(
                 client,
                 tools=tools,
+                tool_groups=DEFAULT_TOOL_GROUPS,
                 max_steps=args.max_steps,
                 max_output_tokens=args.max_output_tokens,
                 max_recoveries=args.max_recoveries,

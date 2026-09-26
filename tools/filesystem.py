@@ -33,15 +33,28 @@ from ._internal._file_entries import inspect_entry, iter_search_candidates
 from ._internal._file_io import FileSnapshot, StagedWrites, read_snapshot
 from ._internal._workspace import WorkspaceTool
 from ._internal._workspace import serialized_file_write as _serialized_file_write
-from ._internal.base import ToolResult
+from ._internal.base import ExecutionKind, ToolResult
+from ._internal.file_access import current_file_access
 from ._internal.errors import ToolErrorCode, tool_error
 from ._internal.file_policy import is_credential_path
 
 logger = logging.getLogger(__name__)
 
+class FileTool(WorkspaceTool):
+    execution_kind = ExecutionKind.TRUSTED_FILE
+
+    @staticmethod
+    def _mkdir(path, **options):
+        access = current_file_access()
+        if access:
+            return access.mkdir(path, **options)
+        return path.mkdir(**options)
+
 # ReadFileTool
-class ReadFileTool(WorkspaceTool):
+class ReadFileTool(FileTool):
     """Read one or multiple UTF-8 source files with 1-based inclusive line ranges and bounded output."""
+
+    execution_kind = ExecutionKind.TRUSTED_FILE
 
     def __init__(
         self,
@@ -247,8 +260,10 @@ class ReadFileTool(WorkspaceTool):
 
 
 # WriteFileTool
-class WriteFileTool(WorkspaceTool):
+class WriteFileTool(FileTool):
     """Create or replace bounded UTF-8 text files inside a workspace."""
+
+    execution_kind = ExecutionKind.TRUSTED_FILE
 
     def __init__(
         self,
@@ -347,7 +362,7 @@ class WriteFileTool(WorkspaceTool):
             parent = target.parent
             if not parent.exists():
                 if create_parents:
-                    parent.mkdir(parents=True, exist_ok=True)
+                    self._mkdir(parent, parents=True, exist_ok=True)
                 else:
                     return tool_error(ToolErrorCode.PARENT_NOT_FOUND)
             if not parent.is_dir():
@@ -400,8 +415,10 @@ class _PreparedEdit:
     start_line: int
 
 # EditFileTool
-class EditFileTool(WorkspaceTool):
+class EditFileTool(FileTool):
     """replace one or multiple text fragments in an existing UTF-8 workspace file."""
+
+    execution_kind = ExecutionKind.TRUSTED_FILE
 
     def __init__(
         self,
@@ -816,8 +833,10 @@ class _PatchParseError(ValueError):
 
 
 # ApplyPatchTool
-class ApplyPatchTool(WorkspaceTool):
+class ApplyPatchTool(FileTool):
     """Apply strict context-based patches to existing UTF-8 workspace files."""
+
+    execution_kind = ExecutionKind.TRUSTED_FILE
 
     def __init__(
         self,
@@ -1521,8 +1540,10 @@ class ApplyPatchTool(WorkspaceTool):
         return matches
 
 # ListFileTool
-class ListFileTool(WorkspaceTool):
+class ListFileTool(FileTool):
     """List files in a directory with optional filtering and recursion."""
+
+    execution_kind = ExecutionKind.TRUSTED_FILE
 
     def __init__(
         self,
@@ -1592,7 +1613,8 @@ class ListFileTool(WorkspaceTool):
             if not target.is_dir():
                 return tool_error(ToolErrorCode.NOT_A_DIRECTORY)
             entries: list[dict[str, Any]] = []
-            for entry in target.iterdir():
+            access = current_file_access()
+            for entry in (access.iterdir(target) if access else target.iterdir()):
                 if not include_hidden and entry.name.startswith("."):
                     continue
                 try:
@@ -1646,8 +1668,10 @@ class ListFileTool(WorkspaceTool):
         )
 
 # FindFileTool
-class FindFileTool(WorkspaceTool):
+class FindFileTool(FileTool):
     """Find files or directories by glob pattern inside the workspace."""
+
+    execution_kind = ExecutionKind.TRUSTED_FILE
 
     def __init__(
         self,
@@ -1761,7 +1785,8 @@ class FindFileTool(WorkspaceTool):
                 return tool_error(ToolErrorCode.NOT_A_DIRECTORY)
             matches: list[dict[str, Any]] = []
             total_matches = 0
-            for candidate in target.glob(pattern):
+            access = current_file_access()
+            for candidate in (access.glob(target, pattern) if access else target.glob(pattern)):
                 try:
                     metadata = inspect_entry(candidate, policy)
                     if metadata is None:
@@ -1823,8 +1848,10 @@ class FindFileTool(WorkspaceTool):
         )
 
 # SearchFilesTool
-class SearchFilesTool(WorkspaceTool):
+class SearchFilesTool(FileTool):
     """Search for files in a directory with optional filtering and recursion."""
+
+    execution_kind = ExecutionKind.TRUSTED_FILE
 
     def __init__(
         self,
@@ -2081,8 +2108,10 @@ class SearchFilesTool(WorkspaceTool):
 
 
 # MakeDirectoryTool
-class MakeDirectoryTool(WorkspaceTool):
+class MakeDirectoryTool(FileTool):
     """Create directories inside a bounded workspace."""
+
+    execution_kind = ExecutionKind.TRUSTED_FILE
 
     def __init__(
         self,
@@ -2160,7 +2189,7 @@ class MakeDirectoryTool(WorkspaceTool):
                 )
             if not parents and not target.parent.is_dir():
                 return tool_error(ToolErrorCode.PARENT_NOT_FOUND)
-            target.mkdir(parents=parents, exist_ok=False)
+            self._mkdir(target, parents=parents, exist_ok=False)
         except FileExistsError:
             try:
                 if target.is_dir():
@@ -2193,8 +2222,10 @@ class MakeDirectoryTool(WorkspaceTool):
 
 
 # DeleteFileTool
-class DeleteFileTool(WorkspaceTool):
+class DeleteFileTool(FileTool):
     """Delete a file inside a bounded workspace."""
+
+    execution_kind = ExecutionKind.TRUSTED_FILE
 
     def __init__(
         self,
@@ -2254,7 +2285,8 @@ class DeleteFileTool(WorkspaceTool):
                 return tool_error(ToolErrorCode.NOT_A_FILE)
             relative_path = target.relative_to(self.workspace_root).as_posix()
             bytes_deleted = info.st_size
-            target.unlink()
+            access = current_file_access()
+            access.unlink(target) if access else target.unlink()
         except FileNotFoundError:
             return tool_error(ToolErrorCode.FILE_NOT_FOUND)
         except NotADirectoryError:
@@ -2276,8 +2308,10 @@ class DeleteFileTool(WorkspaceTool):
         )
 
 # MoveFileTool
-class MoveFileTool(WorkspaceTool):
+class MoveFileTool(FileTool):
     """Move or rename one regular file inside a bounded workspace."""
+
+    execution_kind = ExecutionKind.TRUSTED_FILE
 
     def __init__(
         self,
@@ -2373,13 +2407,17 @@ class MoveFileTool(WorkspaceTool):
             if not destination_parent.exists():
                 if not create_parents:
                     return tool_error(ToolErrorCode.PARENT_NOT_FOUND, "The destination parent directory does not exist.")
-                destination_parent.mkdir(parents=True, exist_ok=True)
+                self._mkdir(destination_parent, parents=True, exist_ok=True)
             if not destination_parent.is_dir():
                 return tool_error(ToolErrorCode.NOT_A_DIRECTORY, "The destination parent must be a directory.")
             source_relative = source_target.relative_to(self.workspace_root).as_posix()
             destination_relative = destination_target.relative_to(self.workspace_root).as_posix()
             bytes_moved = source_info.st_size
-            source_candidate.rename(destination_candidate)
+            access = current_file_access()
+            if access:
+                access.rename(source_target, destination_target)
+            else:
+                source_candidate.rename(destination_candidate)
         except FileNotFoundError:
             return tool_error(ToolErrorCode.FILE_NOT_FOUND, "The source file does not exist.")
         except NotADirectoryError:
@@ -2407,8 +2445,10 @@ class MoveFileTool(WorkspaceTool):
         )
 
 # GetPathInfoTool
-class GetPathInfoTool(WorkspaceTool):
+class GetPathInfoTool(FileTool):
     """Inspect filesystem metadata for one workspace path."""
+
+    execution_kind = ExecutionKind.TRUSTED_FILE
 
     def __init__(
         self,

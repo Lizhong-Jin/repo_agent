@@ -19,7 +19,7 @@ from typing import Any
 
 from llm import ToolDefinition
 
-from ._internal.base import ToolResult
+from ._internal.base import ExecutionKind, ToolResult
 from ._internal.errors import ToolErrorCode, tool_error
 from ._internal.file_policy import is_credential_path
 from ._internal.process_runner import ProcessRunner, ProcessStartError
@@ -35,6 +35,8 @@ class GetExecutionEnvironmentTool:
     This tool never establishes isolation. Only an isolated caller may enable
     subprocess probes; local mode reports basic facts without running commands.
     """
+
+    execution_kind = ExecutionKind.SANDBOXED_PROCESS
 
     SECTIONS = ("execution", "system", "runtimes", "gpu")
     RUNTIME_COMMANDS = {
@@ -283,6 +285,8 @@ class GetExecutionEnvironmentTool:
 class RunCommandTool:
     """Run bounded, non-interactive subprocesses and capture their output."""
 
+    execution_kind = ExecutionKind.SANDBOXED_PROCESS
+
     def __init__(
         self,
         workspace_root: str | Path,
@@ -467,6 +471,8 @@ class RunCommandTool:
 # RunPythonTool
 class RunPythonTool:
     """Run bounded Python snippets in a separate subprocess."""
+
+    execution_kind = ExecutionKind.SANDBOXED_PROCESS
 
     def __init__(
         self,

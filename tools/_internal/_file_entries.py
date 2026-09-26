@@ -6,6 +6,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 
+from .file_access import current_file_access
 from .file_policy import PathPolicy
 
 
@@ -38,7 +39,8 @@ def inspect_entry(
     if policy.protects_path(path, resolved):
         return None
     if info is None:
-        info = path.lstat()
+        access = current_file_access()
+        info = access.stat(path) if access else path.lstat()
     target_info = info
     if S_ISLNK(info.st_mode):
         try:
@@ -64,7 +66,9 @@ def iter_search_candidates(
         return
     if not S_ISDIR(info.st_mode):
         return
-    for root, dirnames, filenames in os.walk(target, followlinks=False):
+    access = current_file_access()
+    walk = access.walk(target) if access else os.walk(target, followlinks=False)
+    for root, dirnames, filenames in walk:
         dirnames.sort(key=lambda name: (name.casefold(), name))
         filenames.sort(key=lambda name: (name.casefold(), name))
         root_path = Path(root)
@@ -81,7 +85,7 @@ def iter_search_candidates(
             if glob is not None and not fnmatch(relative, glob):
                 continue
             try:
-                info = candidate.lstat()
+                info = access.stat(candidate) if access else candidate.lstat()
             except OSError:
                 # Let the caller count an unreadable candidate as a skipped file.
                 info = None

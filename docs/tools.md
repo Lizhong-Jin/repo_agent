@@ -5,6 +5,7 @@
 面向扩展工具或维护执行协议的开发者。以下命令默认在已安装开发依赖的源码目录运行；示例中的 `client` 需由调用方配置。
 
 - [统一创建工具](#统一创建工具)
+- [按需加载工具组](#按需加载工具组)
 - [工具错误码](#工具错误码)
 - [get_execution_environment 工具](#get_execution_environment-工具)
 - [read_file 工具](#read_file-工具)
@@ -20,6 +21,7 @@
 tools/
 ├── __init__.py
 ├── factory.py
+├── tool_groups.py        # 集中分组目录、load_tool_group 与会话可见性状态
 ├── execute.py
 ├── filesystem.py
 ├── git_tools.py
@@ -30,19 +32,99 @@ tools/
 
 原有 `from tools import ToolResult, ProcessRunner, ...` 公共导出保持可用。直接使用公共组件的仓库代码改为从 `tools._internal.<模块>` 导入；两个 Web 工具统一从 `tools.web_tools` 导入。
 
-`tools/factory.py` 的 `create_default_tools(workspace_root)` 集中创建指定工作区的工具；CLI 的 local 模式直接使用；Docker/native 模式通过代理在各自的隔离 worker 内使用：
+`tools/factory.py` 的 `create_default_tools(workspace_root)` 集中创建指定工作区的工具；CLI 的 local 模式直接使用，Docker 通过代理在容器内执行。native 将内置文件工具交给轻量文件服务，命令、Git、Python、环境探测及 LSP 继续通过操作系统隔离执行，见[原生沙箱说明](native-sandbox.md)：
 
 ```python
 from agent import AgentRuntime
-from tools import create_default_tools
+from tools import DEFAULT_TOOL_GROUPS, create_default_tools
 
 # client 是已配置的同步 LLM 客户端；默认只创建 local 工具，不建立沙箱。
-runtime = AgentRuntime(client, tools=create_default_tools("."))
+runtime = AgentRuntime(
+    client, tools=create_default_tools("."), tool_groups=DEFAULT_TOOL_GROUPS,
+)
 ```
 
-新增工作区工具时，实现 `Tool` 接口的 `definition` 和 `execute(arguments)`，然后在 `tools/factory.py` 中导入该工具并加入返回列表。工具特有的构造参数也在这里配置，CLI 和 Runtime 无需逐个修改。Runtime 继续负责按工具名称注册和执行，并拒绝重复名称。Web 工具由 `tools/web_tools.py` 的 `create_web_tools()` 单独创建，在主进程追加，不进入默认工厂或 sandbox worker。
+新增工作区工具时，实现 `Tool` 接口的 `definition` 和 `execute(arguments)`，在具体类中显式声明 `execution_kind`，然后在 `tools/factory.py` 中导入该工具并加入返回列表。纯文件工具加入 `create_file_tools()`；工具特有的构造参数也在工厂配置。Runtime 按工具名称注册，由统一调度器执行，并拒绝重复名称和缺失/无效的调度规则。Web 工具由 `tools/web_tools.py` 的 `create_web_tools()` 单独创建，在主进程追加，不进入默认工厂或 sandbox worker。
 
 每次调用工厂都会创建新的工具实例，避免不同工作区共享工具状态。需要自定义工具组合时，仍可直接向 `AgentRuntime` 传入工具列表。默认组合包含基础环境查询、读取、写入、编辑、多文件严格补丁、列目录、查找文件、内容搜索、创建目录、删除、移动、路径信息和 Git 工具。命令、Python 与语言服务器工具仅在 `isolated_execution=True` 时注册；该开关供已建立隔离环境的受信任调用方使用，本身不创建沙箱。工具类均可从 `tools` 导入。工厂统一创建方式，不改变工具自身行为。
+
+## 工具执行调度
+
+`ExecutionKind` 和 `ToolDispatcher` 可从 `tools` 导入。调度规则属于受信任代码的内部元数据，不加入模型工具参数；工具组只控制可见性，不改变调度或授权。
+
+| 规则 | 当前工具 | 执行位置 |
+| --- | --- | --- |
+| `HOST_CONTROL` | 技能加载、工具组加载、历史搜索/读取 | 主进程内的受控状态/元数据操作 |
+| `TRUSTED_FILE` | 11 个文件工具 | native 轻量文件服务；Docker 工作副本中的隔离工具；local 文件实现 |
+| `TRUSTED_NETWORK` | `web_search`、`web_fetch` | 主进程中的受控网络后端 |
+| `SANDBOXED_PROCESS` | 命令、Python、Git、LSP、执行环境查询 | native/Docker 代理；已建立隔离的 worker 内才执行原始实现 |
+
+local 兼容例外只允许**确切的内置类**且 `execution_allowed=False`：Git 保留已有外部过滤器检查，执行环境查询只返回不启动进程的基础信息。其他原始进程工具即使设置了 `execution_allowed=True`，交给普通 `AgentRuntime` 仍返回 `SANDBOX_REQUIRED`；该属性本身不会建立隔离。
+
+每个具体工具类必须自行声明规则，新增子类也不能仅继承父类声明：
+
+```python
+from tools import ExecutionKind, ToolResult
+
+class MyControlTool:
+    execution_kind = ExecutionKind.HOST_CONTROL
+
+    # definition 按既有 Tool 接口提供。
+    def execute(self, arguments):
+        return ToolResult(True, {"status": "ready"})
+```
+
+工厂、Runtime 注册和 sandbox worker 会检查声明。缺失声明、字符串/布尔值等无效类型会立即报错；调用时再检查规则是否与注册时一致。代理必须显式接收并保留原工具规则，不能使用默认规则掩盖遗漏；未知 native 工具在扫描和启动进程前被拒绝。沙箱 worker 拒绝注册主进程控制/网络工具。
+
+只有受信任的应用代码可以注册工具。调度器不会通过静态分析证明 `HOST_CONTROL` 或 `TRUSTED_FILE` 的实现没有执行代码；第三方 Python 插件不能仅凭自我声明被当作可信实现。文件工具不得启动项目脚本、命令或 LSP；需要这些能力时使用隔离执行接口。`ToolDispatcher(inside_sandbox=True)` 仅供操作系统隔离已经建立的 worker 使用，禁止在普通主进程中把它当作绕过开关。
+
+## 按需加载工具组
+
+CLI 默认开启按需加载。工厂和 sandbox worker 仍提供当前执行环境允许的完整工具集合，Runtime 单独管理“哪些定义发给模型、哪些调用现在允许执行”。加载器在宿主 Runtime 中运行；加载后的文件、Git、命令及语义工具仍通过原有 local/native/Docker 工具实例或代理执行，不改变隔离边界。
+
+### 当前划分
+
+| 类别 | 工具 | 启用时机 |
+| --- | --- | --- |
+| 通用工作区工具 | `get_execution_environment`、`read_file`、`list_files`、`find_files`、`search_files`、`get_path_info` | 初始可见 |
+| 通用辅助能力 | `load_tool_group`、已注册的技能加载、历史搜索/读取、Web 搜索/读取 | 初始可见；Web 仍取决于配置 |
+| `file_editing` | `write_file`、`edit_file`、`apply_patch`、`make_directory`、`delete_file`、`move_file` | 按需加载；也适用于非代码文件修改 |
+| `coding` | `git_status`、`git_diff`、`run_command`、`run_python`、`get_symbols`、`go_to_definition`、`find_references`、`get_diagnostics`、`get_hover`、`search_workspace_symbols` | 按需加载；local 只提供其中的 Git 工具 |
+
+标准 CLI 初始发送 10 个工具定义，配置 Web 后至多 12 个。`load_tool_group` 的描述包含组目录、用途和当前环境可用的工具名称，不预先塞入专用工具的完整参数定义。
+
+模型调用示例：
+
+```json
+{"group": "file_editing"}
+```
+
+加载返回组名、可用/不可用工具和 `already_loaded`，不执行任何组内操作。下一轮模型请求才携带新增定义；同一回复中先加载、紧接着调用新工具仍返回 `TOOL_NOT_LOADED`。未知组返回 `UNKNOWN_TOOL_GROUP`，完全不可用的组返回 `TOOL_GROUP_UNAVAILABLE`。组内部分工具未注册时只启用当前可用成员；不能通过加载恢复宿主未授权或未配置的能力。
+
+原来的 `git`、`code_execution`、`code_intelligence` 已合并为 `coding`，旧组名不再有效。local 加载或恢复 `coding` 会保留 Git 能力，但不会获得命令、Python 或语言服务权限。
+
+新增定义按组加载顺序追加，保持已有工具定义的前缀顺序。上下文估算和自动压缩使用当前实际可见的工具集合。加载状态属于会话，在用户连续任务之间保留；保存时只记录组名，恢复时用当前目录及执行环境重新计算成员，移除未知/完全不可用的组并提示。历史压缩不清除加载状态；`/clear`、新建会话会重置。旧会话没有该字段时从初始集合开始，不能凭历史里的成功调用自动恢复工具权限。
+
+### 新增、移动和自定义组
+
+默认分类只维护在 `tools/tool_groups.py` 的 `DEFAULT_TOOL_GROUPS` 中：
+
+1. 把工具从一个 `ToolGroup.tools` 元组移到另一个元组即可改变分类，执行代码和工厂不需要跟着改。
+2. 从所有组中移除某工具名后，它就成为初始可见工具。未分类的宿主扩展也默认初始可见。
+3. 增加新的 `ToolGroup` 条目即可增加分组。工具本身仍需通过相应工厂/宿主入口注册；列入分组不会自动安装依赖、建立连接或授予权限。
+
+```python
+from tools import DEFAULT_TOOL_GROUPS, ToolGroup
+
+groups = (*DEFAULT_TOOL_GROUPS,
+          ToolGroup("literature", "Search papers and inspect bibliographic records.",
+                    ("search_papers", "read_paper")))
+runtime = AgentRuntime(client, tools=registered_tools, tool_groups=groups)
+```
+
+也可以完全替换分组序列。组名或工具归属重复会在 Runtime 初始化时失败；一个工具只能属于一个专用组，`load_tool_group` 不能被放入专用组。每个 Runtime 都创建自己的可见性状态，不修改全局目录。
+
+库调用为了兼容现有应用，省略 `tool_groups` 时保持原来的全量可见行为；传入 `DEFAULT_TOOL_GROUPS` 即与 CLI 一致。独立使用 Runtime 时可调用 `reset_tool_groups()` 重置，或用 `restore_tool_groups(names)` 恢复并获取未能恢复的组名。这里按需加载的是模型定义及调用资格，工具对象仍按原有工厂创建；没有增加自动任务分类、自动启动语言服务器或卸载工具接口。
 
 ### Git 工具的执行边界
 

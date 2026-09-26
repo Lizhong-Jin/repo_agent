@@ -109,15 +109,20 @@ def build(root, output, uv):
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
         )
         output.mkdir(parents=True, exist_ok=True)
-        target = output / f"repo-agent-{version}.tar.gz"
+        release_directory = f"repo-agent-{version}"
+        target = output / f"{release_directory}.tar.gz"
         fd, temporary_archive = tempfile.mkstemp(prefix=".release-", dir=output)
         os.close(fd)
         try:
             with tarfile.open(temporary_archive, "w:gz") as archive:
                 for path in sorted(bundle.rglob("*")):
                     if path.is_file():
-                        archive.add(path, arcname=str(path.relative_to(bundle)), recursive=False)
-            verify_release_archive(Path(temporary_archive), bundle)
+                        archive.add(
+                            path,
+                            arcname=f"{release_directory}/{path.relative_to(bundle).as_posix()}",
+                            recursive=False,
+                        )
+            verify_release_archive(Path(temporary_archive), bundle, prefix=release_directory)
             os.replace(temporary_archive, target)
         finally:
             Path(temporary_archive).unlink(missing_ok=True)

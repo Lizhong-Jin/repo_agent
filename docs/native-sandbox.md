@@ -2,7 +2,7 @@
 
 [文档首页](index.md) · [项目首页](../README.md) · [Docker 沙箱](../sandbox/README.md)
 
-首次安装默认使用 `native`（已显式安装其他模式时，以安装记录为准）：通过 macOS Seatbelt 或 Linux Bubblewrap + seccomp 执行文件/Git 工具、命令、Python 和语言服务器，直接修改原项目。首次默认的 `repo-agent` 等同于 `repo-agent --sandbox native`：
+首次安装默认使用 `native`（已显式安装其他模式时，以安装记录为准）：文件工具通过受控的轻量文件服务直接修改原项目；Git 工具、命令、Python、环境探测和语言服务器通过 macOS Seatbelt 或 Linux Bubblewrap + seccomp 执行。首次默认的 `repo-agent` 等同于 `repo-agent --sandbox native`：
 
 ```bash
 repo-agent
@@ -10,7 +10,24 @@ repo-agent --sandbox native
 repo-agent --sandbox native --root /path/to/project
 ```
 
-不需要 Docker 或镜像。使用启动 Agent 的 Python 环境，以及 `.venv` 内的语言服务、Homebrew LLVM 路径、`/opt/homebrew/bin`、`/usr/local/bin` 和系统目录中的工具。运行 `./install.sh --mode native` 会安装 Python 语言服务，按用户安装选项准备额外语言服务；macOS 可通过 Homebrew 补齐缺少的 Node.js、Go、LLVM，Linux 须先用发行版包管理器安装系统工具链，并把 JS/TS、Go 语言服务放入专用 `.venv`。需要时可用 `--languages python` 缩小范围。安装和 `repo-agent doctor --mode native` 会实际查询示例符号；工具执行过程中缺少依赖仍会报错，不临时下载或绕过沙箱。工具执行默认完全断网，包括 localhost，所以依赖下载和需要本地服务的测试不能在沙箱内运行。
+不需要 Docker 或镜像。使用启动 Agent 的 Python 环境，以及 `.venv` 内的语言服务、Homebrew LLVM 路径、`/opt/homebrew/bin`、`/usr/local/bin` 和系统目录中的工具。运行 `./install.sh --mode native` 会安装 Python 语言服务，按用户安装选项准备额外语言服务；macOS 可通过 Homebrew 补齐缺少的 Node.js、Go、LLVM，Linux 须先用发行版包管理器安装系统工具链，并把 JS/TS、Go 语言服务放入专用 `.venv`。需要时可用 `--languages python` 缩小范围。安装和 `repo-agent doctor --mode native` 会实际查询示例符号；工具执行过程中缺少依赖仍会报错，不临时下载或绕过沙箱。隔离执行工具默认完全断网，包括 localhost，所以依赖下载和需要本地服务的测试不能在沙箱内运行。轻量文件工具只调用受信任的文件操作代码，不启动子进程或发起网络请求。
+
+## 轻量文件工具与隔离执行工具
+
+macOS 和 Linux native 共用以下分层，模型可见的工具参数不变：
+
+| 执行层 | 工具 | 保护方式 |
+| --- | --- | --- |
+| 轻量文件服务 | `read_file`、`write_file`、`edit_file`、`apply_patch`、`list_files`、`find_files`、`search_files`、`make_directory`、`delete_file`、`move_file`、`get_path_info` | 主进程内的受信任实现；按实际目标检查权限；不启动 worker、不扫描整个工作区或系统依赖树 |
+| 操作系统隔离 | `run_command`、`run_python`、Git、LSP、正常状态下的 `get_execution_environment` | 保留原有 Seatbelt / Bubblewrap + seccomp、工作区检查、进程监督与超时清理 |
+
+工具类的 `execution_kind` 是程序内部元数据，不是模型参数。统一调度器区分 `HOST_CONTROL`、`TRUSTED_FILE`、`TRUSTED_NETWORK`、`SANDBOXED_PROCESS`，所有具体工具必须显式声明；缺失或无效声明在注册时被拒绝，不再使用默认分类。只有文件工具工厂明确登记的内置实现能进入 native 轻量层；未注册工具直接返回 `UNKNOWN_TOOL`。Docker 仍在容器工作副本中执行文件和进程工具，local 的工具可用范围不变；可选 Web 工具仍单独注册。完整规则见[工具执行调度](tools.md#工具执行调度)。
+
+轻量文件服务只允许工作区内的文件操作，继续拒绝敏感名称、会话状态目录、宿主配置的保护路径、越界目标和多重硬链接文件。工作区内的解释器和依赖目录仍只读。读取普通文件时检查实际打开的文件类型、硬链接数及前后身份；写入使用目录句柄定位、独占创建临时文件与原子替换。底层读写和目录遍历不跟随检查后新出现的符号链接；允许的文件别名先解析为工作区内目标，递归搜索不遍历目录符号链接。
+
+这是受信任文件代码的应用层边界，**不是任意代码的 OS 沙箱**。不得在文件工具中执行项目模块、插件、命令或语言服务器。目录句柄减少路径替换风险，但不承诺抵御拥有同一用户权限的恶意宿主进程持续移动目录、修改文件或攻击 Agent 本身；多文件 patch 也不是事务。需要独立工作副本及更强隔离时使用 Docker。
+
+启动时仍验证隔离与 GPU：Linux 将通用隔离自检和 CUDA 自检放在同一次沙箱启动中，由两个独立子进程分别执行，保留各自超时和失败诊断。选择单张 GPU 时仍先在沙箱内枚举设备，再收缩授权后执行合并自检。普通文件操作不承担全量扫描开销；Linux 隔离执行仍在每次调用前重新扫描，但现在会在单次策略生成内复用目录别名的扫描结果，并复用不包含文件状态的静态策略模板。实现、计时字段和基准命令见 [Linux 策略扫描优化](linux-policy-scan-performance.md)。
 
 ## Linux 实现、依赖与权限
 
@@ -24,7 +41,7 @@ repo-agent --sandbox native
 
 Fedora 的对应包是 `bubblewrap libseccomp`。需要其他语言时，先准备 Node.js/npm、Go 1.25+ 或 clangd，再使用 `repo-agent toolchains install` 安装受管语言服务。安装器不自动提权或修改 Linux 系统包。某些发行版的 AppArmor、sysctl 策略或外层容器会禁止非特权 namespace；启动自检失败会明确报错，不会自动放宽安全策略或退回 local。
 
-`sandbox/native.py` 自动选择 `sandbox/linux_native.py`，共用工具接口、受信任代码副本、输出收集和进程监督。每次调用创建独立 namespace，挂载原工作区及私有临时目录；`sandbox/linux_exec.py` 在执行项目代码前加载 seccomp，禁止 sockets（含 Unix socket）、io_uring、硬链接及重新配置 namespace/mount 等系统调用，子进程继承这些限制。匿名 `socketpair` 保留给 Node/libuv 等进程内部通信，不能用于连接宿主机服务。
+`sandbox/native.py` 自动选择 `sandbox/linux_native.py`，共用工具接口、受信任代码副本、输出收集和进程监督。每次隔离执行调用创建独立 namespace，挂载原工作区及私有临时目录；`sandbox/linux_exec.py` 在执行项目代码前加载 seccomp，禁止 sockets（含 Unix socket）、io_uring、硬链接及重新配置 namespace/mount 等系统调用，子进程继承这些限制。匿名 `socketpair` 保留给 Node/libuv 等进程内部通信，不能用于连接宿主机服务。
 
 | 路径或资源 | Linux native 权限 |
 | --- | --- |
@@ -88,7 +105,7 @@ repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all
 
 ## macOS 实现与权限
 
-`sandbox/native.py` 实现与 Docker 相同的工具调用接口，但直接访问原项目。每次调用用 `/usr/bin/sandbox-exec` 加载宿主机生成的 Seatbelt 策略。命令和 Python 由外层主进程直接启动沙箱进程、监督子进程并收集输出；其余工具通过独立 worker 执行。模型、密钥、会话和日志由外部主进程管理。
+`sandbox/native.py` 实现与 Docker 相同的工具调用接口，但直接访问原项目。每次隔离执行调用用 `/usr/bin/sandbox-exec` 加载宿主机生成的 Seatbelt 策略。命令和 Python 由外层主进程直接启动沙箱进程、监督子进程并收集输出；Git、环境探测和 LSP 工具通过独立 worker 执行；纯文件工具使用上面的轻量文件服务。模型、密钥、会话和日志由外部主进程管理。
 
 - 允许读取工作区、系统库、当前 Python 安装及依赖、常见系统工具链；目录元数据查询范围较宽，文件内容读取仍受策略控制。
 - 仅工作目录和每次调用的私有临时目录可写。解释器及其依赖目录只读，即使位于项目内也不允许安装或修改。
@@ -120,7 +137,7 @@ repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all
 
 ## 每次调用的工作区检查
 
-工作区检查仍在每次工具调用前执行，不按 `.gitignore`、`.venv` 或日志目录剪枝，也不跨调用缓存。Linux 的硬链接和特殊文件检查共享一次遍历、每个条目的一份新鲜元数据。Linux 的保护路径挂载策略仍另行扫描工作区及只读依赖树，不复用旧扫描结果。可运行 `python3 scripts/benchmark_native_scan.py --workspace . --repeats 7` 对比旧版两遍检查与当前实现；测量范围和本机数据见 [扫描基准](native-scan-benchmark-2026-09-24.md)。
+完整工作区检查仍在启动和每次隔离执行工具调用前执行，不按 `.gitignore`、`.venv` 或日志目录剪枝，也不跨调用缓存。Linux 将硬链接、特殊文件检查与保护路径策略生成合并到同一次工作区遍历；即使目录已被整体遮蔽，也继续检查其中的硬链接和特殊文件。每次实际启动沙箱（包括自检）都执行新的合并扫描，不跨调用复用文件状态；同一次扫描内，只读目录的多个符号链接视图可复用目录枚举与名称分类结果，并分别生成各挂载位置的保护规则。轻量文件工具只检查实际访问的目标；无关文件中的硬链接或特殊文件不会阻止读取普通源码，但访问这些不安全目标仍被拒绝。可运行 `python3 scripts/benchmark_native_scan.py --workspace . --repeats 7` 对比旧版两遍检查与当前实现；测量范围和本机数据见 [扫描基准](native-scan-benchmark-2026-09-24.md)。
 
 ## 文件、会话与限制
 
@@ -128,7 +145,7 @@ repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all
 
 旧配置中的 `AGENT_SANDBOX_WRITEBACK=on-success` 只在 Docker 模式生效，不影响默认 native 或显式 local 启动。显式对 local/native 传 `--sandbox-writeback on-success` 会报错。镜像和回写前验证不适用于 native；CUDA profile 在 Linux native 中仅授权 GPU 并提高工具超时上限，不应用 Docker 资源配额。
 
-native 提供平台内核级的文件/网络隔离，不提供 Docker 等价的 CPU、内存、进程数配额或环境可复现性。主进程通过 PID、内核启动时间及父子关系跟踪本次调用的进程；超时先发 TERM，再对仍存活的进程发 KILL，回收直接子进程并核验。已经观察到的子进程即使改变进程组或会话也继续跟踪；僵尸进程不当作仍在执行的进程。信号操作失败会记录阶段、PID、信号和 errno，最终是否清理成功以核验结果为准。
+native 为隔离执行工具提供平台内核级的文件/网络隔离，不提供 Docker 等价的 CPU、内存、进程数配额或环境可复现性。主进程通过 PID、内核启动时间及父子关系跟踪本次调用的进程；超时先发 TERM，再对仍存活的进程发 KILL，回收直接子进程并核验。已经观察到的子进程即使改变进程组或会话也继续跟踪；僵尸进程不当作仍在执行的进程。信号操作失败会记录阶段、PID、信号和 errno，最终是否清理成功以核验结果为准。
 
 进程快照仍是尽力监督，不等价于 cgroup：在两次采样之间创建并迅速脱离父进程的后代可能漏检，仍受继承的沙箱策略约束。`cleanup_status=confirmed` 表示已跟踪的进程不再运行且输出管道已关闭，不代表对任意后台进程的绝对保证。
 
@@ -137,7 +154,7 @@ native 提供平台内核级的文件/网络隔离，不提供 Docker 等价的 
 - 超时仍返回已收集的 stdout/stderr，每路保留最多 32 KiB 原始字节的首尾内容，截断时附加标记。`status=timed_out`、`timed_out=true`、`output_complete=false` 提醒模型这是部分结果。尚未从程序内部缓冲区刷新到管道的内容无法取回。
 - 输出活动不延长总超时；清理和最后的输出收集通常最多额外耗时约 3 秒。超时前写入的项目文件仍然保留。
 - `cleanup_status` 与执行状态分开：`confirmed` 表示清理已核验，`unknown` 表示无法确认，`cleanup_error` 和 `cleanup_diagnostics` 给出原因。正常超时且清理已确认时，可以继续使用工具。取消操作也会先清理，再向上传播。
-- 清理无法确认时暂停后续命令、Python、语言服务及文件写入，返回 `NATIVE_UNHEALTHY`。`read_file`、`list_files`、`find_files`、`search_files`、`get_path_info` 仍通过原沙箱策略执行；`get_execution_environment` 返回无需启动探测程序的环境信息及清理诊断。读取成功不会自动解除该状态；检查遗留进程后使用 `--new-session` 重启。
+- 清理无法确认时暂停后续命令、Python、语言服务及文件写入，返回 `NATIVE_UNHEALTHY`。`read_file`、`list_files`、`find_files`、`search_files`、`get_path_info` 仍通过轻量文件服务的路径检查执行；`get_execution_environment` 返回无需启动探测程序的环境信息及清理诊断。读取成功不会自动解除该状态；检查遗留进程后使用 `--new-session` 重启。
 - worker 自身异常、超时或返回无效协议时，也保留有限的 stdout/stderr，并标记 `output_kind=worker_protocol`；其中可能是未完成的工具协议文本。
 
 Apple 将 `sandbox-exec` 标记为弃用；不同 macOS 版本和外层沙箱可能不支持它。启动自检是必要条件，并非完整的安全审计。需要严格的资源限额、可控依赖或工作副本回写时，继续选择 Docker。
@@ -186,3 +203,5 @@ RUN_NATIVE_GPU_TESTS=1 RUN_NATIVE_GPU_OPERATORS=1 .venv/bin/python -m pytest tes
 ```
 
 硬件测试验证默认 auto 启用 GPU、实际 kernel、子进程 GPU 访问、GPU 启用时仍禁止目录越界/凭据读取/网络，以及显式 standard 不暴露 GPU。可选算子测试复用 `sandbox.operator_smoke` 的 CUDA 扩展和 Triton 计算正确性检查。
+
+关于可信工具运行时与项目 Python 的后续解耦设计，见 [Python 环境分离方案](python-environment-separation.md)；该配置尚未实现。
