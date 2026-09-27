@@ -22,6 +22,13 @@ build/
 dist/
 node_modules/
 
+# Generated offline Python materials; keep runtime/python.lock tracked
+/runtime/python.tar.gz
+/runtime/target
+/wheelhouse/
+/bundle.json
+/.python-kit-*/
+
 # Agent logs, including traces written to a custom log directory
 logs/
 *.trace.log

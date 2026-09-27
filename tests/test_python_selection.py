@@ -51,7 +51,7 @@ def launch(root, tmp_path, paths, explicit=None, args=()):
         "PATH": ":".join(str(path.parent) for path in paths),
         "SELECTION_RESULT": str(tmp_path / "chosen"),
     }
-    env.pop("AGENT_PYTHON", None)
+    env["AGENT_PYTHON"] = "system"
     if explicit is not None:
         env["AGENT_PYTHON"] = str(explicit)
     # install.sh uses dirname before discovering Python; provide only that utility.

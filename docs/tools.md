@@ -21,6 +21,7 @@
 tools/
 ├── __init__.py
 ├── factory.py
+├── dispatch.py           # 按执行类别调度，检查隔离执行入口
 ├── tool_groups.py        # 集中分组目录、load_tool_group 与会话可见性状态
 ├── execute.py
 ├── filesystem.py

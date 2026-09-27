@@ -18,8 +18,8 @@ from sandbox import SandboxPolicy, SandboxSession
 from sandbox.environment import DEFAULT_IMAGE, check_image_profile, detect_environment
 from sandbox.native import NativeBackend
 from tools import create_default_tools
-from tools.tool_groups import DEFAULT_TOOL_GROUPS
 from tools._internal.web_backend import WebBackend
+from tools.tool_groups import DEFAULT_TOOL_GROUPS
 from tools.web_tools import create_web_tools
 
 from .config import configured_environment
@@ -160,6 +160,7 @@ def _main() -> None:
     )
     parser.add_argument("--restore-backup", help="与 --sandbox-review 一起使用，恢复备份 ID")
     add_runtime_arguments(parser)
+    parser.add_argument("--project-python", help="native 项目 Python；默认自动发现启动环境")
     args = parser.parse_args()
     if args.compact_summary_tokens is not None or os.getenv("AGENT_COMPACT_SUMMARY_TOKENS"):
         print("提示：compact-summary-tokens 已弃用并忽略；压缩大小由 compact-target 指导。")
@@ -194,6 +195,8 @@ def _main() -> None:
             )
         except argparse.ArgumentTypeError as error:
             parser.error(str(error))
+    if args.project_python and args.sandbox != "native":
+        parser.error("--project-python 仅用于 native 模式")
     gpu_requested = args.sandbox_profile == "cuda" or args.sandbox_gpus is not None
     if gpu_requested and not (
         args.sandbox == "docker" or (args.sandbox == "native" and sys.platform == "linux")
@@ -286,9 +289,13 @@ def _main() -> None:
             ):
                 raise ValueError("上次原生进程清理未确认；请检查遗留进程后用 --new-session 启动")
             native = NativeBackend(
-                workspace_root, profile=args.sandbox_profile, gpus=args.sandbox_gpus
+                workspace_root, profile=args.sandbox_profile, gpus=args.sandbox_gpus,
+                project_python=args.project_python
             )
             tools = native.tools()
+            chosen = native.execution_context().get('python_environments', {})
+            if chosen:
+                print(f"项目 Python：{chosen['project']}（{chosen['source']}）")
             platform_label = "Linux" if sys.platform == "linux" else "macOS"
             print(
                 f"[执行环境：{platform_label} native] 工具断网；直接修改原项目，无副本回写",

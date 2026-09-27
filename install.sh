@@ -3,12 +3,18 @@
 set +x
 set -euo pipefail
 agent_install_dir="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
+agent_help=0
+for agent_argument in "$@"; do
+    [[ "$agent_argument" != --help && "$agent_argument" != -h ]] || agent_help=1
+done
+if [[ "$agent_help" == 1 ]]; then
     cat <<'HELP'
 用法：./install.sh [--mode native|docker|local] [--languages all|python,typescript,go,cpp] [--with-toolchains | --skip-toolchains] [--no-path] [--bin-dir DIRECTORY] [--check | --recover]
+发行包入口 ./install-release.sh 还支持 --archive FILE、--sha256 HASH、--data-dir DIRECTORY。
 创建 .venv、安装所选模式依赖、生成默认配置并安装命令。首次默认 native，重装沿用原模式。
 --check 只检查环境；--recover 只恢复中断的安装。核心安装失败恢复原环境和命令；额外工具链失败保留核心安装。
-自动搜索版本和 venv/ensurepip 组件均满足要求的 Python 3.11+；显式 AGENT_PYTHON 不自动替换。
+默认复用或下载锁定的独立 Python；AGENT_PYTHON=system 搜索系统 Python，或指定解释器绝对路径。
+--offline --wheelhouse DIRECTORY 使用本地依赖；AGENT_PYTHON_ARCHIVE 可指定本地 Python 运行时压缩包。
 native 支持 macOS 或 Linux（bubblewrap/libseccomp），默认安装 Python 语言服务；询问是否补齐其他语言，回车跳过。
 docker 模式需要已启动的 Docker 并构建镜像；local 仅安装文件/Git 模式。
 --with-toolchains 自动补齐；--skip-toolchains 跳过额外补齐。无输入时也跳过。
@@ -22,6 +28,25 @@ docker 模式需要已启动的 Docker 并构建镜像；local 仅安装文件/G
 安装改动会记录，卸载可执行 ./uninstall.sh；预览使用 --dry-run。
 HELP
     exit 0
+fi
+# Explicit paths and AGENT_PYTHON=system retain the existing bootstrap override.
+if [[ -z "${AGENT_PYTHON:-}" ]]; then
+    for agent_argument in "$@"; do
+        if [[ "$agent_argument" == --check || "$agent_argument" == --recover ]]; then
+            for agent_existing in "$agent_install_dir/.venv/bin/python" "$agent_install_dir/.repo-agent-install-transaction/venv/bin/python"; do
+                if [[ -x "$agent_existing" ]]; then
+                    AGENT_PYTHON="$agent_existing"
+                    break
+                fi
+            done
+        fi
+    done
+fi
+if [[ -z "${AGENT_PYTHON:-}" ]]; then
+    AGENT_PYTHON="$(/bin/bash "$agent_install_dir/scripts/bootstrap-python.sh" "$agent_install_dir" "$@")"
+    export AGENT_PYTHON
+elif [[ "$AGENT_PYTHON" == system ]]; then
+    unset AGENT_PYTHON
 fi
 agent_python=""
 agent_partial_python=""

@@ -68,6 +68,8 @@ def main(argv=None):
     choice.add_argument("--with-toolchains", action="store_true")
     choice.add_argument("--skip-toolchains", action="store_true")
     parser.add_argument("--skip-sandbox", action="store_true")
+    parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--wheelhouse", type=Path)
     parser.add_argument("--no-path", action="store_true")
     operation = parser.add_mutually_exclusive_group()
     operation.add_argument("--check", action="store_true")
@@ -123,9 +125,12 @@ def main(argv=None):
                 "--languages",
                 args.languages,
             ]
+            if args.wheelhouse:
+                forwarded += ["--wheelhouse", str(args.wheelhouse.expanduser().resolve())]
             if args.mode:
                 forwarded += ["--mode", args.mode]
             for name in (
+                "offline",
                 "with_toolchains",
                 "skip_toolchains",
                 "skip_sandbox",

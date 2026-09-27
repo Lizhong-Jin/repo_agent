@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from sandbox import linux_policy as policy_module
 from sandbox.linux_native import LinuxNativeBackend
 from sandbox.native import NativeBackend
 
@@ -103,14 +104,23 @@ def test_unreadable_readonly_tree_is_masked(linux_policy, tmp_path, monkeypatch,
     restricted.mkdir(parents=True)
     (restricted / ".env").write_text("must never be exposed")
     original = os.scandir
+    original_open = policy_module.open_directory
+
+    def opened(path):
+        if Path(path) == restricted:
+            raise PermissionError(error_number, "Permission denied", str(path))
+        return original_open(path)
 
     def scandir(path):
+        if isinstance(path, int):
+            return original(path)
         if Path(path) == restricted:
             raise PermissionError(error_number, "Permission denied", str(path))
         return original(path)
 
     with monkeypatch.context() as scoped:
         scoped.setattr(os, "scandir", scandir)
+        scoped.setattr(policy_module, "open_directory", opened)
         masks, _ = linux_policy._mount_policy((system,), git_read=False)
         assert masks == [restricted]
         control = tmp_path / "call"
@@ -128,14 +138,23 @@ def test_unreadable_workspace_still_fails_closed(linux_policy, monkeypatch, read
     restricted = linux_policy.workspace / "private"
     restricted.mkdir()
     original = os.scandir
+    original_open = policy_module.open_directory
+
+    def opened(path):
+        if Path(path) == restricted:
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return original_open(path)
 
     def scandir(path):
+        if isinstance(path, int):
+            return original(path)
         if Path(path) == restricted:
             raise PermissionError(errno.EACCES, "Permission denied", str(path))
         return original(path)
 
     with monkeypatch.context() as scoped:
         scoped.setattr(os, "scandir", scandir)
+        scoped.setattr(policy_module, "open_directory", opened)
         with pytest.raises(PermissionError):
             linux_policy._mount_policy((restricted,) if readonly else (), git_read=False)
         with pytest.raises(PermissionError):
@@ -146,14 +165,23 @@ def test_unreadable_workspace_alias_is_not_treated_as_system_tree(linux_policy, 
     alias = tmp_path / "runtime-alias"
     alias.symlink_to(linux_policy.workspace, target_is_directory=True)
     original = os.scandir
+    original_open = policy_module.open_directory
+
+    def opened(path):
+        if Path(path).resolve() == alias.resolve():
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return original_open(path)
 
     def scandir(path):
+        if isinstance(path, int):
+            return original(path)
         if Path(path) == alias:
             raise PermissionError(errno.EACCES, "Permission denied", str(path))
         return original(path)
 
     with monkeypatch.context() as scoped:
         scoped.setattr(os, "scandir", scandir)
+        scoped.setattr(policy_module, "open_directory", opened)
         with pytest.raises(PermissionError):
             linux_policy._mount_policy((alias,), git_read=False)
 
@@ -161,14 +189,23 @@ def test_unreadable_workspace_alias_is_not_treated_as_system_tree(linux_policy, 
 @pytest.mark.parametrize("error_number", [errno.EIO, errno.ENOENT])
 def test_system_scan_other_errors_are_not_ignored(linux_policy, monkeypatch, error_number):
     original = os.scandir
+    original_open = policy_module.open_directory
+
+    def opened(path):
+        if Path(path) == linux_policy.runtime:
+            raise OSError(error_number, "scan failed", str(path))
+        return original_open(path)
 
     def scandir(path):
+        if isinstance(path, int):
+            return original(path)
         if Path(path) == linux_policy.runtime:
             raise OSError(error_number, "scan failed", str(path))
         return original(path)
 
     with monkeypatch.context() as scoped:
         scoped.setattr(os, "scandir", scandir)
+        scoped.setattr(policy_module, "open_directory", opened)
         with pytest.raises(OSError) as caught:
             linux_policy._mount_policy(linux_policy.read_paths, git_read=False)
         assert caught.value.errno == error_number

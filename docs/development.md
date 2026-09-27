@@ -6,7 +6,7 @@
 
 ## 开发环境与验证
 
-源码安装现在自动安装 `dev` 依赖组中的 pytest、Ruff 及固定的构建依赖。先按[安装说明](installation.md)运行 `./install.sh`；已有安装也可以只补齐开发依赖：
+源码安装现在自动安装 `dev` 依赖组中的 pytest、Ruff 及固定的构建依赖。默认先准备锁定的受管 Python，再按[安装说明](installation.md)运行 `./install.sh`；已有安装也可以只补齐开发依赖：
 
 ```bash
 .venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
@@ -29,7 +29,7 @@ python3 scripts/lock_dependencies.py --check
 | Linux native | [原生验证](native-sandbox.md#验证) | `RUN_SANDBOX_LINUX_TESTS=1`；Bubblewrap、libseccomp、可用 namespaces |
 | Docker 与多语言 | 下方命令 | `RUN_SANDBOX_DOCKER_TESTS=1`；已构建镜像及可用 daemon |
 | GPU | [算子验证](gpu-operators.md#验证边界) | Docker / native 各有开关，必须有实际 NVIDIA GPU 和所需依赖 |
-| 发行安装 | [安装验收](distribution.md#构建独立发行版与更新依赖) | 显式提供发行包，联网下载依赖；测试以模拟 Docker 验证构建入口 |
+| 发行安装 | [安装验收](distribution.md#校验失败处理与安装验收) | 显式提供当前平台完整包，使用受管 Python 离线安装；测试以模拟 Docker 验证构建入口 |
 
 ```bash
 repo-agent-build-sandbox
@@ -37,6 +37,20 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py t
 ```
 
 开关只选择测试，不能补齐依赖；缺少目标平台或硬件时的跳过不计为通过。真实模型 API 的可用性、参数和计费需要另行验证，不属于默认套件的结论。
+
+## 离线开发环境
+
+在联网机器上使用 Python 3.13（与受管运行时主次版本一致）准备完整开发依赖；目标架构不必与准备机器相同：
+
+```bash
+.venv/bin/python scripts/prepare_python_bundle.py --target linux-x86_64 --with-dev --output dist/dev-kit-linux-x86_64
+```
+
+可选目标为 `linux-x86_64`、`linux-arm64`、`macos-x86_64`、`macos-arm64`。此开发材料脚本每次处理一个平台，省略 `--target` 时选择当前平台。输出包括固定版本的 `runtime/python.tar.gz`、平台标记、`wheelhouse/` 和依赖清单指纹；输出目录须为空。`--with-dev` 加入固定构建工具、pytest、Ruff 及其依赖。没有该选项只准备 native 所需运行依赖。
+
+将源码与此目录复制到目标机器，按[离线安装](installation.md#离线安装)执行。开发材料须与源码的锁文件匹配；依赖升级后重新生成。首次准备仍需联网，不把运行时和 wheels 提交到 Git。已具备材料时，准备脚本也支持 `--offline --runtime-archive ... --wheelhouse ...`。
+
+源码采用 editable 安装，修改代码后重启 Agent 即可加载；改动依赖声明或锁文件后重新安装。`.venv` 用于 Agent 开发和测试，任务项目的 Python 由 native 单独选择，见[环境规则](python-environments.md)。
 
 ## 运行最小 Agent
 
@@ -141,7 +155,7 @@ Runtime 负责同步任务循环、轮数限制和输出截断恢复。CLI 通�
 
 ## 构建独立发行版与更新依赖
 
-见[构建与分发](distribution.md#构建独立发行版与更新依赖)。
+发行构建脚本 `scripts/build_release.py` 默认构建所有支持的平台；加 `--target` 只构建指定平台。仅生成完整包，输出到 `dist/<版本>/<平台>/`，不再提供轻量包或单独导出 Agent wheel。完整命令、离线材料组织和验收方法见[构建与分发](distribution.md#构建独立发行版与更新依赖)。
 
 ### 统一分发清单
 

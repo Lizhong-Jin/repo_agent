@@ -1,6 +1,7 @@
 """Native preparation is timed separately from process execution and file tools."""
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -100,7 +101,7 @@ def test_startup_retains_separate_isolation_and_gpu_probe_timings(tmp_path, monk
         return outcome(json.dumps(report))
 
     monkeypatch.setattr(ProcessRunner, "run", run)
-    backend = LinuxNativeBackend(tmp_path)
+    backend = LinuxNativeBackend(tmp_path, project_python=sys.executable)
     try:
         metrics = backend.startup_metrics
         assert len(calls) == len(metrics["runs"]) == 1

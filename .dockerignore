@@ -54,6 +54,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !cli/doctor.py
 !cli/formatting.py
 !cli/install_network.py
+!cli/install_packages.py
 !cli/install_transaction.py
 !cli/installation.py
 !cli/interactive.py
@@ -112,6 +113,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !sandbox/environment.py
 !sandbox/linux_exec.py
 !sandbox/linux_gpu.py
+!sandbox/linux_mounts.py
 !sandbox/linux_native.py
 !sandbox/linux_policy.py
 !sandbox/linux_preflight.py
@@ -120,11 +122,14 @@ agent/skills/builtin/gpu-kernel-development/**
 !sandbox/native_gpu_probe.py
 !sandbox/operator_smoke.py
 !sandbox/policy.py
+!sandbox/project_python.py
 !sandbox/resources.py
 !sandbox/session.py
 !sandbox/triton_smoke_kernel.py
 !sandbox/worker.py
 !sandbox/writeback.py
+!sandbox/wsl_drivers.py
+!sandbox/wsl_gpu_probe.py
 !tools/__init__.py
 !tools/_internal/__init__.py
 !tools/_internal/_file_entries.py

@@ -349,7 +349,7 @@ def test_default_constructor_probes_detected_gpu_and_propagates_failure(tmp_path
             LinuxNativeBackend(tmp_path)
         assert len(calls) == 1  # No retry without GPU or unrestricted fallback.
     else:
-        backend = LinuxNativeBackend(tmp_path)
+        backend = LinuxNativeBackend(tmp_path, project_python=sys.executable)
         try:
             assert backend.gpu is None and len(calls) == 1
         finally:
@@ -471,6 +471,12 @@ for family in (socket.AF_INET, socket.AF_UNIX):
     else: raise AssertionError('network allowed')
 subprocess.run([sys.executable, '-I', {str(with_gpu.runtime / 'sandbox/native_gpu_probe.py')!r}], check=True)
 '''
+        if with_gpu.wsl_drivers:
+            expected = sorted(path.name for path in with_gpu.wsl_drivers.packages)
+            assert expected
+            for path in ('/usr/lib/wsl/drivers', '/lib/wsl/drivers'):
+                code += (f"\nassert sorted(p.name for p in pathlib.Path({path!r}).iterdir())"
+                         f" == {expected!r}\n")
         executed = with_gpu.execute(root, "run_python", {"code": code, "timeout_seconds": 120})
         assert executed.success and executed.data["exit_code"] == 0, executed
         report = with_gpu.execute(root, "get_execution_environment", {"sections": ["execution"]})
@@ -481,6 +487,8 @@ subprocess.run([sys.executable, '-I', {str(with_gpu.runtime / 'sandbox/native_gp
     without_gpu = NativeBackend(root, profile="standard")
     try:
         code = "import pathlib; assert not list(pathlib.Path('/dev').glob('nvidia*')); assert not pathlib.Path('/dev/dxg').exists()"
+        if without_gpu.wsl_drivers:
+            code += "; assert not list(pathlib.Path('/usr/lib/wsl/drivers').iterdir())"
         executed = without_gpu.execute(root, "run_python", {"code": code})
         assert executed.data["exit_code"] == 0, executed
     finally:

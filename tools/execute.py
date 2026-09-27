@@ -226,6 +226,15 @@ class GetExecutionEnvironmentTool:
                 "executable": sys.executable,
             },
         }
+        environments = self.execution_context.get('python_environments', {})
+        if environments:
+            report['agent_python'] = dict(report['python'])
+            report['python'] = {
+                **environments.get('project_info', {}),
+                'executable': environments['project'],
+                'source': environments.get('source'),
+                'status': 'available' if environments.get('project_info') else 'unknown',
+            }
         for name, argv in self.RUNTIME_COMMANDS.items():
             if not self.execution_allowed:
                 report[name] = {"status": "unknown", "reason": "local_probes_disabled"}
@@ -250,7 +259,9 @@ class GetExecutionEnvironmentTool:
         # -I avoids importing workspace modules named torch, triton or json.
         # The installed probe script is shared with the existing GPU smoke tools.
         script = Path(__file__).resolve().parents[1] / "sandbox" / "compute_probe.py"
-        result = self._probe([sys.executable, "-I", str(script)], deadline, timeout=30)
+        python = self.execution_context.get("python_environments", {}).get(
+            "project", sys.executable)
+        result = self._probe([python, "-I", str(script)], deadline, timeout=30)
         if result["status"] != "available":
             return result
         try:

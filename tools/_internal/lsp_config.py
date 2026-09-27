@@ -19,6 +19,7 @@ class LspLanguageConfig:
     file_extensions: tuple[str, ...]
     command: tuple[str, ...]
     timeout_seconds: float = 20
+    settings: dict | None = None
 
     def __post_init__(self) -> None:
         for name in ("server_id", "language_id"):

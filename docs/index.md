@@ -20,6 +20,7 @@
 
 | 文档 | 解决的问题 |
 | --- | --- |
+| [Python 运行时与项目环境](python-environments.md) | 受管解释器、项目 Python 自动选择、隔离边界与离线材料 |
 | [macOS / Linux 原生沙箱](native-sandbox.md) | 本机依赖、文件与网络权限、进程清理、GPU 与真实验证 |
 | [Docker 沙箱与回写](../sandbox/README.md) | 工作副本、执行配额、冲突、自动回写和备份恢复 |
 | [GPU 算子开发](gpu-operators.md) | native / Docker 的差异、环境自检、正确性和性能验证 |
@@ -38,7 +39,7 @@
 | [工具开发参考](tools.md) | 工厂、Git 策略、文件/进程工具、LSP 参数和边界 |
 | [统一模型接口](llm.md) | 同步/异步客户端、工具消息、协议、用量、错误与流式事件 |
 | [模型目录](model-catalog.md) | 模型字段、能力匹配、上下文回退和独立请求策略 |
-| [构建与分发](distribution.md) | 唯一文件清单、依赖锁、产物校验与发行安装验收 |
+| [构建与分发](distribution.md) | 全平台完整包、版本与平台目录、离线构建、产物校验与安装验收 |
 
 ## 文档维护约定
 

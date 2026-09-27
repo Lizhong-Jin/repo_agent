@@ -154,10 +154,11 @@ repo-agent config reset                 # 恢复安装目录 .env.example 模板
 | --- | --- |
 | `AGENT_CONFIG_DIR` | 覆盖用户配置目录；未设置时使用 `${XDG_CONFIG_HOME:-~/.config}/repo-agent` |
 | `AGENT_ENV_FILE` | 覆盖项目配置文件；未设置时读取项目根目录 `.env` |
+| `AGENT_PROJECT_PYTHON` | native 的项目解释器；`--project-python` 优先，不设置时自动发现当前环境，详见 [Python 环境](python-environments.md) |
 | `XDG_STATE_HOME` | 用户状态基目录，默认 `~/.local/state`；包含会话和安装登记 |
 | `AGENT_LOG_DIR` | 运行片段日志；显式相对路径以调用目录为准，留空使用项目 `logs/` |
 
-配置目录和状态目录变量在启动前设置，不属于 `.env` 中的运行参数。`--new-session`、`--name`、`--root` 是启动选项；会话名称和上下文保存在会话状态中，不写入模型配置。完整存储结构见[会话管理](sessions.md#保存位置)。
+配置目录、状态目录和项目解释器变量在启动前设置，不属于 `.env` 中的运行参数。`--new-session`、`--name`、`--root` 是启动选项；会话名称和上下文保存在会话状态中，不写入模型配置。完整存储结构见[会话管理](sessions.md#保存位置)。
 
 压缩配置也可通过 `--auto-compact false`、`--compact-threshold 0.8`、`--compact-target 0.5`、`--compact-keep-tokens 4000` 和 `--compact-max-refinements 2` 覆盖。详见[上下文压缩与历史回查](context-compaction.md)。
 

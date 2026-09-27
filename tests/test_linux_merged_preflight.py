@@ -11,6 +11,7 @@ import pytest
 import test_native_performance_metrics as metrics_tests
 from test_linux_native_gpu import result, startup_report
 
+from sandbox import linux_policy as policy_module
 from sandbox import linux_preflight
 from sandbox.linux_gpu import NativeGPU
 from tools._internal.process_runner import ProcessResult, ProcessRunner
@@ -35,7 +36,7 @@ def test_real_launch_path_enumerates_workspace_once_including_masked_trees(
         files.append(path)
     backend.read_paths = (*backend.read_paths, backend.workspace / ".venv")
     visits, checks = Counter(), Counter()
-    scandir, check = os.scandir, backend._check_workspace_file
+    scandir, check = policy_module.open_directory, backend._check_workspace_file
 
     def enumerate_directory(path):
         if not isinstance(path, int):
@@ -46,7 +47,7 @@ def test_real_launch_path_enumerates_workspace_once_including_masked_trees(
         checks[Path(path)] += 1
         check(path, info)
 
-    monkeypatch.setattr(os, "scandir", enumerate_directory)
+    monkeypatch.setattr(policy_module, "open_directory", enumerate_directory)
     monkeypatch.setattr(backend, "_check_workspace_file", validate)
     monkeypatch.setattr(backend, "_check_workspace", lambda: pytest.fail("Separate workspace walk"))
     monkeypatch.setattr(ProcessRunner, "run", lambda *a, **kw: success())
@@ -114,13 +115,22 @@ def test_masked_workspace_directory_permission_error_still_prevents_launch(backe
     hidden = backend.workspace / "logs"
     hidden.mkdir()
     original = os.scandir
+    original_open = policy_module.open_directory
+
+    def opened(path):
+        if not isinstance(path, int) and Path(path) == hidden:
+            raise PermissionError(errno.EACCES, "denied", str(path))
+        return original_open(path)
 
     def scandir(path):
+        if isinstance(path, int):
+            return original(path)
         if not isinstance(path, int) and Path(path) == hidden:
             raise PermissionError(errno.EACCES, "denied", str(path))
         return original(path)
 
     monkeypatch.setattr(os, "scandir", scandir)
+    monkeypatch.setattr(policy_module, "open_directory", opened)
     monkeypatch.setattr(ProcessRunner, "run", lambda *a, **kw: pytest.fail("Unsafe launch"))
     with pytest.raises(PermissionError):
         backend._run(["/usr/bin/true"])

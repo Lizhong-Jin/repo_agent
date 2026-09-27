@@ -28,7 +28,8 @@ RESOURCE_FILES = (
 PACKAGE_RESOURCES = ("agent/skills/builtin/*/SKILL.md", "sandbox/Dockerfile")
 PUBLIC_METADATA = ("pyproject.toml", "uv.lock")
 BUILD_FILES = ("build_manifest.py", "build_support.py", "MANIFEST.in", ".dockerignore")
-INSTALL_SCRIPTS = ("install.sh", "install-release.sh", "uninstall.sh")
+INSTALL_SCRIPTS = ("install.sh", "install-release.sh", "uninstall.sh",
+                   "scripts/bootstrap-python.sh", "runtime/python.lock")
 CONTEXT_ARCHIVE = "cli/resources/docker-context.tar.gz"
 EXCLUDED_DIRS = (
     ".git",

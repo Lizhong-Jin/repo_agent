@@ -45,7 +45,7 @@ def test_cli_defaults_to_native_despite_old_writeback_config(tmp_path, monkeypat
     closed = []
 
     def native_backend(workspace, **options):
-        assert options == {"profile": "auto", "gpus": None}
+        assert options == {"profile": "auto", "gpus": None, "project_python": None}
         native_calls.append(workspace)
         return SimpleNamespace(healthy=True, tools=lambda: [], close=lambda: closed.append(True),
                                execution_context=lambda: {"gpu_access": {"enabled": False}})
@@ -91,6 +91,7 @@ def test_native_session_roundtrip(open_conversation):
 def test_language_server_timeout_blocks_later_calls(tmp_path, monkeypatch):
     backend = NativeBackend.__new__(NativeBackend)
     backend.workspace = tmp_path
+    backend.python = Path(sys.executable)
     backend.read_paths = ()
     backend.healthy = True
     payload = json.dumps({"success": False, "data": {}, "error_code": "LSP_TIMEOUT",

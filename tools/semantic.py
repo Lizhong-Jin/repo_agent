@@ -162,6 +162,7 @@ class LspToolBase:
             self.workspace_root,
             config.command,
             language_id=config.language_id,
+            **({"settings": config.settings} if config.settings else {}),
             timeout_seconds=(
                 self.timeout_seconds if self.timeout_seconds is not None else config.timeout_seconds
             ),

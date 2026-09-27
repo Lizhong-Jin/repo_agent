@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import shutil
 import stat
 import sys
@@ -16,6 +17,8 @@ from tools._internal.file_policy import PROTECTED_NAMES, PROTECTED_SUFFIXES, run
 from tools._internal.process_runner import ProcessRunner, _BoundedCapture
 from tools.execute import GetExecutionEnvironmentTool, RunCommandTool, RunPythonTool
 from tools.factory import create_default_tools, create_file_tools
+
+from .project_python import select_python
 
 
 def _quoted(value):
@@ -102,7 +105,7 @@ class _NativeCommandRunner:
 
     def run(self, command, *, cwd, timeout_seconds):
         return self.backend._run(
-            command, cwd=cwd, timeout=timeout_seconds, max_output_bytes=32 * 1024
+            command, cwd=cwd, timeout=timeout_seconds, max_output_bytes=32 * 1024, project=True
         )
 
 
@@ -134,7 +137,7 @@ class NativeBackend:
         "read_file", "list_files", "find_files", "search_files", "get_path_info",
     })
 
-    def __init__(self, workspace, *, profile="auto", gpus=None):
+    def __init__(self, workspace, *, profile="auto", gpus=None, project_python=None):
         initialization_started = perf_counter()
         self.startup_metrics = {}
         self._performance_runs = []
@@ -176,6 +179,10 @@ class NativeBackend:
             self._prepare_workspace()
             self.startup_metrics["workspace_check_ms"] = self.last_workspace_check_ms
             self._preflight()
+            self.project_python = select_python(
+                self.workspace, project_python,
+                agent_python=self.python, trusted_paths=self.read_paths)
+            self.project_python_info = self._probe_project_python()
             if hasattr(self, "preflight_metrics"):
                 self.startup_metrics["checks"] = self.preflight_metrics
         except BaseException:
@@ -242,6 +249,14 @@ class NativeBackend:
             "file_tools": "trusted_host_file_service",
             "process_tools": "os_sandbox",
             "writable_paths": [str(self.workspace), "per-call temporary directory"],
+            "python_environments": {
+                "agent": str(self.python),
+                "project": str(self.project_python.executable)
+                if getattr(self, 'project_python', None) else str(self.python),
+                "source": self.project_python.source
+                if getattr(self, 'project_python', None) else 'agent fallback',
+                "project_info": getattr(self, 'project_python_info', {}),
+            },
             "resources": {"memory_limit": None, "cpu_limit": None, "pids_limit": None},
             "persistence": {
                 "workspace_files_across_calls": True,
@@ -249,6 +264,24 @@ class NativeBackend:
                 "process_cleanup": "host_supervised_pid_and_start_time_best_effort",
             },
         }
+
+    def _probe_project_python(self):
+        selected = self.project_python
+        if selected.executable == self.python:
+            return {'executable': str(self.python), 'version': sys.version.split()[0]}
+        result = self._run([str(selected.executable), '-I', '-c',
+                           'import json,sys; print(json.dumps({"executable":sys.executable,'
+                           '"version":sys.version.split()[0],"prefix":sys.prefix}))'],
+                          timeout=20, project=True)
+        if result.exit_code != 0 or result.timed_out or result.stdout_truncated or not self.healthy:
+            raise ValueError('项目 Python 沙箱内自检失败；不会切换解释器：' + result.stderr[:2000])
+        try:
+            report = json.loads(result.stdout)
+            if not isinstance(report, dict) or not isinstance(report.get('version'), str):
+                raise ValueError('invalid report')
+        except (ValueError, TypeError) as error:
+            raise ValueError('项目 Python 返回无效自检信息') from error
+        return report
 
     def _environment(self, scratch):
         # Do not inherit API keys, proxy variables, agent sockets or startup hooks.
@@ -269,14 +302,14 @@ class NativeBackend:
         }
 
     def _run(self, command=None, *, request=None, git_read=False, timeout=130,
-             cwd=None, max_output_bytes=4 * 1024 * 1024):
+             cwd=None, max_output_bytes=4 * 1024 * 1024, project=False):
         started = perf_counter()
         metrics = {"preparation_ms": 0.0, "process_ms": 0.0, "total_ms": 0.0,
                    "complete": False}
         try:
             result = self._run_measured(
                 command, request=request, git_read=git_read, timeout=timeout,
-                cwd=cwd, max_output_bytes=max_output_bytes, metrics=metrics,
+                cwd=cwd, max_output_bytes=max_output_bytes, metrics=metrics, project=project,
             )
             metrics["complete"] = True
             return result
@@ -287,13 +320,34 @@ class NativeBackend:
                 self._performance_runs.append(metrics)
 
     def _run_measured(self, command, *, request, git_read, timeout,
-                      cwd, max_output_bytes, metrics):
+                      cwd, max_output_bytes, metrics, project=False):
         preparation_started = perf_counter()
         with tempfile.TemporaryDirectory(prefix="call-", dir=self.directory) as call:
             control = Path(call)
             scratch = control / "scratch"
             scratch.mkdir()
             read_paths = self.read_paths
+            project_environment = getattr(self, 'project_python', None)
+            if project_environment:
+                # Embedded environments are already visible through the workspace;
+                # protect them from writes even during control-only operations.
+                read_paths = tuple(dict.fromkeys((*read_paths, *(
+                    path for path in project_environment.read_paths
+                    if path.is_relative_to(self.workspace)
+                ))))
+            selected = project_environment if project else None
+            if selected:
+                read_paths = tuple(dict.fromkeys((*read_paths, *selected.read_paths)))
+            aliases = None
+            if selected and request is None:
+                aliases = control / 'python-bin'
+                aliases.mkdir()
+                for name in ('python', 'python3'):
+                    path = aliases / name
+                    path.write_text('#!/bin/sh\nexec ' + shlex.quote(str(selected.executable))
+                                    + ' "$@"\n')
+                    path.chmod(0o555)
+                read_paths = (*read_paths, aliases)
             if request is not None:
                 request_path = control / "request.json"
                 request_path.write_text(json.dumps(request))
@@ -315,8 +369,19 @@ class NativeBackend:
                 metrics["preparation_ms"] = (perf_counter() - preparation_started) * 1000
                 if self.last_policy_metrics is not None:
                     metrics["policy"] = dict(self.last_policy_metrics)
+            environment = self._environment(scratch)
+            # Worker/control executables retain trusted PATH. Only user commands
+            # receive the project environment's command search path.
+            if selected and request is None:
+                environment['PATH'] = os.pathsep.join([
+                    str(aliases), str(selected.executable.parent), environment['PATH']])
+                prefix = selected.executable.parent.parent
+                if (prefix / 'conda-meta').is_dir():
+                    environment['CONDA_PREFIX'] = str(prefix)
+                elif (prefix / 'pyvenv.cfg').is_file():
+                    environment['VIRTUAL_ENV'] = str(prefix)
             runner = ProcessRunner(max_output_bytes=max_output_bytes,
-                                   base_env=self._environment(scratch), supervise_tree=True)
+                                   base_env=environment, supervise_tree=True)
             process_started = perf_counter()
             try:
                 result = runner.run(
@@ -403,8 +468,10 @@ class NativeBackend:
     def _execute_file(self, tool, arguments):
         protected = tuple(getattr(self, "protected_paths", ())) + tuple(
             runtime_protected_paths(self.workspace))
+        selected = getattr(self, 'project_python', None)
+        readonly = (*self.read_paths, *(selected.read_paths if selected else ()))
         access = FileAccess(self.workspace, protected_paths=protected,
-                            read_only_paths=self.read_paths)
+                            read_only_paths=readonly)
         try:
             with access.activate():
                 result = tool.execute(arguments)
@@ -470,7 +537,10 @@ class NativeBackend:
                 RunCommandTool(self.workspace, execution_allowed=True,
                                max_timeout_seconds=self.command_timeout_seconds)
                 if name == "run_command"
-                else RunPythonTool(self.workspace, execution_allowed=True, python_executable=self.python,
+                else RunPythonTool(self.workspace, execution_allowed=True,
+                                   python_executable=(self.project_python.executable
+                                                      if getattr(self, "project_python", None)
+                                                      else self.python),
                                    max_timeout_seconds=self.python_timeout_seconds)
             )
             tool.runner = _NativeCommandRunner(self)
@@ -486,7 +556,8 @@ class NativeBackend:
             "tool_limits": self._tool_limits(),
         }
         # -I excludes the workspace/PYTHONPATH; trusted package copies take precedence.
-        result = self._run(request=request, git_read=name in {"git_status", "git_diff"})
+        result = self._run(request=request, git_read=name in {"git_status", "git_diff"},
+                           project=name not in {"git_status", "git_diff"})
         if result.exit_code != 0 or result.timed_out or result.stdout_truncated or result.cleanup_error:
             return ToolResult(False, error_code="NATIVE_EXECUTION_FAILED",
                               error="原生沙箱执行失败、超时或输出超过限制；文件修改可能已经生效",

@@ -18,13 +18,16 @@
 | 上下文压缩 | [agent/compaction.py](agent/compaction.py)、[agent/history.py](agent/history.py)、[llm/independent.py](llm/independent.py) | 请求前自动检查、手动压缩、独立摘要请求、原文归档与只读回查 |
 | 模型能力 | [llm/model_limits.py](llm/model_limits.py)、[llm/thinking_profiles.py](llm/thinking_profiles.py)、[llm/model_catalog.py](llm/model_catalog.py) | 上下文元数据查询、思考能力匹配与校验 |
 | 工具 | [tools/factory.py](tools/factory.py)、[tools/](tools/) | 文件、补丁、搜索、Git、环境查询、隔离命令、Python 和语言服务器工具 |
+| 工具调度与分组 | [tools/dispatch.py](tools/dispatch.py)、[tools/tool_groups.py](tools/tool_groups.py) | 按显式执行类别调度；按需加载工具定义，独立管理会话可见性 |
 | Web 工具 | [tools/web_tools.py](tools/web_tools.py)、[tools/_internal/](tools/_internal/) | 主进程受控搜索、网页抓取和分页缓存，按配置启用 |
 | 系统提示词 | [agent/prompt.py](agent/prompt.py) | 通用任务规则；代码工作流程由 `coding` 等技能按需补充 |
 | 原生沙箱 | [sandbox/native.py](sandbox/native.py)、[sandbox/linux_native.py](sandbox/linux_native.py)、[sandbox/linux_gpu.py](sandbox/linux_gpu.py) | 平台隔离、原项目执行、Linux/WSL2 GPU 授权与驱动自检 |
+| 项目 Python | [sandbox/project_python.py](sandbox/project_python.py) | 选择项目解释器、构造读取范围和项目进程环境；可信 worker 继续使用 Agent Python |
 | Docker 沙箱 | [sandbox/session.py](sandbox/session.py)、[sandbox/docker.py](sandbox/docker.py)、[sandbox/writeback.py](sandbox/writeback.py) | 工作副本、容器、回写检查、备份与恢复 |
 | 追踪 | [agent/Tracing.py](agent/Tracing.py) | 模型/工具事件、计时、任务与运行片段统计 |
 | 构建与分发 | [build_manifest.py](build_manifest.py)、[build_support.py](build_support.py)、[scripts/build_release.py](scripts/build_release.py) | 统一文件清单、生成构建配置、校验 wheel / sdist / Docker 上下文与发行包 |
 | 配置与安装 | [cli/config.py](cli/config.py)、[cli/config_command.py](cli/config_command.py)、[cli/setup.py](cli/setup.py)、[cli/uninstall.py](cli/uninstall.py) | 配置加载及备份、安装、诊断、归属清理 |
+| 受管运行时与离线材料 | [runtime/python.lock](runtime/python.lock)、[scripts/bootstrap-python.sh](scripts/bootstrap-python.sh)、[scripts/prepare_python_bundle.py](scripts/prepare_python_bundle.py) | 固定平台 Python 归档与校验值、引导运行时、准备平台依赖；源码安装另包含开发依赖 |
 
 ## 一次任务的流程
 
@@ -48,7 +51,13 @@ flowchart TD
     F -.事件.-> J
 ```
 
-显式选择 local 模式时，直接创建文件、Git 和不启动子进程的基础环境查询工具，不注册命令、Python 或语言服务器工具。Docker 工具代理为每次调用创建独立容器；会话目录中只开放工作副本，另以只读文件传入本次调用请求。`sandbox/native.py` 根据平台选择后端：macOS 使用 Seatbelt，Linux 的 `sandbox/linux_native.py` 使用 Bubblewrap namespace 和只读/遮蔽挂载，`sandbox/linux_exec.py` 在执行前加载 seccomp。命令和 worker 都直接操作原项目，复用工具协议，不使用副本回写。模型请求在宿主机发送，隔离 worker 不持有模型凭证。可选 Web 工具也在主进程单独注册，不进入沙箱工具工厂；Web 联网不改变命令断网策略。
+显式选择 local 模式时，直接创建文件、Git 和不启动子进程的基础环境查询工具，不注册命令、Python 或语言服务器工具。Docker 工具代理为每次调用创建独立容器；会话目录中只开放工作副本，另以只读文件传入本次调用请求。
+
+native 直接操作原项目，不使用副本回写。内置文件工具通过受约束的轻量文件服务执行；命令、Python、Git、环境探测和 LSP 使用操作系统隔离。`sandbox/native.py` 根据平台选择后端：macOS 使用 Seatbelt；Linux 的 `sandbox/linux_native.py` 使用 Bubblewrap namespace 和只读/遮蔽挂载，`sandbox/linux_exec.py` 在执行前加载 seccomp。Linux 复用配置级策略计划，每次执行重新扫描文件系统；同次扫描合并工作区元数据检查并复用目录别名结果。WSL GPU 的驱动挂载识别与所需驱动目录选择由 `linux_mounts.py`、`wsl_drivers.py` 和隔离探测配合完成。细节及限制见[原生沙箱](docs/native-sandbox.md)。
+
+Agent 安装默认使用受管 Python；native 可另选项目 Python 执行用户代码和探测依赖。可信 worker、控制进程与语言服务器的运行环境保持独立，Python LSP 通过分析环境配置访问项目依赖，见[Python 环境](docs/python-environments.md)。模型请求在宿主机发送，隔离 worker 不持有模型凭证。可选 Web 工具也在主进程单独注册，不进入沙箱工具工厂；Web 联网不改变命令断网策略。
+
+Runtime 按 `ExecutionKind` 调度工具。CLI 默认只向模型公开通用工具与加载器，`file_editing`、`coding` 两组通过 `load_tool_group` 按需加载；加载状态随会话保存，不能增加当前后端未授权的能力。完整边界见[工具调度](docs/tools.md#工具执行调度)与[工具组](docs/tools.md#按需加载工具组)。
 
 ## 上下文构造
 

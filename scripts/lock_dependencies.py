@@ -7,8 +7,9 @@ import subprocess
 from pathlib import Path
 
 
-def export_locks(root, uv, *, check=False):
-    subprocess.run([uv, "lock", "--check" if check else "--upgrade"], cwd=root, check=True)
+def export_locks(root, uv, *, check=False, offline=False):
+    subprocess.run([uv, "lock", "--check" if check else "--upgrade",
+                    *(["--offline"] if offline else [])], cwd=root, check=True)
     for kind, options in (
         ("core", ["--no-default-groups"]),
         ("lsp", ["--no-default-groups", "--extra", "lsp"]),
@@ -24,6 +25,7 @@ def export_locks(root, uv, *, check=False):
                 "--no-header",
                 "--no-annotate",
                 *options,
+                *(["--offline"] if offline else []),
             ],
             cwd=root,
             check=True,

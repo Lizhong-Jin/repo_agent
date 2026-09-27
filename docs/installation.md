@@ -6,15 +6,17 @@
 
 ## 独立发行版安装
 
-普通用户可以使用维护者构建的 `repo-agent-<版本>.tar.gz`，无需 Git、源码 checkout 或 uv。发行包尚需维护者自行上传至 GitHub Releases，本项目的构建命令不会发布文件。安装仍需要可用的 Python 3.11+（含 venv/ensurepip），并联网下载锁定的 Python 依赖；不内置 Python 或系统工具链。
+普通用户使用与目标系统和架构匹配的完整包 `repo-agent-<版本>-<平台>.tar.gz`，包含独立 Python、Agent wheel 和 Python 语言服务依赖，不需要预装 Python。支持 macOS/Linux 的 ARM64、x86_64，WSL2 使用对应架构的 Linux 包。包中不含系统工具链或项目的 PyTorch 等依赖。详见 [Python 环境](python-environments.md)。
 
-发行压缩包自带 `repo-agent-<版本>/` 顶层文件夹，直接解压即可，无需预先创建空目录。以 0.1.0 为例：
+维护者的构建产物位于 `dist/<版本>/<平台>/`，每个压缩包旁有对应的 `.sha256` 文件；构建器默认生成全部平台，只提供完整包。构建命令与目录结构见[构建与分发](distribution.md)。
+
+发行压缩包自带与文件名对应的顶层文件夹，直接解压即可，无需预先创建空目录。以下以 0.1.1 的 macOS ARM64 完整包为例，其他平台替换后缀：
 
 ```bash
-tar -xzf repo-agent-0.1.0.tar.gz
-cd repo-agent-0.1.0
-./install-release.sh --check
+tar -xzf repo-agent-0.1.1-macos-arm64.tar.gz
+cd repo-agent-0.1.1-macos-arm64
 ./install-release.sh
+./install-release.sh --check
 ```
 
 `.env.example` 等隐藏文件包含在该文件夹内，保持发行文件原样，安装后再通过用户配置设置模型。
@@ -22,9 +24,9 @@ cd repo-agent-0.1.0
 已有源码时，也可以直接安装构建好的压缩包；更新后的安装器兼容新格式和旧版平铺格式：
 
 ```bash
-./install-release.sh --archive dist/repo-agent-0.1.0.tar.gz
+./install-release.sh --archive dist/0.1.1/macos-arm64/repo-agent-0.1.1-macos-arm64.tar.gz
 # 使用从可信发布来源取得的 SHA256 做整个压缩包校验
-./install-release.sh --archive dist/repo-agent-0.1.0.tar.gz --sha256 <SHA256>
+./install-release.sh --archive dist/0.1.1/macos-arm64/repo-agent-0.1.1-macos-arm64.tar.gz --sha256 <SHA256>
 ```
 
 默认位置：
@@ -58,11 +60,11 @@ repo-agent uninstall
 
 ## 源码安装与首次启动
 
-需要 macOS / Linux、Python 3.11+；安装器遍历 PATH 中的候选解释器，并检查版本、venv 和 ensurepip，自动跳过不完整的 Python。显式设置 AGENT_PYTHON 时只使用该解释器，失败会显示修复步骤；不会替换成其他 Python。默认使用 native 模式，无需 Docker；macOS 使用 Seatbelt，Linux 使用 Bubblewrap + seccomp。首次安装联网下载依赖。在源码目录执行：
+需要 macOS / Linux（含 WSL2）。安装器默认复用或下载锁定的受管 Python，不依赖用户的 Conda 环境。显式 `AGENT_PYTHON=/路径/bin/python` 使用指定解释器；`AGENT_PYTHON=system` 启用系统 Python 搜索。默认 native 模式无需 Docker；Linux 仍需 Bubblewrap 和 libseccomp。常规源码安装首次联网准备运行、构建和开发依赖。
 
 ```bash
-./install.sh --check
 ./install.sh
+./install.sh --check
 ```
 
 源码安装创建专用 `.venv`，自动安装开发依赖 pytest、Ruff 和构建工具，将模板复制到用户配置，并把 `repo-agent`、`repo-agent-build-sandbox` 安装到 `~/.local/bin`。默认补充 Bash / Zsh 的 PATH；打开新终端或执行安装结尾打印的命令。其他 shell 自行配置 PATH。源码和安装目录需要保留，命令依赖其中的虚拟环境。
@@ -77,6 +79,23 @@ repo-agent uninstall
 ```
 
 首次默认 native，通过 macOS / Linux 原生沙箱执行工具并直接修改原项目。安装成功会记录所选模式，后续 `repo-agent` 和 `doctor` 沿用该模式；可用 `--sandbox` 或 `doctor --mode` 临时覆盖。Windows 请在 WSL2 内安装和运行；local 仅支持文件/Git 工具。详见[原生沙箱](native-sandbox.md)。`--skip-sandbox` 仅在 Docker 安装模式下跳过镜像构建，不会改变所选模式；native/local 不检查 Docker。
+
+## 离线安装
+
+平台完整发行包已包含运行时和运行依赖。首次离线安装先解压，再从包内运行入口；从其他目录使用 `--archive` 时，该入口本身仍需要已有引导 Python 或本地运行时归档：
+
+```bash
+./install-release.sh --offline --skip-toolchains
+```
+
+源码安装需要额外的构建和开发依赖。在联网的准备机器上生成与目标平台匹配的开发材料，步骤见[开发指南](development.md#离线开发环境)。将材料复制到离线机器后，在源码目录运行：
+
+```bash
+AGENT_PYTHON_ARCHIVE=/path/to/kit/runtime/python.tar.gz \
+  ./install.sh --offline --wheelhouse /path/to/kit/wheelhouse --skip-toolchains
+```
+
+离线安装会在替换现有 `.venv` 前检查 wheels 是否齐全，缺失或哈希不匹配时失败。不会偷偷访问包源；普通 pip 缓存不作为离线材料的替代品。Docker 模式需预先准备镜像，并加 `--skip-sandbox`；系统依赖和额外语言工具链也需提前安装。完整发行包在未指定外部 wheelhouse 时默认从包内 wheels 安装 Python 依赖；显式 `--offline` 进一步禁止安装流程选择下载额外工具链或构建镜像。
 
 ## Linux native 前置依赖
 
@@ -101,7 +120,7 @@ repo-agent-build-sandbox
 
 ## 切换安装目录
 
-在新目录运行 `./install.sh` 时，如果目标命令目录中的 `repo-agent` 或 `repo-agent-build-sandbox` 已指向另一份安装，会先列出两个命令需要替换的位置，并询问 `是否继续安装并替换命令？[y/N]`。输入 `y` 或 `yes` 后继续；回车、输入其他内容、Ctrl+C 或没有可读取的输入均取消，且不创建虚拟环境、下载依赖、构建镜像或写入安装记录。同目录重复安装不需要确认命令替换；native 的工具链补齐仍会询问。
+在新目录运行 `./install.sh` 时，如果目标命令目录中的 `repo-agent` 或 `repo-agent-build-sandbox` 已指向另一份安装，会先列出两个命令需要替换的位置，并询问 `是否继续安装并替换命令？[y/N]`。输入 `y` 或 `yes` 后继续；回车、输入其他内容、Ctrl+C 或没有可读取的输入均取消，不创建 Agent 虚拟环境、安装依赖、构建镜像或写入安装记录。用于启动安装器的共享 Python 可能已在此之前下载并校验，取消后保留。同目录重复安装不需要确认命令替换；native 的工具链补齐仍会询问。
 
 新目录的依赖安装和镜像构建成功后，命令才会切换；这些步骤失败时旧命令仍可用。旧安装目录和用户配置保留。之后卸载旧目录不会删除指向新目录的命令；卸载当前新目录会移除命令，不自动回退到旧目录。其他普通文件或无法识别的同名链接不会被覆盖；安装期间链接若被其他操作改变，会停止覆盖并提示重试。
 
@@ -141,6 +160,7 @@ repo-agent-build-sandbox
 | 项目 `.env`、源码、Git、会话快照及日志、沙箱副本及备份 | 不清理；配置文件如果被显式指定为用户配置，则按上一行处理 |
 | Docker 镜像 | 默认保留；请求清理时校验 Docker 主机、镜像 ID、共享安装和容器使用情况；不使用强制删除或全局 prune |
 | 系统 Python、Anaconda、Docker | 不卸载 |
+| 受管 Python 缓存 | 保留，其他 Agent 安装的虚拟环境可能仍在使用 |
 
 镜像标签对应的镜像已被重新构建、切换了 Docker 主机、仍有容器使用，或另一个登记安装可能使用时，会保留并说明原因。Docker 无法访问时，已授权的本地文件清理仍会完成，保留镜像记录并返回非零退出码；Docker 恢复后可重试。
 
@@ -239,7 +259,7 @@ Python 依赖、`gopls` 和 npm 的 JS/TS 语言服务位于本安装 `.venv` �
 
 **Homebrew 安装或更新的 Node.js、Go、LLVM 属于共享系统工具，不在失败恢复和卸载时删除或降级。** Homebrew/npm/Go 的下载缓存也不进行全局清理。安装前须退出本安装的 Agent 会话。
 
-普通安装不包含开发工具；需要测试和静态检查时，另行安装 `.[dev]`。Docker 的 GPU 依赖由 CUDA 镜像提供；Linux / WSL2 native 使用用户预装的驱动、Agent Python 环境中的 PyTorch/Triton 及系统 Toolkit。native 安装不会自动安装这些计算依赖，macOS native 不提供本项目的 NVIDIA CUDA GPU 支持。
+独立发行版不包含开发工具；源码安装自动安装锁定的 pytest、Ruff 和构建依赖。Docker 的 GPU 依赖由 CUDA 镜像提供；Linux / WSL2 native 使用用户预装的驱动、项目 Python 环境中的 PyTorch/Triton 及系统 Toolkit。native 安装不会自动安装这些计算依赖，macOS native 不提供本项目的 NVIDIA CUDA GPU 支持。
 
 ## 依赖锁定
 
@@ -247,4 +267,4 @@ Python 依赖、`gopls` 和 npm 的 JS/TS 语言服务位于本安装 `.venv` �
 
 Python 安装启用 `--require-hashes --only-binary=:all:`，平台/Python 版本没有匹配 wheel 时会明确失败，不静默回退到本地编译。可选语言服务失败仍不阻断核心安装，网络代理、证书提示、重试及事务恢复机制继续有效。
 
-JS/TS 使用 `dependencies/node/package-lock.json` 和 `npm ci`，固定传递依赖并校验 npm integrity；原生补齐和 Docker 镜像使用同一清单。Go 的 gopls 继续固定版本并使用 Go 模块校验。系统 Python、Node.js、Go、LLVM、Linux 系统包及 Docker 基础镜像不属于应用锁文件；已有兼容工具链仍会复用。CUDA 镜像额外的 pytest/ninja 等工具也不在本次 Python 核心锁内，因此不宣称整个系统或 GPU 镜像可以逐字节复现。
+JS/TS 使用 `dependencies/node/package-lock.json` 和 `npm ci`，固定传递依赖并校验 npm integrity；原生补齐和 Docker 镜像使用同一清单。Go 的 gopls 继续固定版本并使用 Go 模块校验。受管 Python 另由 `runtime/python.lock` 固定。显式选择的系统 Python、Node.js、Go、LLVM、Linux 系统包及 Docker 基础镜像不属于应用锁文件；已有兼容工具链仍会复用。CUDA 镜像额外的 pytest/ninja 等工具也不在本次 Python 核心锁内，因此不宣称整个系统或 GPU 镜像可以逐字节复现。

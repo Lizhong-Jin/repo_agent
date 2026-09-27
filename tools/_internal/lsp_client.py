@@ -188,6 +188,8 @@ class LspClient:
                 if self.capabilities.get("positionEncoding", "utf-16") != "utf-16":
                     raise LspUnsupportedError("Only UTF-16 positions are supported")
                 self._notify("initialized", {})
+                if self.settings:
+                    self._notify("workspace/didChangeConfiguration", {"settings": self.settings})
                 self._ready = True
             except BaseException:
                 self._dispose()

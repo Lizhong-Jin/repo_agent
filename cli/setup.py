@@ -47,12 +47,24 @@ if __package__:
         service_report,
     )
     from .install_network import network_options, run_download
+    from .install_packages import (
+        requirement_args,
+        requirement_files,
+        source_flags,
+        verify_bundle_platform,
+    )
     from .install_transaction import TRANSACTION, InstallTransaction, recover_install
     from .maintenance import environment_report, file_lock, print_report
     from .toolchains import install_missing
 else:
     from config_storage import config_lock
     from install_network import network_options, run_download
+    from install_packages import (
+        requirement_args,
+        requirement_files,
+        source_flags,
+        verify_bundle_platform,
+    )
     from install_transaction import TRANSACTION, InstallTransaction, recover_install
     from maintenance import environment_report, file_lock, print_report
     from toolchains import install_missing
@@ -285,6 +297,9 @@ def main(argv=None, *, approved_commands=None) -> None:
         help="无需询问，跳过额外补齐；Python 服务仍安装",
     )
     parser.set_defaults(toolchains=None)
+    parser.add_argument("--offline", action="store_true",
+                        help="禁止下载，依赖必须完整位于 wheelhouse")
+    parser.add_argument("--wheelhouse", type=Path, help="本地依赖 wheel 目录")
     parser.add_argument("--no-path", action="store_true")
     parser.add_argument("--bootstrap", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--wheel", type=Path, help=argparse.SUPPRESS)
@@ -305,6 +320,19 @@ def main(argv=None, *, approved_commands=None) -> None:
             release = read_release(agent_home)
             if args.wheel.resolve() != (agent_home / release["wheel"]).resolve():
                 raise ValueError("wheel 与发行清单不匹配")
+        verify_bundle_platform(agent_home)
+        bundled_wheels = agent_home / 'wheelhouse'
+        wheelhouse = args.wheelhouse or (bundled_wheels if bundled_wheels.is_dir() else None)
+        offline_packages = args.offline or bool(release and bundled_wheels.is_dir()
+                                                 and args.wheelhouse is None)
+        package_flags = source_flags(wheelhouse, offline=offline_packages)
+        requirements = requirement_files(agent_home, native=args.mode == 'native',
+                                         source=not args.wheel)
+        if args.offline:
+            if args.toolchains or (args.mode == 'docker' and not args.skip_sandbox):
+                raise ValueError('离线模式不下载工具链或构建镜像；'
+                                 '预装后使用 --skip-toolchains/--skip-sandbox')
+            args.toolchains = False
         network_options()
         extra_languages = []
         unfinished_languages = []
@@ -349,6 +377,13 @@ def main(argv=None, *, approved_commands=None) -> None:
             if args.recover:
                 print("安装恢复检查完成。")
                 return
+            if args.bootstrap and offline_packages:
+                # Check completeness before moving the existing environment.
+                with tempfile.TemporaryDirectory(prefix='repo-agent-wheel-check-') as check_dir:
+                    run_download([sys.executable, '-m', 'pip', 'download',
+                                  '--only-binary=:all:', '--require-hashes',
+                                  *package_flags, *requirement_args(requirements),
+                                  '--dest', check_dir], label='验证离线依赖', cwd=agent_home)
             if args.bootstrap and args.mode == "native":
                 args.toolchains = (
                     choose_toolchains(args.toolchains) if args.languages != "python" else False
@@ -375,28 +410,10 @@ def main(argv=None, *, approved_commands=None) -> None:
                     subprocess.run([python, "-m", "venv", str(agent_home / ".venv")], check=True)
                     python = str(agent_home / ".venv/bin/python")
                     print("安装核心依赖……", flush=True)
-                    lock = agent_home / (
-                        "requirements-lsp.lock"
-                        if args.mode == "native"
-                        else "requirements-core.lock"
-                    )
-                    locked = [
-                        python,
-                        "-m",
-                        "pip",
-                        "install",
-                        "--require-hashes",
-                        "--only-binary=:all:",
-                        "-r",
-                        str(lock),
-                    ]
+                    locked = [python, '-m', 'pip', 'install', '--require-hashes',
+                              '--only-binary=:all:', *package_flags,
+                              *requirement_args(requirements)]
                     if not args.wheel:
-                        locked += [
-                            "-r",
-                            str(agent_home / "requirements-build.lock"),
-                            "-r",
-                            str(agent_home / "requirements-dev.lock"),
-                        ]
                         print("源码安装：自动准备开发依赖（pytest、Ruff）。", flush=True)
                     run_download(locked, label="安装固定版本依赖", cwd=agent_home)
                     if args.wheel:
@@ -424,6 +441,7 @@ def main(argv=None, *, approved_commands=None) -> None:
                                 str(agent_home) + ("[lsp]" if args.mode == "native" else ""),
                                 "--no-deps",
                                 "--no-build-isolation",
+                                *package_flags,
                             ],
                             label="安装 Agent 核心依赖",
                             cwd=agent_home,

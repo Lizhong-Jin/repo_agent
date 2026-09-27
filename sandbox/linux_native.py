@@ -14,9 +14,11 @@ from pathlib import Path
 from time import perf_counter
 
 from .linux_gpu import NativeGPU
+from .linux_mounts import MountTable
 from .linux_policy import PolicyPlan, PolicyScan
 from .linux_policy import outermost as _outermost
 from .native import NativeBackend
+from .wsl_drivers import WSLDriverStore
 
 
 class LinuxNativeBackend(NativeBackend):
@@ -25,6 +27,7 @@ class LinuxNativeBackend(NativeBackend):
     temporary_root = "/tmp"
     gpu = None
     gpu_probe = None
+    wsl_drivers = None
 
     def _platform_setup(self):
         if sys.platform != "linux":
@@ -37,6 +40,7 @@ class LinuxNativeBackend(NativeBackend):
                 "（Fedora 使用 libseccomp）。不会退回未隔离执行。"
             )
         self.executable = Path(executable)
+        self.wsl_drivers = WSLDriverStore.detect()
         if self.requested_gpus is not None or self.requested_profile == "cuda":
             self.gpu = NativeGPU.discover(self.requested_gpus or "all")
         elif self.requested_profile == "auto":
@@ -96,10 +100,21 @@ class LinuxNativeBackend(NativeBackend):
 
     def _mount_policy(self, read_paths, *, git_read):
         self._check_workspace_layout()
+        table = MountTable.read()
+        views, roots = (), ()
+        if self.wsl_drivers:
+            self.wsl_drivers.verify(table)
+            views = self.wsl_drivers.views(read_paths)
+            roots = tuple(view / package.name for view in views
+                          for package in self.wsl_drivers.packages)
         scan = PolicyScan(self._policy_plan(), git_read=git_read,
+                          mount_table=table, pruned_paths=views, extra_roots=roots,
                           check_workspace_file=self._check_workspace_file)
         try:
-            return scan.run(read_paths)
+            result = scan.run(read_paths)
+            if self.wsl_drivers:
+                self.wsl_drivers.verify(table)
+            return result
         finally:
             self.last_policy_metrics = scan.metrics
 
@@ -141,6 +156,8 @@ class LinuxNativeBackend(NativeBackend):
                   else _outermost(read_paths))
         for path in mounts:
             argv.extend(["--ro-bind", str(path), str(path)])
+        if self.wsl_drivers:
+            argv.extend(self.wsl_drivers.mount_args(self.wsl_drivers.views(read_paths)))
         for path in git_paths:
             argv.extend(["--ro-bind", str(path), str(path)])
         for path in masks:
@@ -190,9 +207,25 @@ class LinuxNativeBackend(NativeBackend):
             "memory_limit": None,
             "exclusive": False,
         }
+        if self.wsl_drivers:
+            result["gpu_access"]["driver_store_packages"] = [
+                str(path) for path in self.wsl_drivers.packages
+            ]
         return result
 
     def _preflight(self):
+        driver_discovery_ms = None
+        if self.wsl_drivers and self.gpu and self.gpu.kind == "wsl2":
+            started = perf_counter()
+            discovery = self._run([
+                str(self.python), "-I", str(self.runtime / "sandbox/wsl_gpu_probe.py"),
+            ], timeout=30)
+            if (discovery.exit_code != 0 or discovery.timed_out
+                    or discovery.stdout_truncated or not self.healthy):
+                raise ValueError("WSL 驱动包查询失败；不会暴露整个驱动存储。\n"
+                                 + discovery.stderr[:2000])
+            self.wsl_drivers.select(discovery.stdout)
+            driver_discovery_ms = (perf_counter() - started) * 1000
         if self.gpu and self.gpu.requested != "all":
             # Enumerate with a trusted system binary inside the sandbox, before
             # running any project code. Then reduce the device grant permanently.
@@ -231,6 +264,8 @@ class LinuxNativeBackend(NativeBackend):
                 + str(isolation.get("stderr", ""))[:2000] + result.stderr[:2000]
             )
         self.preflight_metrics = {"isolation_ms": isolation.get("duration_ms")}
+        if driver_discovery_ms is not None:
+            self.preflight_metrics["driver_discovery_ms"] = driver_discovery_ms
         if self.gpu:
             self._validate_gpu_preflight(report.get("gpu"), result)
             self.preflight_metrics["gpu_ms"] = report["gpu"].get("duration_ms")

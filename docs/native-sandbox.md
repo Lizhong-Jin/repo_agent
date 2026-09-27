@@ -10,7 +10,7 @@ repo-agent --sandbox native
 repo-agent --sandbox native --root /path/to/project
 ```
 
-不需要 Docker 或镜像。使用启动 Agent 的 Python 环境，以及 `.venv` 内的语言服务、Homebrew LLVM 路径、`/opt/homebrew/bin`、`/usr/local/bin` 和系统目录中的工具。运行 `./install.sh --mode native` 会安装 Python 语言服务，按用户安装选项准备额外语言服务；macOS 可通过 Homebrew 补齐缺少的 Node.js、Go、LLVM，Linux 须先用发行版包管理器安装系统工具链，并把 JS/TS、Go 语言服务放入专用 `.venv`。需要时可用 `--languages python` 缩小范围。安装和 `repo-agent doctor --mode native` 会实际查询示例符号；工具执行过程中缺少依赖仍会报错，不临时下载或绕过沙箱。隔离执行工具默认完全断网，包括 localhost，所以依赖下载和需要本地服务的测试不能在沙箱内运行。轻量文件工具只调用受信任的文件操作代码，不启动子进程或发起网络请求。
+不需要 Docker 或镜像。可信控制进程使用 Agent Python，项目代码使用自动发现的项目 Python（见 [环境规则](python-environments.md)），以及 `.venv` 内的语言服务、Homebrew LLVM 路径、`/opt/homebrew/bin`、`/usr/local/bin` 和系统目录中的工具。运行 `./install.sh --mode native` 会安装 Python 语言服务，按用户安装选项准备额外语言服务；macOS 可通过 Homebrew 补齐缺少的 Node.js、Go、LLVM，Linux 须先用发行版包管理器安装系统工具链，并把 JS/TS、Go 语言服务放入专用 `.venv`。需要时可用 `--languages python` 缩小范围。安装和 `repo-agent doctor --mode native` 会实际查询示例符号；工具执行过程中缺少依赖仍会报错，不临时下载或绕过沙箱。隔离执行工具默认完全断网，包括 localhost，所以依赖下载和需要本地服务的测试不能在沙箱内运行。轻量文件工具只调用受信任的文件操作代码，不启动子进程或发起网络请求。
 
 ## 轻量文件工具与隔离执行工具
 
@@ -46,7 +46,7 @@ Fedora 的对应包是 `bubblewrap libseccomp`。需要其他语言时，先准�
 | 路径或资源 | Linux native 权限 |
 | --- | --- |
 | 工作区普通文件、每次调用的私有临时目录 | 可读写，原项目修改立即生效 |
-| `/usr`、`/bin`、`/sbin`、`/lib`、`/lib64`、当前 Python 环境及依赖、工具实现副本 | 只读；工作区内的解释器目录也只读 |
+| `/usr`、`/bin`、`/sbin`、`/lib`、`/lib64`、Agent Python、按需加入的项目环境及依赖、工具实现副本 | 只读；工作区内的解释器目录也只读 |
 | `/etc` | 仅映射少量加载器/时区文件，不挂载整个目录 |
 | 其他项目、个人目录 | 未映射即不可见；白名单工具链路径例外 |
 | 已有 `.env`、密钥后缀文件、凭据目录、配置指定的保护路径 | 每次调用前重新扫描，以无访问权限的只读空文件/目录遮蔽 |
@@ -95,7 +95,7 @@ repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all
 
 仅逐个挂载获准的 `/dev/nvidiaN`、共享控制节点和 UVM 节点；NVIDIA `/proc/driver/nvidia` 信息只读。WSL2 使用单个 `/dev/dxg` 和已有的 `/usr/lib/wsl/lib` 驱动库，这个共享设备不能按显卡拆分授权，因此拒绝单卡索引/UUID。WSL2 驱动由 Windows 提供，不应在发行版内安装 Linux 显卡驱动，见 [NVIDIA WSL 指南](https://docs.nvidia.com/cuda/wsl-user-guide/)。
 
-启动时先验证原有隔离，再使用 `libcuda.so.1` 创建 CUDA context、分配显存、JIT 编译并执行一个小型 PTX kernel，读取结果核对。任一设备无法计算、驱动库缺失、超时或选择不匹配都会拒绝启动，不以 CPU fallback 通过。此探测不依赖 PyTorch 或 nvcc；PyTorch、Triton、CUDA 扩展仍需提前在 Agent 使用的 Python 环境/系统中安装相应依赖。
+启动时先验证原有隔离，再使用 `libcuda.so.1` 创建 CUDA context、分配显存、JIT 编译并执行一个小型 PTX kernel，读取结果核对。任一设备无法计算、驱动库缺失、超时或选择不匹配都会拒绝启动，不以 CPU fallback 通过。此探测使用 Agent Python，不依赖 PyTorch 或 nvcc；PyTorch、Triton、CUDA 扩展需提前在选定的项目 Python 环境中安装，系统驱动和工具链单独准备。
 
 自动识别系统 `/usr/local/cuda` 或 `/opt/cuda`（解析后的目录须位于 `/usr` 或 `/opt`），只读映射工具链并设置 CUDA_HOME/PATH；发行版安装在 `/usr/bin` 的 nvcc 也可通过系统 PATH 使用。不会继承宿主机任意 CUDA_HOME、LD_LIBRARY_PATH 或 CUDA_VISIBLE_DEVICES。CUDA、Triton 和 PyTorch 扩展缓存放在本次调用的私有临时目录，调用结束删除，因此可能重复编译。GPU 模式命令和 Python 的最大超时都为 900 秒，默认仍分别为 60/10 秒，首次编译应显式设置 `timeout_seconds`。
 
@@ -190,7 +190,7 @@ Apple 将 `sandbox-exec` 标记为弃用；不同 macOS 版本和外层沙箱可
 以下命令在已安装开发依赖的源码目录运行，见[开发环境](development.md#开发环境与验证)。常规测试验证平台分派、缺失依赖时拒绝执行、挂载策略、CLI 默认值、配置兼容和会话模式。真实 macOS 测试：
 
 ```bash
-RUN_SANDBOX_NATIVE_TESTS=1 .venv/bin/python -m pytest tests/test_native_sandbox.py tests/test_git_execution_policy.py tests/test_apply_patch.py -q
+RUN_SANDBOX_NATIVE_TESTS=1 .venv/bin/python -m pytest tests/test_native_sandbox.py tests/test_project_python.py tests/test_git_execution_policy.py tests/test_apply_patch.py -q
 ```
 
 测试在临时目录验证直接写入、脚本执行、凭据保护、目录越界、符号链接、硬链接、网络限制、子进程继承、Git 查询、超时输出保留、脱离会话的子进程清理及故障后的只读诊断，不调用真实模型。
@@ -216,3 +216,43 @@ RUN_NATIVE_GPU_TESTS=1 RUN_NATIVE_GPU_OPERATORS=1 .venv/bin/python -m pytest tes
 ```
 
 硬件测试验证默认 auto 启用 GPU、实际 kernel、子进程 GPU 访问、GPU 启用时仍禁止目录越界/凭据读取/网络，以及显式 standard 不暴露 GPU。可选算子测试复用 `sandbox.operator_smoke` 的 CUDA 扩展和 Triton 计算正确性检查。
+
+### WSL 驱动存储与元数据开销
+
+Linux native 会识别 `/usr/lib/wsl/drivers` 上来源为 `drivers` 的 WSL `9p` 挂载。
+`standard` 在沙箱内用空的只读目录覆盖该存储及 `/lib` 等挂载别名，策略生成不再递归扫描它。
+`auto` 检测到 WSL CUDA 或显式 `cuda` 时，先在隔离进程中通过 `libdxcore` 查询当前适配器的
+驱动包位置；查询阶段驱动存储仍隐藏，只允许已授权的 `/dev/dxg` 设备。然后只读恢复所需的
+NVIDIA 驱动包，继续执行既有的隔离与 CUDA kernel 自检。适配器查询方式参考
+[NVIDIA libnvidia-container](https://github.com/NVIDIA/libnvidia-container/blob/main/src/dxcore.c)。
+
+恢复的是驱动包目录，便于兼容驱动动态加载的附属库；不会恢复整个 Windows 驱动存储。
+这些包仍适用敏感文件遮蔽规则，每次执行都重新扫描。查询失败、返回越界路径、包变为符号链接，
+或驱动挂载/目录身份变化时拒绝执行，不自动暴露所有驱动或退回 CPU。Windows 更新驱动或更换
+适配器后应重启会话。没有识别到上述 WSL 挂载的系统仍使用普通 Linux 策略。
+
+普通 Linux 也受目录规模、挂载别名和文件系统元数据延迟影响。常见的本地 ext4/xfs 通常没有
+WSL 驱动 9p 挂载的跨系统访问成本；网络盘、FUSE 或缓慢存储仍可能产生类似延迟。
+首次访问目录时使用 `O_DIRECTORY | O_NOFOLLOW` 打开并按文件描述符枚举，合并目录类型检查
+与打开操作；复用别名枚举结果时仍重新检查目录类型。每次扫描还重新确认根目录身份与挂载表。
+这些检查不是文件系统快照，也不构成对任意并发文件替换的完整防护。
+
+`last_policy_metrics` 新增：
+
+- `metadata_ms`：目录打开及别名复用前类型检查耗时；根路径解析、末尾核验等仍计入 `mapping_ms`。
+- `directory_opens`、`metadata_checks`：成功打开目录及别名类型检查次数。
+- `by_root_mount`：按暴露根路径与实际挂载点分组的枚举、分类、元数据耗时及次数，含文件系统类型。
+- WSL CUDA 的 `startup_metrics.checks.driver_discovery_ms`：额外驱动发现沙箱的完整耗时；
+  `startup_metrics.runs` 同时保留发现阶段与隔离/CUDA 自检阶段各自的策略和进程计时。
+
+以下命令在 WSL 或真实 Linux 中输出完整启动与空命令耗时，可对比 standard 和 auto：
+
+```bash
+.venv/bin/python scripts/benchmark_linux_policy.py --workspace "$PWD" --end-to-end --sandbox-profile standard --repeats 5
+.venv/bin/python scripts/benchmark_linux_policy.py --workspace "$PWD" --end-to-end --sandbox-profile auto --repeats 5
+```
+
+检查输出中的 `end_to_end`：包含 `wsl_driver_packages`、启动明细、空命令中位数/p95 和每次
+调用的 `by_root_mount`。脚本顶层 `before/after` 是同等扫描范围下的算法对照，不启用 WSL
+驱动挂载收窄；评估 WSL 实际收益应使用 `end_to_end`。真实 GPU 验证命令见上文，硬件测试
+同时检查 CUDA 可运行、GPU 模式只暴露已选驱动包、standard 下驱动存储为空。

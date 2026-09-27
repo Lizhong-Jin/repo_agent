@@ -178,6 +178,8 @@ def end_to_end(workspace, profile, repeats):
             samples.append(backend.last_tool_metrics["total_ms"])
         return {"startup": backend.startup_metrics, "profile": profile,
                 "gpu_enabled": backend.gpu is not None, "commands": summarize(samples),
+                "wsl_driver_packages": ([str(path) for path in backend.wsl_drivers.packages]
+                                        if backend.wsl_drivers else None),
                 "runs": runs}
     finally:
         backend.close()

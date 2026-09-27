@@ -197,7 +197,7 @@ def test_node_lock_matches_declared_versions():
 
 @pytest.mark.skipif(
     not os.environ.get("REPO_AGENT_TEST_ARCHIVE"),
-    reason="requires an explicitly built release archive and network",
+    reason="requires an explicitly built complete release archive for this platform",
 )
 @pytest.mark.parametrize("install_from_archive", [False, True])
 def test_real_release_survives_download_removal(tmp_path, monkeypatch, install_from_archive):
@@ -217,7 +217,8 @@ def test_real_release_survives_download_removal(tmp_path, monkeypatch, install_f
         XDG_CONFIG_HOME=str(tmp_path / "config"),
         XDG_STATE_HOME=str(tmp_path / "state"),
         XDG_DATA_HOME=str(tmp_path / "data"),
-        AGENT_PYTHON=sys.executable,
+        AGENT_PYTHON_CACHE=str(tmp_path / "runtimes"),
+        AGENT_PYTHON_ARCHIVE=str(bundle / "runtime/python.tar.gz"),
         PATH=str(tmp_path / "bin") + os.pathsep + env.get("PATH", ""),
     )
     (tmp_path / "home").mkdir()
@@ -247,6 +248,8 @@ def test_real_release_survives_download_removal(tmp_path, monkeypatch, install_f
             ),
             "--mode",
             "local",
+            "--offline",
+            "--skip-toolchains",
             "--no-path",
             "--bin-dir",
             tmp_path / "bin",
@@ -257,6 +260,9 @@ def test_real_release_survives_download_removal(tmp_path, monkeypatch, install_f
     info = json.loads(run([command, "version"]))
     root = tmp_path / "data/repo-agent/versions" / manifest["version"]
     assert info["installation"] == str(root) and info["kind"] == "release"
+    base = run([root / ".venv/bin/python", "-I", "-c",
+                "import sys; print(sys.base_prefix)"]).strip()
+    assert Path(base).is_relative_to(tmp_path / "runtimes")
     origin = json.loads(
         run(
             [

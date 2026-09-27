@@ -1,12 +1,12 @@
 # Repo Agent
 
-在终端中读取、修改和验证代码的 Coding Agent。支持多家模型 API、按项目保存会话、工具调用、native / Docker 沙箱，以及 CUDA / Triton / PyTorch 算子开发。
+在终端中读取、修改和验证代码的 Coding Agent。支持多家模型 API、按项目保存会话、工具调用、native / Docker sandbox。
 
 ## 快速开始
 
-需要 macOS / Linux 和 Python 3.11+。首次默认 native 模式，支持 macOS（Seatbelt）和 Linux（Bubblewrap + seccomp），不需要 Docker。Linux 需预先安装 bubblewrap 和 libseccomp，并允许非特权 user namespace；首次安装需要联网下载依赖。
+需要 macOS / Linux；安装器默认准备独立 Python，无需预装。首次默认 native 模式，支持 macOS（Seatbelt）和 Linux（Bubblewrap + seccomp），不需要 Docker。Linux 需预先安装 bubblewrap 和 libseccomp，并允许非特权 user namespace；常规源码安装首次联网；平台完整包和预先准备的开发材料支持离线安装。
 
-普通用户可使用独立发行包，解压后运行 `./install-release.sh`；运行环境保存在用户数据目录，安装后可删除下载目录。构建与使用步骤见[独立发行版安装](docs/installation.md#独立发行版安装)。
+普通用户选择对应系统和架构的平台完整包，解压后运行 `./install-release.sh`；运行环境保存在用户数据目录，安装后可删除下载目录。构建默认覆盖全部支持的平台，产物位于 `dist/<版本>/<平台>/`。详见[安装说明](docs/installation.md#独立发行版安装)和[构建与分发](docs/distribution.md)。
 
 开发者在源码目录安装：
 
@@ -14,7 +14,9 @@
 ./install.sh
 ```
 
-原生安装默认准备 Python 语言服务，并询问是否补齐 JS/TS、Go、C/C++ 工具链和语言服务（回车跳过）。macOS 选择补齐后，仅为缺少或不可用的 Node.js、Go 1.25+、LLVM 调用 Homebrew。Linux 请先用发行版包管理器准备这些系统工具链，安装器只安装虚拟环境内的语言服务，不自动调用 sudo。可用 `--with-toolchains` / `--skip-toolchains` 免交互选择。安装后执行 `repo-agent toolchains list` 查看状态，`repo-agent toolchains install go` 补齐单个语言，`repo-agent toolchains install all` 补齐全部；已有可用依赖会复用。只需文件/Git 工具可用 `./install.sh --mode local`。详见[模式与依赖](docs/installation.md#模式与依赖)。
+原生安装默认准备 Python 语言服务，并询问是否补齐语言工具链和语言服务（回车跳过）。Linux 请先用发行版包管理器准备这些系统工具链，安装器只安装虚拟环境内的语言服务，不自动调用 sudo。可用 `--with-toolchains` / `--skip-toolchains` 免交互选择。安装后执行 `repo-agent toolchains list` 查看状态，`repo-agent toolchains install go` 补齐单个语言，`repo-agent toolchains install all` 补齐全部；已有可用依赖会复用。只需文件/Git 工具可用 `./install.sh --mode local`。详见[模式与依赖](docs/installation.md#模式与依赖)。
+
+Agent 与项目 Python 分开管理；native 自动使用已激活的 venv/Conda 或项目 `.venv`，也可用 `--project-python` 指定，见 [Python 环境](docs/python-environments.md)。
 
 打开新终端，进入要处理的项目：
 

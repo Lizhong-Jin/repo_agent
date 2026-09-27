@@ -253,6 +253,7 @@ def test_invalid_install_is_rejected_before_creating_environment(installations, 
         "cli/dependencies.py",
         "cli/paths.py",
         "cli/install_network.py",
+        "cli/install_packages.py",
         "cli/toolchains.py",
     ):
         shutil.copy2(SOURCE / name, root / name)
@@ -411,6 +412,7 @@ def test_shell_install_cancellation_precedes_all_writes(installations, tmp_path,
         "cli/dependencies.py",
         "cli/paths.py",
         "cli/install_network.py",
+        "cli/install_packages.py",
         "cli/toolchains.py",
     ):
         shutil.copy2(SOURCE / name, new / name)

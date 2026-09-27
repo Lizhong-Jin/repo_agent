@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from sandbox import linux_policy as policy_module
 from sandbox.linux_policy import PolicyScan, outermost
 from scripts.benchmark_linux_policy import (
     _outermost as reference_outermost,
@@ -94,14 +95,14 @@ def test_each_real_readonly_directory_is_enumerated_once(tree, monkeypatch):
         touch(library / "package" / f"module-{number}.py")
     touch(library / "package/.env")
     calls = Counter()
-    original = os.scandir
+    original = policy_module.open_directory
 
     def counted(path):
         calls[Path(path).resolve()] += 1
         return original(path)
 
     with monkeypatch.context() as scoped:
-        scoped.setattr(os, "scandir", counted)
+        scoped.setattr(policy_module, "open_directory", counted)
         masks, _ = backend._mount_policy(backend.read_paths, git_read=False)
     assert set(masks) == {library / "package/.env", alias / "package/.env"}
     assert set(calls.values()) == {1}
@@ -153,14 +154,23 @@ def test_unreadable_subtree_masks_every_alias_and_permissions_are_fresh(tree, mo
     backend, _, library, alias = tree
     restricted = touch(library / "modules/lost+found/.env").parent
     original = os.scandir
+    original_open = policy_module.open_directory
     denied = True
 
+    def opened(path):
+        if denied and Path(path).resolve() == restricted:
+            raise PermissionError(error_number, "denied", str(path))
+        return original_open(path)
+
     def scandir(path):
+        if isinstance(path, int):
+            return original(path)
         if denied and Path(path).resolve() == restricted:
             raise PermissionError(error_number, "denied", str(path))
         return original(path)
 
     monkeypatch.setattr(os, "scandir", scandir)
+    monkeypatch.setattr(policy_module, "open_directory", opened)
     masks, _ = assert_reference(backend)
     assert set(masks) == {restricted, alias / "modules/lost+found"}
     denied = False
@@ -256,3 +266,36 @@ def test_real_unreadable_directory_is_masked_without_os_sandbox(tree, mode):
         assert set(masks) == {restricted, alias / "lost+found"}
     finally:
         restricted.chmod(0o700)
+
+
+def test_alias_replay_still_checks_directory_type(tree, monkeypatch):
+    backend, system, library, alias = tree
+    child = library / 'child'
+    child.mkdir()
+    outside = library.parent.parent / 'outside'
+    outside.mkdir()
+    original = PolicyScan._entries
+
+    def entries(self, directory, canonical, reuse):
+        # /lib is scanned before /usr. Change only after its child facts were cached.
+        if directory == str(system):
+            child.rmdir()
+            child.symlink_to(outside, target_is_directory=True)
+        return original(self, directory, canonical, reuse)
+
+    monkeypatch.setattr(PolicyScan, '_entries', entries)
+    with pytest.raises(ValueError, match='变为符号链接'):
+        backend._mount_policy(backend.read_paths, git_read=False)
+
+
+def test_metadata_timing_and_alias_replay_counts_are_separate(tree):
+    backend, _, library, _ = tree
+    touch(library / 'package/normal.py')
+    backend._mount_policy(backend.read_paths, git_read=False)
+    metrics = backend.last_policy_metrics
+    assert metrics['directory_opens'] == metrics['directories_scanned']
+    assert metrics['metadata_checks'] == metrics['directories_reused'] == 2
+    assert metrics['metadata_ms'] > 0
+    assert sum(group.get('metadata_checks', 0) for group in metrics['by_root_mount']) == 2
+    assert metrics['scan_ms'] >= sum(metrics[key] for key in (
+        'metadata_ms', 'rules_ms', 'enumeration_ms', 'workspace_validation_ms'))
