@@ -6,7 +6,7 @@
 
 ## 开发环境与验证
 
-源码安装现在自动安装 `dev` 依赖组中的 pytest、Ruff 及固定的构建依赖。默认先准备锁定的受管 Python，再按[安装说明](installation.md)运行 `./install.sh`；已有安装也可以只补齐开发依赖：
+以下安装与完整回归命令使用 macOS/Linux（含 WSL2）的路径。源码安装自动安装 `dev` 依赖组中的 pytest、Ruff 及固定构建依赖。先按[安装说明](installation.md)运行 `./install.sh`；已有安装也可以只补齐开发依赖：
 
 ```bash
 .venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
@@ -30,6 +30,9 @@ python3 scripts/lock_dependencies.py --check
 | Docker 与多语言 | 下方命令 | `RUN_SANDBOX_DOCKER_TESTS=1`；已构建镜像及可用 daemon |
 | GPU | [算子验证](gpu-operators.md#验证边界) | Docker / native 各有开关，必须有实际 NVIDIA GPU 和所需依赖 |
 | 发行安装 | [安装验收](distribution.md#校验失败处理与安装验收) | 显式提供当前平台完整包，使用受管 Python 离线安装；测试以模拟 Docker 验证构建入口 |
+| Windows 文件与安装契约 | [Windows 文件服务](platform-adaptation.md#windows-文件服务) | 共享文件契约可跨平台运行；Windows 内核用例只能在 Windows 运行 |
+| Windows ZIP 实装 | [ZIP 验收](distribution.md#校验失败处理与安装验收) | Windows x86_64、PowerShell 5.1+，设置 `REPO_AGENT_WINDOWS_ARCHIVE` |
+| Windows Docker 回写 | [真实容器往返](platform-adaptation.md#windows-文件服务) | `RUN_WINDOWS_DOCKER_TESTS=1`；Git for Windows、Docker Desktop Linux 容器模式及本地镜像 |
 
 ```bash
 repo-agent-build-sandbox
@@ -37,6 +40,8 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py t
 ```
 
 开关只选择测试，不能补齐依赖；缺少目标平台或硬件时的跳过不计为通过。真实模型 API 的可用性、参数和计费需要另行验证，不属于默认套件的结论。
+
+原生 Windows 开发测试需另行准备 Python 和开发依赖，虚拟环境入口为 `.venv\Scripts\python.exe`；发行 ZIP 不安装 pytest/Ruff。当前 Windows CI 运行共享文件、Windows 文件和发行安装三份测试模块，没有声明整个默认套件已适配 Windows。工作流范围见[平台验证说明](platform-adaptation.md#扩展与验证)。
 
 ## 离线开发环境
 
@@ -46,7 +51,7 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py t
 .venv/bin/python scripts/prepare_python_bundle.py --target linux-x86_64 --with-dev --output dist/dev-kit-linux-x86_64
 ```
 
-可选目标为 `linux-x86_64`、`linux-arm64`、`macos-x86_64`、`macos-arm64`。此开发材料脚本每次处理一个平台，省略 `--target` 时选择当前平台。输出包括固定版本的 `runtime/python.tar.gz`、平台标记、`wheelhouse/` 和依赖清单指纹；输出目录须为空。`--with-dev` 加入固定构建工具、pytest、Ruff 及其依赖。没有该选项只准备 native 所需运行依赖。
+可选目标为 `linux-x86_64`、`linux-arm64`、`macos-x86_64`、`macos-arm64`、`windows-x86_64`。此脚本每次处理一个平台，省略 `--target` 时选择当前平台，输出目录须为空。macOS/Linux 输出 `runtime/python.tar.gz`；Windows 在构建时展开到 `runtime/python/`，不保留该归档。各目标均包含平台标记、`wheelhouse/` 和依赖清单指纹。`--with-dev` 加入固定构建工具、pytest、Ruff 及其依赖；没有该选项时，macOS/Linux 准备 native 运行依赖，Windows 仅准备 local/Docker 核心依赖。
 
 将源码与此目录复制到目标机器，按[离线安装](installation.md#离线安装)执行。开发材料须与源码的锁文件匹配；依赖升级后重新生成。首次准备仍需联网，不把运行时和 wheels 提交到 Git。已具备材料时，准备脚本也支持 `--offline --runtime-archive ... --wheelhouse ...`。
 

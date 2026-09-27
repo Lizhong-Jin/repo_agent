@@ -5,6 +5,9 @@ import os
 
 
 def lock_descriptor(fd, *, blocking=True):
+    if os.name == "nt":
+        from . import windows_files
+        return windows_files.lock_descriptor(fd, blocking=blocking)
     if os.name != "posix":
         raise OSError(errno.ENOTSUP, "Safe file locking is not implemented on this platform")
     import fcntl

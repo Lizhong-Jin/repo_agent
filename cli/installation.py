@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 from uuid import uuid4
@@ -12,7 +13,7 @@ if not __package__:
 
     enable_host_support()
 
-from host_support.paths import app_directory, installed_command, user_config_path
+from host_support.paths import app_directory, installed_command, public_command, user_config_path
 from host_support.storage import atomic_write
 
 MANIFEST = ".repo-agent-install.json"
@@ -60,6 +61,11 @@ def read_record(path: Path, root: Path | None = None) -> dict:
         raise ValueError("安装记录的资源列表无效")
     if data["status"] not in {"installing", "installed", "uninstalled", "cleanup-pending"}:
         raise ValueError("安装记录状态无效")
+    if not isinstance(data.get("windows_path", []), list):
+        raise ValueError("Windows PATH 记录列表无效")
+    for item in data.get("windows_path", []):
+        from host_support.windows_install import validate_path_change
+        validate_path_change(item)
     for item in data["commands"]:
         if not isinstance(item, dict) or not all(
             isinstance(item.get(key), str) for key in ("path", "target")
@@ -68,8 +74,9 @@ def read_record(path: Path, root: Path | None = None) -> dict:
         path = Path(item["path"])
         if (
             not path.is_absolute()
-            or path.name not in COMMANDS
-            or Path(item["target"]) != installed_command(Path(data["root"]), path.name)
+            or path != public_command(path.parent, path.stem if os.name == "nt" else path.name)
+            or (path.stem if os.name == "nt" else path.name) not in COMMANDS
+            or Path(item["target"]) != installed_command(Path(data["root"]), path.stem if os.name == "nt" else path.name)
         ):
             raise ValueError("安装记录的命令路径无效")
     for item in data["shell"]:

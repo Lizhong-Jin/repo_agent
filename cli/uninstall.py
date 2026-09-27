@@ -13,7 +13,7 @@ if not __package__:
 
     enable_host_support()
 
-from host_support.paths import installed_command, user_bin_dir
+from host_support.paths import installed_command, public_command, user_bin_dir
 
 if __package__:
     from .installation import (
@@ -60,7 +60,15 @@ def other_installations(data: dict) -> tuple[list[dict], bool]:
     bins.update(Path(item["path"]).parent for item in data["commands"])
     for directory in bins:
         for name in COMMANDS:
-            command = directory / name
+            command = public_command(directory, name)
+            if os.name == "nt":
+                from host_support.windows_install import command_state
+                try:
+                    target = command_state(command)
+                    uncertain |= target is not None and target != str(installed_command(Path(data["root"]), name))
+                except ValueError:
+                    uncertain = True
+                continue
             if command.is_symlink():
                 target = Path(os.path.abspath(command.parent / os.readlink(command)))
                 if target != installed_command(Path(data["root"]), name):
@@ -76,8 +84,25 @@ def unchanged_parent(path: Path) -> bool:
 
 def unlink_owned_command(item: dict, root: Path, *, dry_run: bool) -> bool:
     path, target = Path(item["path"]), Path(item["target"])
-    if path.name not in COMMANDS or target != installed_command(root, path.name):
+    name = path.stem if os.name == "nt" else path.name
+    if name not in COMMANDS or target != installed_command(root, name):
         raise ValueError("安装记录的命令路径无效")
+    if os.name == "nt":
+        from host_support.windows_install import command_receipt, command_state
+        try:
+            actual = command_state(path)
+        except ValueError:
+            actual = "modified"
+        if actual is None:
+            return True
+        if not unchanged_parent(path) or actual != str(target):
+            print(f"保留已修改或改指向的命令：{path}")
+            return False
+        print(f"{'将删除' if dry_run else '删除'}命令：{path}")
+        if not dry_run:
+            path.unlink()
+            command_receipt(path).unlink()
+        return True
     if not path.exists() and not path.is_symlink():
         return True
     if not unchanged_parent(path) or not path.is_symlink():
@@ -121,6 +146,23 @@ def remove_venv(data: dict, *, dry_run: bool) -> bool:
 
 
 def clean_shell(data: dict, others: list[dict], uncertain: bool, *, dry_run: bool) -> None:
+    if os.name == "nt":
+        from host_support.windows_install import apply_path_change
+        for change in reversed(data.get("windows_path", [])):
+            bin_dir = Path(change["bin_dir"])
+            shared = uncertain or bin_dir == user_bin_dir().resolve() or any(
+                Path(command["path"]).parent == bin_dir
+                for other in others for command in other["commands"]
+            )
+            if shared:
+                print(f"保留共享用户 PATH：{bin_dir}")
+            elif dry_run:
+                print(f"将恢复安装前的用户 PATH：{bin_dir}")
+            else:
+                try:
+                    apply_path_change(change, restore=True)
+                except ValueError as error:
+                    print(f"保留已修改的用户 PATH：{error}")
     for item in data["shell"]:
         path, bin_dir = Path(item["path"]), Path(item["bin_dir"])
         if not path.exists() and not path.is_symlink():
@@ -287,7 +329,7 @@ def uninstall(root: Path, *, dry_run=False, purge=False, remove_image=False):
             stack.enter_context(file_lock(registry_dir().parent / ".maintenance.lock"))
             stack.enter_context(file_lock(root / ".repo-agent-operation.lock"))
         if (root / TRANSACTION).exists():
-            entry = "install-release.sh" if (root / "release.json").is_file() else "install.sh"
+            entry = "install_release.ps1" if os.name == "nt" else "install-release.sh" if (root / "release.json").is_file() else "install.sh"
             raise ValueError(f"有未完成的安装恢复；请先运行 ./{entry} --recover")
         return _uninstall(root, dry_run=dry_run, purge=purge, remove_image=remove_image)
 

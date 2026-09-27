@@ -6,6 +6,9 @@ from pathlib import Path
 
 
 def command_state(command):
+    if os.name == "nt":
+        from .windows_install import command_state as windows_state
+        return windows_state(command)
     if command.is_symlink():
         return os.readlink(command)
     if command.exists():

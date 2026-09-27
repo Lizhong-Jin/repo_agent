@@ -22,21 +22,23 @@ Agent 使用固定的解释器和依赖，用户项目继续使用已有的 venv
 
 发行版只构建平台完整包，默认生成所有支持的平台，按 `dist/<版本>/<平台>/` 保存。各包内置对应的运行时与运行依赖；源码安装和开发材料仍按目标机器准备。发布命令及全平台离线材料布局见[构建与分发](distribution.md)。
 
-源码和发行安装默认使用 `runtime/python.lock` 固定的 CPython 3.13.15（python-build-standalone 20260924，普通 GIL、install_only_stripped）。支持 Linux/macOS 的 x86_64/ARM64；WSL2 使用 Linux 包。平台发行包的 Python wheels 以 Linux glibc 2.28+、macOS ARM64 11+ / x86_64 10.15+ 为目标；系统沙箱和语言工具链还须满足各自要求。
+源码和发行安装默认使用 `runtime/python.lock` 固定的 CPython 3.13.15（python-build-standalone 20260924，普通 GIL、install_only_stripped）。支持 Linux/macOS 的 x86_64/ARM64 和 Windows x86_64；WSL2 使用 Linux 包。Windows ZIP 已展开独立 Python，由 PowerShell 入口校验并复制到持久缓存后创建虚拟环境，不依赖系统 Python。平台发行包的 Python wheels 以 Linux glibc 2.28+、macOS ARM64 11+ / x86_64 10.15+ 为目标；系统沙箱和语言工具链还须满足各自要求。
 
-解释器及标准库、配套库、许可证文件来自完整的上游运行时归档，不复制构建机器上的 `.venv`。安装器先校验固定 SHA256，再解压并检查 ssl、ctypes、venv、ensurepip 和版本。没有宿主 Python 也可引导安装；在线下载需要 curl，解压需要 tar，校验使用 sha256sum 或 shasum。
+解释器及标准库、配套库、许可证文件来自完整的上游运行时归档，不复制构建机器上的 `.venv`。macOS/Linux 安装器校验固定 SHA256 后解压，检查 ssl、ctypes、venv、ensurepip 和版本；在线下载需要 curl，解压需要 tar，校验使用 sha256sum 或 shasum。Windows 在构建时校验上游归档并展开，PowerShell 安装入口校验清单中的逐文件哈希后使用内置 Python，无需安装机预装 Python、curl 或 tar。
 
 运行时放在 `${XDG_DATA_HOME:-~/.local/share}/repo-agent/runtimes/<版本>-<平台>-<哈希前缀>/`。同一版本可被多套 Agent 安装复用，每套安装仍有独立 `.venv`。升级使用新的缓存目录，不原地替换旧解释器。卸载 Agent 保留共享运行时，避免破坏其他 venv；确认没有安装使用它后才可手动删除。
 
 | 参数/环境变量 | 作用 |
 | --- | --- |
-| `AGENT_PYTHON=/绝对路径/bin/python` | 使用指定解释器，不自动替换或下载受管 Python |
+| `AGENT_PYTHON` 为解释器绝对路径 | 使用指定解释器；Windows 指向 `python.exe`，不自动切换到其他解释器 |
 | `AGENT_PYTHON=system` | 显式启用旧的系统 Python 搜索方式，需要完整 Python 3.11+ |
-| `AGENT_PYTHON_ARCHIVE=/路径/python.tar.gz` | 从本地归档安装，仍必须匹配锁文件的 SHA256 |
+| `AGENT_PYTHON_ARCHIVE=/路径/python.tar.gz` | macOS/Linux Shell 引导使用本地归档并核对锁值；Windows PowerShell 入口不读取该变量 |
 | `AGENT_PYTHON_CACHE=/路径` | 覆盖运行时缓存根目录；安装后不要随意移动 |
 | `--offline --wheelhouse /路径` | 禁止 Python 依赖下载，缺少材料时明确失败 |
 
-`--check`、`--recover` 和备用卸载优先使用本安装（含待恢复事务）的 Python，再尝试已校验的运行时缓存和系统 Python，不下载或创建受管运行时；显式设置 `AGENT_PYTHON` 时只使用该选择。检查/安装需要 venv 与 ensurepip，恢复和卸载只要求 Python 3.11+ 标准库。运行时引导在 Python 安装器之前完成；后续安装失败会恢复原 Agent 环境和命令，但已校验的共享运行时保留供重试。
+macOS/Linux 的 `--check`、`--recover` 和备用卸载优先使用本安装（含待恢复事务）的 Python，再尝试已校验的运行时缓存和系统 Python，不下载或创建受管运行时；显式设置 `AGENT_PYTHON` 时只使用该选择。检查/安装需要 venv 与 ensurepip，恢复和卸载只要求 Python 3.11+ 标准库。运行时引导在 Python 安装器之前完成；后续安装失败会恢复原 Agent 环境和命令，但已校验的共享运行时保留供重试。
+
+Windows 的检查、恢复和卸载默认直接使用解压目录或已安装版本内的 `runtime/python/python.exe`，不创建缓存、不依赖 `.venv`；显式 `AGENT_PYTHON` 可覆盖。PowerShell 入口在维护操作中仍检查 ssl、ctypes、venv、ensurepip，不能按 POSIX 的“仅标准库恢复”方式理解；附带运行时或引导文件损坏时应重新取得完整包。
 
 ## 项目 Python 自动选择
 

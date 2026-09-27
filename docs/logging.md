@@ -38,7 +38,7 @@ repo-agent sessions logs 1 > conversation.log   # 输出不带颜色，可重定
 | `trace.log` / `trace` | 模型、工具、错误、计时及用量 | 每条执行事件后立即刷新 |
 | `trace.jsonl` / `jsonl` | 同一批执行事件，一行一个 JSON 对象 | 每条执行事件后立即刷新 |
 
-目录权限为 `700`，日志权限为 `600`。文件跨重启追加，改名不会改变文件路径。对话日志不新增思考正文或供应商原生状态，异常任务可能没有完整回复；查看日志不会把查看结果再次写入对话日志。
+macOS/Linux 目录权限为 `700`，日志权限为 `600`；Windows 使用继承的目录 ACL，应将状态目录置于自己的用户目录，POSIX 权限位不等于 Windows 访问控制。文件跨重启追加，改名不会改变文件路径。对话日志不新增思考正文或供应商原生状态，异常任务可能没有完整回复；查看日志不会把查看结果再次写入对话日志。
 
 会话快照 `<会话ID>.json` 用于恢复模型上下文，采用整体替换保存，不能作为增量日志 `tail -f`。其中可包含消息、工具结果、原生状态及可见思考记录。对话和日志可能包含项目内容，配置中的 API Key 不作为追踪元数据记录。
 
@@ -53,15 +53,15 @@ session_时间_随机标识.trace.jsonl
 
 `AGENT_LOG_DIR` 只改变这些运行片段日志的位置，不改变会话快照或连续日志目录。未设置时使用 `--root` 对应项目的 `logs/`；显式相对路径以调用目录为准。
 
-文件权限为 `600`，创建时拒绝覆盖同名文件。每个片段有独立的 `run_id` 和统计汇总；`session_id` 指向持久化会话，因此同一会话可以包含多个运行片段。重启后的界面累计用量延续会话，片段汇总只统计该次运行，两者可能不同。
+macOS/Linux 文件权限为 `600`，Windows 继承目录 ACL；创建时拒绝覆盖同名文件。每个片段有独立的 `run_id` 和统计汇总；`session_id` 指向持久化会话，因此同一会话可以包含多个运行片段。重启后的界面累计用量延续会话，片段汇总只统计该次运行，两者可能不同。
 
 ## 事件与统计口径
 
 追踪实现位于 [agent/Tracing.py](../agent/Tracing.py)：`RunTrace` 记录一段执行的模型及工具调用（任务和压缩分别创建实例），`Tracer` 写入文件和运行片段汇总。CLI 管理创建、关闭及 `/new` 时的切换。
 
-JSONL 包含 `schema_version`、带时区的 `timestamp`、`session_id`、`run_id` 及任务事件的唯一 `task_id`。主要事件包括 `session_start/end`、`task_start/end`、`model_start/end`、`tool_start/end`、`model_changed`、`recovery`、`skill_loaded` 及 `compaction_start/progress/end`。
+JSONL 包含 `schema_version`、带时区的 `timestamp`、`session_id`、`run_id` 及任务事件的唯一 `task_id`。主要事件包括 `session_start/end`、`task_start/end`、`model_start/end`、`tool_start/end`、`model_changed`、`recovery`、`skill_loaded` 及 `compaction_start/progress/validation/end`。
 
-- **模型调用**：开始、结束、耗时、结束原因及 token 用量。按调用模型接口的尝试计数，包括失败和中断；底层 HTTP 重试不另算。记录中的 `purpose=task` / `compaction` 区分普通任务与摘要请求。
+- **模型调用**：开始、结束、耗时、结束原因及 token 用量。按调用模型接口的尝试计数，包括失败和中断；底层 HTTP 重试不另算。记录中的 `purpose=task` / `compaction` 区分普通任务与摘要请求。摘要调用的 `stage=summary` / `refinement` / `repair` 区分生成、精简和格式修复。
 - **工具调用**：模型轮次、名称、调用 ID、路径与参数摘要、成功/失败/中断状态、错误码和耗时。命令另记录 `exit_code`、`timed_out`、`cleanup_failed`；工具调用成功不等于命令退出码为零。
 - **执行记录汇总**：每个 `RunTrace` 的模型和工具次数、状态、用量和耗时。普通自然语言任务和压缩各自产生 `task_start/end`；压缩可沿用当前任务序号，但有独立 `task_id`。手动 `/compact` 也可能产生这类记录。
 - **运行片段汇总**：`tasks` 与状态分布统计收到的 `task_end`，因此可能包含压缩，不能直接当作用户输入次数。`task_elapsed_seconds` 是这些记录耗时之和；自动压缩嵌套在任务内，时间可能重叠，不能当作实际经过时间。`elapsed_seconds` 才是含等待在内的运行片段总时长。
@@ -83,3 +83,5 @@ JSONL 包含 `schema_version`、带时区的 `timestamp`、`session_id`、`run_i
 native 不导入工作副本；原项目和只读解释器目录按平台规则映射，已有受保护路径会被拒绝或遮蔽，详见[原生沙箱](native-sandbox.md)。
 
 配置文件请通过配置命令或编辑器修改。文件名规则不能识别嵌入普通源码的密钥，也不构成抵御恶意并发路径替换的操作系统隔离；`.gitignore` 不负责访问控制。
+
+压缩校验失败时，执行日志只记录错误类别、字段位置及诊断 ID。失败候选和引用映射单独保存在会话状态目录的 `compaction-diagnostics/` 中，不加入普通日志；路径与修复规则见[上下文压缩诊断](context-compaction.md#校验失败有限修复与诊断)。

@@ -120,10 +120,15 @@ def source_files(root):
     return [regular_file(root, name) for name in source_names(root)]
 
 
-def bootstrap_files(root):
+def bootstrap_files(root, target=None):
     """Installer/recovery payload, deliberately separate from wheel build inputs."""
+    scripts = INSTALL_SCRIPTS
+    if target == "windows-x86_64":
+        scripts = ("install_release.ps1", "runtime/python.lock")
+    elif target is None:
+        scripts = (*scripts, "install_release.ps1")
     names = {
-        *INSTALL_SCRIPTS,
+        *scripts,
         *PUBLIC_METADATA,
         ".env.example",
         *LOCK_FILES,
@@ -267,7 +272,16 @@ def verify_release_archive(archive, bundle, *, prefix=None):
         for path in bundle.rglob("*")
         if path.is_file()
     }
-    _verify_tar(archive.read_bytes(), expected)
+    if zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive) as packed:
+            names = packed.namelist()
+            if len(names) != len(set(names)) or set(names) != set(expected):
+                raise ValueError("ZIP file list mismatch")
+            for name, source in expected.items():
+                if packed.read(name) != source.read_bytes():
+                    raise ValueError(f"ZIP content differs from source: {name}")
+    else:
+        _verify_tar(archive.read_bytes(), expected)
 
 
 def main():

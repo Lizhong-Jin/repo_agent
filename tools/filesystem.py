@@ -22,6 +22,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from tempfile import NamedTemporaryFile
@@ -34,7 +35,7 @@ from ._internal._file_io import FileSnapshot, StagedWrites, read_snapshot
 from ._internal._workspace import WorkspaceTool
 from ._internal._workspace import serialized_file_write as _serialized_file_write
 from ._internal.base import ExecutionKind, ToolResult
-from ._internal.file_access import current_file_access
+from ._internal.file_access import FileAccess, current_file_access
 from ._internal.errors import ToolErrorCode, tool_error
 from ._internal.file_policy import is_credential_path
 
@@ -42,6 +43,28 @@ logger = logging.getLogger(__name__)
 
 class FileTool(WorkspaceTool):
     execution_kind = ExecutionKind.TRUSTED_FILE
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        method = cls.__dict__.get("execute")
+        if method is None:
+            return
+
+        @wraps(method)
+        def execute(self, arguments):
+            if os.name != "nt" or current_file_access() is not None:
+                return method(self, arguments)
+            try:
+                with FileAccess(self.workspace_root).activate():
+                    return method(self, arguments)
+            except PermissionError:
+                return tool_error(ToolErrorCode.PERMISSION_DENIED)
+            except OSError:
+                return tool_error(ToolErrorCode.READ_ERROR)
+            except ValueError as error:
+                return tool_error(ToolErrorCode.INVALID_ARGUMENTS, str(error))
+
+        cls.execute = execute
 
     @staticmethod
     def _mkdir(path, **options):

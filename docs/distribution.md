@@ -33,21 +33,27 @@ npm install --package-lock-only --ignore-scripts --prefix dependencies/node
 | `macos-x86_64` | Intel Mac |
 | `linux-arm64` | ARM64 Linux |
 | `linux-x86_64` | x86_64 Linux，含对应架构的 WSL2 |
+| `windows-x86_64` | Windows 10 1809+ / Windows 11 x86_64，ZIP |
 
 一次构建只校验一次依赖锁、创建一次构建环境、构建一次通用 Agent wheel；随后为每个平台分别收集 Python 和依赖，生成独立清单及压缩包，避免混入其他平台的 wheels。
 
 只构建一个平台，或更换输出根目录：
 
 ```bash
+.venv/bin/python scripts/build_release.py --target windows-x86_64
 .venv/bin/python scripts/build_release.py --target macos-arm64
 .venv/bin/python scripts/build_release.py --target linux-x86_64 --output /path/to/releases
 ```
+
+Windows 构建机可运行 `python -X utf8 scripts/build_release.py --target windows-x86_64`（Python 3.13，已安装 uv 与构建准备工具）。
 
 完整包可从其他平台组装，但必须按目标 ABI 收集 wheels。没有匹配 wheel 时失败，不自动从源码编译第三方依赖。支持的系统版本及解释器约束见 [Python 环境](python-environments.md#受管运行时)。跨平台构建成功不代表已经通过目标系统的执行验证。
 
 ## 产物目录与包内容
 
-发行包仅提供顶层 `install-release.sh`，安装、恢复和备用卸载共用内部的 `scripts/installer-entry.sh`；源码仓库继续保留 `install.sh` / `uninstall.sh`。新构建清单使用 schema 2，强制校验共用脚本及卸载模块；新版安装器仍可读取 schema 1 的旧发行包。修改后需要重新构建发行包，已有压缩包不会自动变化。发布时应按上面的流程递增版本号。
+macOS/Linux 发行包仅提供顶层 `install-release.sh`，安装、恢复和备用卸载共用内部的 `scripts/installer-entry.sh`；源码仓库继续保留 `install.sh` / `uninstall.sh`。新构建清单使用 schema 2，强制校验共用脚本及卸载模块；新版安装器仍可读取 schema 1 的旧发行包。修改后需要重新构建发行包，已有压缩包不会自动变化。发布时应按上面的流程递增版本号。
+
+Windows ZIP 使用 schema 3，记录 `windows-x86_64` 目标并仅提供顶层 `install_release.ps1`；同一脚本通过 `--uninstall`、`--check`、`--recover` 完成维护，不附带另一份卸载入口或 POSIX Shell 安装脚本。共用 Python 安装事务、配置保留和归属检查。
 
 默认输出到 `dist/<版本>/<平台>/`；`--output` 仅替换 `dist` 这一层，版本来自 `pyproject.toml`。例如：
 
@@ -63,16 +69,19 @@ dist/
     ├── linux-arm64/
     │   ├── repo-agent-0.1.2-linux-arm64.tar.gz
     │   └── repo-agent-0.1.2-linux-arm64.tar.gz.sha256
-    └── linux-x86_64/
-        ├── repo-agent-0.1.2-linux-x86_64.tar.gz
-        └── repo-agent-0.1.2-linux-x86_64.tar.gz.sha256
+    ├── linux-x86_64/
+    │   ├── repo-agent-0.1.2-linux-x86_64.tar.gz
+    │   └── repo-agent-0.1.2-linux-x86_64.tar.gz.sha256
+    └── windows-x86_64/
+        ├── repo-agent-0.1.2-windows-x86_64.zip
+        └── repo-agent-0.1.2-windows-x86_64.zip.sha256
 ```
 
-Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独输出到发布目录。每个压缩包只有一个 `repo-agent-<版本>-<平台>/` 顶层文件夹，内含固定的 `runtime/python.tar.gz`、运行时锁文件、平台标记和 `wheelhouse/`。完整包不包含项目的 PyTorch/CUDA 依赖、系统工具链或开发用 pytest/Ruff；后者通过源码开发材料准备。
+Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独输出到发布目录。每个压缩包只有一个 `repo-agent-<版本>-<平台>/` 顶层文件夹，内含运行时锁文件、平台标记和 `wheelhouse/`。macOS/Linux 内含固定的 `runtime/python.tar.gz`；Windows 上游 tar.gz 经固定 SHA256 校验后在构建阶段展开为 `runtime/python/python.exe` 等文件，避免安装引导依赖系统 Python 或 tar。Windows 只收集 local/Docker 核心依赖，并按 Windows 目标评估锁文件的平台条件，不携带 native 语言服务依赖。完整包不包含项目的 PyTorch/CUDA 依赖、系统工具链或开发用 pytest/Ruff；后者通过源码开发材料准备。
 
 发行包通过明确的文件清单收集源码、默认模板和资源，不复制构建机器的 `.venv`、`.git`、项目 `.env`、日志或缓存。wheel 内置用于重建 Docker 镜像的源码资源。`release.json` 记录版本、wheel 和各文件 SHA256，安装前逐项校验。上游 Python 内部的链接保留在固定哈希校验的内层归档中，外层归档仍只接受普通文件/目录。
 
-安装时从内层归档部署共享运行时，再在最终路径创建 `.venv`，不搬迁已经创建的虚拟环境。构建输出目录与安装目录是两回事；安装后仍位于用户数据目录的 `repo-agent/versions/<版本>/`。
+安装时从内层归档（Windows 为已展开文件）部署共享运行时，再在最终路径创建 `.venv`，不搬迁已经创建的虚拟环境。构建输出目录与安装目录是两回事；安装后仍位于用户数据目录的 `repo-agent/versions/<版本>/`。
 
 ## 离线构建
 
@@ -91,7 +100,8 @@ Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独
 ├── macos-arm64.tar.gz
 ├── macos-x86_64.tar.gz
 ├── linux-arm64.tar.gz
-└── linux-x86_64.tar.gz
+├── linux-x86_64.tar.gz
+└── windows-x86_64.tar.gz
 ```
 
 ```bash
@@ -100,7 +110,7 @@ Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独
   --wheelhouse /path/to/all-platform-wheels
 ```
 
-这些文件是各平台原始的 Python 上游归档，可从[离线开发材料](development.md#离线开发环境)中的 `runtime/python.tar.gz` 复制并改名，内容必须匹配 `runtime/python.lock` 的 SHA256。共享 wheelhouse 应汇集所有目标的运行依赖以及构建机器可用的构建依赖；当前构建依赖均有通用 wheels。同名、同内容的通用 wheel 只保留一份。
+这些文件是各平台原始的 Python 上游归档，可从[离线开发材料](development.md#离线开发环境)中的 `runtime/python.tar.gz` 复制并改名，内容必须匹配 `runtime/python.lock` 的 SHA256。Windows 输入也必须使用锁文件中原始上游 `.tar.gz`，不能将最终 ZIP 当作运行时输入；Windows 开发材料会展开运行时，因此离线构建时应另行保留原始 tar.gz。共享 wheelhouse 应汇集所有目标的运行依赖以及构建机器可用的构建依赖；当前构建依赖均有通用 wheels。同名、同内容的通用 wheel 只保留一份。
 
 单个运行时文件必须搭配 `--target`；提供目录时，开始构建前检查所选平台的归档是否齐全。`--offline` 同时禁止 pip 联网并传给 uv 锁文件检查；缺少匹配 wheels 或哈希不符时失败。开发材料准备脚本仍按单个平台工作，省略它的 `--target` 时选择当前平台，具体用法见开发指南。
 
@@ -120,6 +130,15 @@ Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独
 REPO_AGENT_TEST_ARCHIVE="$PWD/dist/0.1.2/macos-arm64/repo-agent-0.1.2-macos-arm64.tar.gz" \
   .venv/bin/python -m pytest -q tests/test_release_distribution.py
 ```
+
+Windows 在真实 Windows 主机上执行以下验收，覆盖 PowerShell 5.1 引导、离线安装、删除下载目录后运行 `.exe`、重装保留配置、恢复与卸载：
+
+```powershell
+$env:REPO_AGENT_WINDOWS_ARCHIVE = (Resolve-Path 'dist/0.1.2/windows-x86_64/repo-agent-0.1.2-windows-x86_64.zip').Path
+python -m pytest -q tests/test_windows_release.py
+```
+
+`.github/workflows/host-files.yml` 新增 Windows ZIP 构建与上述实际生命周期验收，并保存 ZIP 与校验文件。非 Windows 测试仅覆盖格式、命令归属与事务契约，真实 Windows 用例会跳过，不能代替 Windows 验收。
 
 上述验收使用 local 模式验证安装生命周期。macOS native、Linux native、WSL GPU 仍须分别进行[真实沙箱验证](native-sandbox.md#验证)，不能以打包成功替代。
 

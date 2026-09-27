@@ -53,3 +53,30 @@ def installed_python(root):
 def installed_command(root, name):
     suffix = ".exe" if sys.platform == "win32" else ""
     return scripts_dir(Path(root) / ".venv") / (name + suffix)
+
+
+def public_command(bin_dir, name):
+    return Path(bin_dir) / (name + (".exe" if os.name == "nt" else ""))
+
+
+def find_windows_executable(name, *, exclude=()):
+    """Search explicit absolute PATH entries; never implicitly execute from cwd.
+
+    shutil.which on some supported Windows Python versions prepends cwd even
+    when a PATH is supplied. Host-side snapshot creation must not run project
+    executables. Only native .exe commands are accepted here.
+    """
+    roots = tuple(Path(root).resolve() for root in exclude)
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        directory = Path(entry.strip('"'))
+        if not directory.is_absolute():
+            continue
+        try:
+            candidate = (directory / (name + ".exe")).resolve()
+            if any(candidate.is_relative_to(root) for root in roots):
+                continue
+            if candidate.is_file():
+                return str(candidate)
+        except OSError:
+            continue
+    return None

@@ -1,4 +1,5 @@
 # target version sha256 url (CPython GIL build, python-build-standalone 20260924)
+windows-x86_64 3.13.15 e42fa944748a50e9ff481cbb817ef8a6e3da6fbcf0cf6f29b554e1acb8c7384d https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.13.15%2B20260924-x86_64-pc-windows-msvc-install_only_stripped.tar.gz
 macos-arm64 3.13.15 064afb7c2fc0bbf511d886288adf98696af5105e36c138cdf2c199c0146fcf68 https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.13.15%2B20260924-aarch64-apple-darwin-install_only_stripped.tar.gz
 macos-x86_64 3.13.15 327814efd865a0b6a99c149b12a261e9d0ad409183515c745d41bda2d07282e9 https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.13.15%2B20260924-x86_64-apple-darwin-install_only_stripped.tar.gz
 linux-arm64 3.13.15 5ad58156cbec94e5643c13caa792e92df72a23f33d3a6425d4cbff5c4b7a040c https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.13.15%2B20260924-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz

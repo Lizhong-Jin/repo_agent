@@ -16,7 +16,7 @@ if not __package__:
 
     enable_host_support()
 
-from host_support.paths import installed_command
+from host_support.paths import installed_command, public_command
 
 if __package__:
     from .installation import (
@@ -92,7 +92,7 @@ class InstallTransaction:
         try:
             local = root / MANIFEST
             if local.exists() and not local.is_symlink():
-                previous = json.loads(local.read_text())
+                previous = json.loads(local.read_text(encoding="utf-8"))
                 if (
                     isinstance(previous, dict)
                     and previous.get("root") == str(root)
@@ -126,6 +126,15 @@ class InstallTransaction:
         prepared.rename(venv)
 
     def change_link(self, name):
+        if os.name == "nt":
+            from host_support.windows_install import command_payloads
+            payloads = command_payloads(public_command(Path(self.state["bin_dir"]), name),
+                                        installed_command(self.root, name))
+            self.state.setdefault("windows_commands", {})[name] = {
+                str(path): {"before": snapshot(path),
+                            "after": base64.b64encode(content).decode()}
+                for path, content in payloads.items()
+            }
         self.state["changed_links"].append(name)
         self.save()
 
@@ -189,7 +198,7 @@ class InstallTransaction:
         try:
             self.cleanup()
         except OSError:
-            entry = "install-release.sh" if (self.root / "release.json").is_file() else "install.sh"
+            entry = "install_release.ps1" if os.name == "nt" else "install-release.sh" if (self.root / "release.json").is_file() else "install.sh"
             print(f"安装已完成；旧环境备份清理未完成，可稍后执行 ./{entry} --recover。")
 
     def cleanup(self):
@@ -225,6 +234,19 @@ class InstallTransaction:
 
         # Restore links first, but never overwrite a target changed by someone else.
         def link(name):
+            if os.name == "nt":
+                entries = self.state.get("windows_commands", {}).get(name)
+                if entries is None:
+                    raise ValueError("缺少 Windows 命令恢复记录")
+                for filename, entry in entries.items():
+                    path = Path(filename)
+                    current = snapshot(path)
+                    if current == entry["before"]:
+                        continue
+                    if current is None or current["bytes"] != entry["after"]:
+                        raise ValueError(f"命令已被外部修改，未覆盖：{path}")
+                    restore_file(path, entry["before"])
+                return
             path = Path(self.state["bin_dir"]) / name
             old = self.state["links"][name]
             current = os.readlink(path) if path.is_symlink() else None
@@ -243,6 +265,9 @@ class InstallTransaction:
 
         for name in self.state["changed_links"]:
             attempt(lambda name=name: link(name))
+        for change in reversed(self.state.get("windows_path", [])):
+            from host_support.windows_install import apply_path_change
+            attempt(lambda change=change: apply_path_change(change, restore=True))
         for item in reversed(self.state["shell"]):
 
             def shell(item=item):
@@ -336,7 +361,7 @@ def recover_install(root):
         return
     if directory.is_symlink() or (directory / "state.json").is_symlink():
         raise ValueError("安装恢复目录不能是符号链接")
-    state = json.loads((directory / "state.json").read_text())
+    state = json.loads((directory / "state.json").read_text(encoding="utf-8"))
     if not isinstance(state, dict):
         raise ValueError("无法识别安装恢复记录")
     if state.get("root") != str(root) or state.get("home") != str(Path.home().resolve()):
@@ -387,6 +412,26 @@ def recover_install(root):
                 base64.b64decode(value["bytes"], validate=True)
                 if type(value["mode"]) is not int or not 0 <= value["mode"] <= 0o777:
                     raise ValueError
+        if "windows_commands" in state:
+            from host_support.windows_install import command_receipt
+            for name, entries in state["windows_commands"].items():
+                if os.name != "nt" or name not in state["changed_links"]:
+                    raise ValueError
+                command = public_command(Path(state["bin_dir"]), name)
+                if set(entries) != {str(command), str(command_receipt(command))}:
+                    raise ValueError
+                for entry in entries.values():
+                    base64.b64decode(entry["after"], validate=True)
+                    before = entry["before"]
+                    if before is not None:
+                        base64.b64decode(before["bytes"], validate=True)
+                        if type(before["mode"]) is not int or not 0 <= before["mode"] <= 0o777:
+                            raise ValueError
+        for change in state.get("windows_path", []):
+            from host_support.windows_install import validate_path_change
+            if os.name != "nt" or change["bin_dir"] != state["bin_dir"]:
+                raise ValueError
+            validate_path_change(change)
         tag = state["staging_image"]
         if tag is not None and not re.fullmatch(r"repo-agent-install:[0-9a-f]{32}", tag):
             raise ValueError

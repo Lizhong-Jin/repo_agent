@@ -12,7 +12,11 @@ from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
-from host_support.filesystem import open_directory, open_file, walk_descriptors
+from host_support.filesystem import (
+    mkdir_at, open_directory, open_file, rename_at, set_file_mode, stat_at,
+    unlink_at, walk_descriptors,
+)
+from host_support.paths import find_windows_executable
 
 from tools._internal.base import ExecutionKind, ToolResult, execution_kind_of
 from tools._internal.file_policy import runtime_protected_paths
@@ -24,6 +28,8 @@ from .writeback import Backup, WritebackGuard, atomic_json
 
 
 def fingerprint(data: bytes, mode: int) -> str:
+    if os.name == "nt":
+        mode &= ~0o111
     return hashlib.sha256(data).hexdigest() + (":x" if mode & 0o111 else ":-")
 
 
@@ -37,7 +43,7 @@ def files(
         for name in list(dirs) + names:
             path = Path(directory) / name
             relative = path.relative_to(root).as_posix()
-            info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            info = stat_at(name, dir_fd=directory_fd)
             excluded = policy.excluded(relative) or any(
                 relative == item.rstrip("/") or (item.endswith("/") and relative.startswith(item))
                 for item in (protected or set())
@@ -64,6 +70,9 @@ def files(
             if total > policy.max_workspace_bytes:
                 raise ValueError("工作区超过 sandbox 大小限制。")
             result[relative] = (data, stat.S_IMODE(current.st_mode))
+    if os.name == "nt":
+        from host_support.windows_files import validate_snapshot_names
+        validate_snapshot_names(result)
     return result
 
 
@@ -163,13 +172,25 @@ class SandboxSession:
             "GIT_COMMITTER_NAME": "Sandbox",
             "GIT_COMMITTER_EMAIL": "sandbox@localhost",
         }
+        git = "git"
+        if os.name == "nt":
+            git = find_windows_executable("git", exclude=(self.root, self.directory))
+            if not git:
+                raise ValueError("Git 不可用；请安装 Git for Windows 并加入 PATH。")
+            system = Path(os.environ.get("SystemRoot", r"C:\Windows"))
+            env["PATH"] = os.pathsep.join((str(Path(git).parent), str(system / "System32")))
+            env.update({key: os.environ[key] for key in ("SystemRoot", "WINDIR", "TEMP", "TMP")
+                        if key in os.environ})
+            env["GIT_CONFIG_COUNT"] = "2"
+            env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"] = "core.autocrlf", "false"
+            env["GIT_CONFIG_KEY_1"], env["GIT_CONFIG_VALUE_1"] = "core.filemode", "false"
         for args in (
             ["init", "--template="],
             ["add", "--all", "--force"],
-            ["-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-m", "Baseline"],
+            ["-c", f"core.hooksPath={os.devnull}", "commit", "--allow-empty", "-m", "Baseline"],
         ):
             subprocess.run(
-                ["git", *args],
+                [git, *args],
                 cwd=self.workspace,
                 env=env,
                 capture_output=True,
@@ -317,6 +338,9 @@ class SandboxSession:
         return result
 
     def _apply_snapshot(self, current, changed, expected, *, preserve_mode=False):
+        if os.name == "nt":
+            from host_support.windows_files import validate_snapshot_names
+            validate_snapshot_names(set(current) | set(changed) | set(expected))
         host = files(self.root, self.policy, protected=self.protected)
         for name in changed:
             parts = Path(name).parts
@@ -325,7 +349,8 @@ class SandboxSession:
             target = self.root
             for part in parts:
                 target = target / part
-                if target.is_symlink():
+                if target.is_symlink() or (os.name == "nt" and target.exists()
+                                           and target.lstat().st_file_attributes & 0x400):
                     raise ValueError(f"目标包含符号链接：{name}")
             if target.exists():
                 info = target.lstat()
@@ -347,7 +372,7 @@ class SandboxSession:
             try:
                 for part in parts[:-1]:
                     try:
-                        os.mkdir(part, dir_fd=fd)
+                        mkdir_at(part, dir_fd=fd)
                     except FileExistsError:
                         pass
                     child = open_directory(part, dir_fd=fd)
@@ -369,13 +394,13 @@ class SandboxSession:
                     raise ValueError(f"回写期间文件改变：{name}；之前的回写可能已完成。")
                 backup.attempting(name)
                 if name not in current:
-                    os.unlink(parts[-1], dir_fd=fd)
+                    unlink_at(parts[-1], dir_fd=fd)
                 else:
                     import uuid
 
                     temporary = ".sandbox-" + uuid.uuid4().hex
                     data, mode = current[name]
-                    out = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=fd)
+                    out = open_file(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=fd)
                     try:
                         with os.fdopen(out, "wb") as stream:
                             stream.write(data)
@@ -387,13 +412,13 @@ class SandboxSession:
                                     | (0o111 if mode & 0o111 else 0)
                                 )
                             )
-                            os.fchmod(stream.fileno(), permissions)
+                            set_file_mode(stream.fileno(), permissions)
                             stream.flush()
                             os.fsync(stream.fileno())
-                        os.replace(temporary, parts[-1], src_dir_fd=fd, dst_dir_fd=fd)
+                        rename_at(temporary, parts[-1], src_dir_fd=fd, dst_dir_fd=fd, replace=True)
                     finally:
                         try:
-                            os.unlink(temporary, dir_fd=fd)
+                            unlink_at(temporary, dir_fd=fd)
                         except FileNotFoundError:
                             pass
                 if name in current:
@@ -412,6 +437,9 @@ class SandboxSession:
             raise ValueError("备份 ID 必须是 backups 目录下的 32 位名称。")
         directory = self.directory / "backups" / backup_id
         record = json.loads((directory / "manifest.json").read_text())
+        if os.name == "nt":
+            from host_support.windows_files import validate_snapshot_names
+            validate_snapshot_names(record["files"])
         if record["root"] != str(self.root):
             raise ValueError("备份与当前项目不匹配。")
         host = files(self.root, self.policy, protected=self.protected)
@@ -434,7 +462,8 @@ class SandboxSession:
             target = self.root
             for part in Path(name).parts:
                 target = target / part
-                if target.is_symlink():
+                if target.is_symlink() or (os.name == "nt" and target.exists()
+                                           and target.lstat().st_file_attributes & 0x400):
                     raise ValueError(f"恢复路径包含符号链接：{name}")
             actual = fingerprint(*host[name]) if name in host else None
             if actual == entry["before"]:
@@ -448,7 +477,7 @@ class SandboxSession:
                 if not str(entry["blob"]).isdigit():
                     raise ValueError("无效备份文件。")
                 blob = directory / entry["blob"]
-                descriptor = os.open(blob, os.O_RDONLY | os.O_NOFOLLOW)
+                descriptor = open_file(blob)
                 with os.fdopen(descriptor, "rb") as source:
                     data = source.read(self.policy.max_workspace_bytes + 1)
                 if fingerprint(data, entry["mode"]) != entry["before"]:

@@ -23,10 +23,10 @@ def read_release(root, *, verify=True):
     manifest = root / "release.json"
     if manifest.is_symlink():
         raise ValueError("发行清单不能是链接")
-    data = json.loads(manifest.read_text())
+    data = json.loads(manifest.read_text(encoding="utf-8"))
     if (
         not isinstance(data, dict)
-        or data.get("schema") not in (1, 2)
+        or data.get("schema") not in (1, 2, 3)
         or data.get("name") != "repo-agent"
         or not isinstance(data.get("version"), str)
         or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9.+-]*", data.get("version", ""))
@@ -34,6 +34,11 @@ def read_release(root, *, verify=True):
     ):
         raise ValueError("无法识别发行清单")
     seen = set()
+    if data["schema"] == 3:
+        if data.get("target") != "windows-x86_64":
+            raise ValueError("无法识别 Windows 发行平台")
+        from host_support.windows_files import validate_snapshot_names
+        validate_snapshot_names(data["files"])
     for name, expected in data["files"].items():
         relative = archive_path(name)
         if (
@@ -60,7 +65,6 @@ def read_release(root, *, verify=True):
         raise ValueError("发行包缺少 wheel")
     required = {
         wheel,
-        "install-release.sh",
         "cli/setup.py",
         "cli/release_install.py",
         ".env.example",
@@ -70,16 +74,23 @@ def read_release(root, *, verify=True):
         "uv.lock",
     }
     if data["schema"] == 1:
-        required.update({"install.sh", "uninstall.sh"})
-    else:
+        required.update({"install.sh", "install-release.sh", "uninstall.sh"})
+    elif data["schema"] == 2:
         required.update(
             {
+                "install-release.sh",
                 "scripts/installer-entry.sh",
                 "scripts/bootstrap-python.sh",
                 "runtime/python.lock",
                 "cli/uninstall.py",
             }
         )
+    else:
+        required.update({"install_release.ps1", "runtime/python/python.exe",
+                         "runtime/python.lock", "runtime/target", "cli/uninstall.py"})
+        if any(name.endswith((".sh", ".ps1")) and name != "install_release.ps1"
+               for name in data["files"] if "/" not in name or name.startswith("scripts/")):
+            raise ValueError("Windows 发行包仅允许 install_release.ps1 安装入口")
     if (
         not isinstance(wheel, str)
         or not wheel.startswith("wheels/")

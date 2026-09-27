@@ -154,6 +154,6 @@ CUDA 配置挂载 GPU，增加编译所需的内存、临时空间和执行时�
 | macOS（Intel / Apple Silicon） | 使用 Docker Desktop 等提供的 Linux VM，standard 镜像按 daemon 架构构建 |
 | Windows | 在 WSL2 Linux 发行版内安装并运行项目，通过 Docker Desktop 的 WSL 集成连接 Linux daemon |
 
-当前项目的安装脚本、会话锁等依赖 POSIX（包括 `fcntl`），未支持直接在原生 Windows Python/PowerShell 运行，也不支持 Windows 容器镜像。优先将 WSL2 项目放在 Linux 文件系统中。Docker 产品的平台支持见 [Docker Desktop 文档](https://docs.docker.com/desktop/)，Windows 集成见 [WSL2 后端说明](https://docs.docker.com/desktop/features/wsl/)。
+Windows 原生 Python 的共享文件访问、会话锁、原子存储与 Docker 快照/回写已有实现，需要 Git for Windows 与 Docker Desktop 的 Linux 容器模式；验收步骤和限制见[平台适配边界](../docs/platform-adaptation.md#windows-文件服务)。Windows ZIP 提供自带 Python 的 `install_release.ps1 --mode docker` 安装入口；Windows 原生沙箱和 Windows 容器镜像尚不支持，Windows 内核用例与真实 Docker 往返需单独验证。原有 WSL2 路线保持不变，优先将 WSL2 项目放在 Linux 文件系统中。Docker 产品的平台支持见 [Docker Desktop 文档](https://docs.docker.com/desktop/)，Windows 集成见 [WSL2 后端说明](https://docs.docker.com/desktop/features/wsl/)。
 
 CUDA profile 目前限定 Linux x86_64 daemon，且需要 NVIDIA runtime 和实际 GPU 探测成功；macOS 没有本项目的 CUDA 透传。所有平台的 bind mount 路径都必须对选中的 Docker daemon 可见，不能把连接远程 daemon 等同于自动上传本地项目。

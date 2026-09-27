@@ -1,4 +1,4 @@
-"""Standard-library maintenance checks and cooperative process locks (macOS/Linux)."""
+"""Standard-library maintenance checks and cooperative process locks."""
 
 import importlib
 import json
@@ -20,7 +20,7 @@ if not __package__:
 from host_support.diagnostics import print_diagnostics
 from host_support.filesystem import open_file
 from host_support.locking import lock_descriptor
-from host_support.paths import environment_python, scripts_dir
+from host_support.paths import environment_python, installed_command
 
 
 @contextmanager
@@ -165,7 +165,7 @@ def environment_report(root, *, docker=True):
             # Recognize our own interrupted preparation, but never an arbitrary directory.
             marker = venv / ".repo-agent-install.json"
             try:
-                owned = json.loads(marker.read_text()).get("root") == str(root)
+                owned = json.loads(marker.read_text(encoding="utf-8")).get("root") == str(root)
             except (OSError, ValueError, AttributeError):
                 owned = False
             if any(venv.iterdir()) and not owned:
@@ -181,12 +181,15 @@ def environment_report(root, *, docker=True):
             prefix, version = json.loads(result.stdout) if result.returncode == 0 else (None, None)
             valid = prefix == str(venv) and version == list(sys.version_info[:2])
             for name in ("repo-agent", "repo-agent-build-sandbox"):
-                entry = scripts_dir(venv) / name
+                entry = installed_command(root, name)
+                if os.name == "nt":
+                    valid = valid and entry.is_file()
+                    continue
                 # pip can use a shell trampoline for paths containing spaces.
                 valid = (
                     valid
                     and entry.is_file()
-                    and str(environment_python(venv)) in entry.read_text()[:1024]
+                    and str(environment_python(venv)) in entry.read_text(encoding="utf-8")[:1024]
                 )
             add(
                 "OK" if valid else "WARN",

@@ -63,7 +63,7 @@ def selected_languages(value):
 def available_mode(root):
     """Installation preference; never read a task project's configuration or run commands."""
     try:
-        record = json.loads((Path(root) / ".repo-agent-install.json").read_text())
+        record = json.loads((Path(root) / ".repo-agent-install.json").read_text(encoding="utf-8"))
         mode = record.get("mode")
         if record.get("root") == str(Path(root).resolve()) and mode in {
             "native",
@@ -73,7 +73,7 @@ def available_mode(root):
             return mode
     except (OSError, ValueError, AttributeError):
         pass
-    return "native"
+    return "local" if sys.platform == "win32" else "native"
 
 
 def toolchain_report(python, languages="all"):

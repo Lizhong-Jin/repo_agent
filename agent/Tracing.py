@@ -34,6 +34,7 @@ class ModelCallRecord:
     usage: Usage | None = None
     finish_reason: str | None = None
     error_type: str | None = None
+    stage: str | None = None
 
 
 @dataclass
@@ -250,8 +251,8 @@ class RunTrace:
         self.emit("task_end")
 
     @contextmanager
-    def model(self, step: int, *, purpose="task"):
-        record = ModelCallRecord(step, purpose=purpose)
+    def model(self, step: int, *, purpose="task", stage=None):
+        record = ModelCallRecord(step, purpose=purpose, stage=stage)
         self.stats.model_calls.append(record)
         started = perf_counter()
         self.emit("model_start")

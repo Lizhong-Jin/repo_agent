@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from host_support.filesystem import open_file
+from host_support.filesystem import open_file, set_file_mode
 from host_support.locking import lock_descriptor
 from host_support.storage import atomic_write
 
@@ -241,7 +241,7 @@ def open_log(path, *, write=False, exclusive=False):
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise ValueError("日志必须是独立普通文件")
         if write:
-            os.fchmod(fd, 0o600)
+            set_file_mode(fd, 0o600)
         return os.fdopen(fd, "a" if write else "r", encoding="utf-8")
     except BaseException:
         os.close(fd)

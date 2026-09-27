@@ -2,13 +2,14 @@
 
 [文档首页](docs/index.md) · [项目首页](README.md) · [开发指南](docs/development.md)
 
-本文描述当前代码结构。入口是 `repo-agent`，模型请求和会话管理运行在宿主机；默认使用 macOS / Linux native 后端直接编辑项目，可显式选择 local 或 Docker。
+本文描述当前代码结构。入口是 `repo-agent`，模型请求和会话管理运行在宿主机；macOS/Linux 首次安装默认 native，Windows x86_64 首次安装默认 local，可显式选择 Docker。Windows 的文件与安装适配已实现，未提供 Windows 原生沙箱。
 
 ## 模块职责
 
 | 模块 | 主要文件 | 职责 |
 | --- | --- | --- |
 | 宿主平台服务 | [host_support/](host_support/)、[平台适配边界](docs/platform-adaptation.md) | 标准库实现的平台标识、目录和解释器布局、安全文件操作、锁、原子写入、进程生命周期、工具链清单与诊断 |
+| Windows 适配 | [host_support/windows_files.py](host_support/windows_files.py)、[host_support/windows_install.py](host_support/windows_install.py)、[install_release.ps1](install_release.ps1) | 句柄相对文件操作、文件锁、用户命令归属与 PATH、ZIP 运行时引导；不提供原生进程隔离 |
 | 命令入口 | [cli/main.py](cli/main.py)、[cli/settings.py](cli/settings.py) | 分发命令、加载参数、选择项目和执行环境 |
 | 交互界面 | [cli/tui.py](cli/tui.py)、[cli/interactive.py](cli/interactive.py)、[cli/live.py](cli/live.py) | 全屏/普通终端、流式显示、用量和上下文状态 |
 | 会话管理 | [agent/session.py](agent/session.py)、[cli/session.py](cli/session.py)、[cli/sessions_command.py](cli/sessions_command.py) | 项目隔离、快照、名称索引、恢复、会话查询和日志查看 |
@@ -17,6 +18,7 @@
 | Skills | [agent/skills/registry.py](agent/skills/registry.py)、[agent/skills/tool.py](agent/skills/tool.py) | 发现并校验技能，显式或按需加载正文 |
 | 模型层 | [llm/client.py](llm/client.py)、[llm/schemas.py](llm/schemas.py)、[llm/adapters/](llm/adapters/) | 同步/异步调用、流式解析、协议转换、原生状态和错误 |
 | 上下文压缩 | [agent/compaction.py](agent/compaction.py)、[agent/history.py](agent/history.py)、[llm/independent.py](llm/independent.py) | 请求前自动检查、手动压缩、独立摘要请求、原文归档与只读回查 |
+| 摘要校验与诊断 | [agent/compaction_summary.py](agent/compaction_summary.py)、[agent/compaction_diagnostics.py](agent/compaction_diagnostics.py) | 短引用映射、结构与来源校验、每次失败摘要至多一次格式修复、独立失败候选记录 |
 | 模型能力 | [llm/model_limits.py](llm/model_limits.py)、[llm/thinking_profiles.py](llm/thinking_profiles.py)、[llm/model_catalog.py](llm/model_catalog.py) | 上下文元数据查询、思考能力匹配与校验 |
 | 工具 | [tools/factory.py](tools/factory.py)、[tools/](tools/) | 文件、补丁、搜索、Git、环境查询、隔离命令、Python 和语言服务器工具 |
 | 工具调度与分组 | [tools/dispatch.py](tools/dispatch.py)、[tools/tool_groups.py](tools/tool_groups.py) | 按显式执行类别调度；按需加载工具定义，独立管理会话可见性 |
@@ -81,6 +83,7 @@ Runtime 按 `ExecutionKind` 调度工具。CLI 默认只向模型公开通用工
 | 用户配置、思考偏好 | 用户配置目录中的 `.env`、`thinking.json` | 配置命令或交互设置保存 |
 | 会话恢复状态 | 用户状态目录中的 `<项目哈希>/<会话ID>.json` | 任务边界、自动压缩前及压缩提交时原子替换；含工作上下文、压缩元数据与累计用量 |
 | 压缩原文归档 | 同项目状态目录下的 `history.sqlite3` | 压缩前提交完整有序快照；内容可去重，消息出现顺序保留 |
+| 压缩失败诊断 | `<项目哈希>/<会话ID>/compaction-diagnostics/<诊断ID>.json` | 保存失败候选和引用映射；普通日志只记录错误信息和诊断 ID，不自动清理 |
 | 用户原文出现记录 | 会话压缩元数据 `pins` | 按出现顺序保存原文引用和 `occurrence`（快照 ID＋位置）；相同文本的再次更正仍保留 |
 | 名称和序号 | 同项目目录下的 `index` | 独立短时锁保护；外部改名不会被旧快照覆盖 |
 | 默认恢复目标 | 同项目目录下的 `latest.json` | 指向最近保存的会话 |

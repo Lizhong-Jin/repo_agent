@@ -5,6 +5,7 @@ import os
 import shutil
 import tarfile
 import tempfile
+import zipfile
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -66,8 +67,8 @@ def prepare_release(bundle, destination):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="安装独立 Repo Agent 发行版，不依赖下载/源码目录")
-    parser.add_argument("--archive", type=Path, help="发行 tar.gz 文件；已解压发行包可省略")
-    parser.add_argument("--sha256", help="可选：校验整个发行 tar.gz 的 SHA256")
+    parser.add_argument("--archive", type=Path, help="发行 tar.gz/ZIP 文件；已解压发行包可省略")
+    parser.add_argument("--sha256", help="可选：校验整个发行包的 SHA256")
     parser.add_argument("--data-dir", type=Path, help="用户数据目录，默认 XDG_DATA_HOME/repo-agent")
     parser.add_argument("--bin-dir", type=Path, default=user_bin_dir())
     parser.add_argument("--mode", choices=["native", "docker", "local"])
@@ -176,7 +177,7 @@ def main(argv=None):
             prepare_release(bundle, target)
             forwarded += ["--bootstrap", "--wheel", str(target / release["wheel"])]
             setup.main(forwarded, approved_commands=approved)
-    except (OSError, ValueError, tarfile.TarError) as error:
+    except (OSError, ValueError, tarfile.TarError, zipfile.BadZipFile) as error:
         parser.exit(1, f"发行版{'卸载' if args.uninstall else '安装'}未完成：{error}\n")
 
 

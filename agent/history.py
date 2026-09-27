@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from host_support.filesystem import open_file
+from host_support.filesystem import open_file, set_file_mode
 
 from llm import Message, ToolDefinition
 from llm.token_estimation import estimate_context_tokens
@@ -38,7 +38,7 @@ class HistoryArchive:
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
                 raise ValueError("Historical archives must be independent and ordinary documents")
             if write:
-                os.fchmod(fd, 0o600)
+                set_file_mode(fd, 0o600)
         finally:
             os.close(fd)
         db = None

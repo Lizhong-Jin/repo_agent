@@ -8,7 +8,7 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
-from host_support.filesystem import open_directory, open_file
+from host_support.filesystem import list_directory, open_directory, open_file, stat_at
 
 import yaml
 
@@ -128,8 +128,8 @@ class SkillRegistry:
             except FileNotFoundError:
                 return
             try:
-                for name in sorted(os.listdir(directory_fd)):
-                    info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                for name in sorted(list_directory(directory_fd)):
+                    info = stat_at(name, dir_fd=directory_fd)
                     if stat.S_ISLNK(info.st_mode):
                         raise SkillError(f"{folder}/{name}: 技能目录不支持符号链接")
                     if not stat.S_ISDIR(info.st_mode):

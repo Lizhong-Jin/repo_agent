@@ -36,6 +36,8 @@ agent/skills/builtin/gpu-kernel-development/**
 !agent/Tracing.py
 !agent/__init__.py
 !agent/compaction.py
+!agent/compaction_diagnostics.py
+!agent/compaction_summary.py
 !agent/history.py
 !agent/prompt.py
 !agent/runtime.py
@@ -97,6 +99,8 @@ agent/skills/builtin/gpu-kernel-development/**
 !host_support/python_environments.py
 !host_support/storage.py
 !host_support/supervision.py
+!host_support/windows_files.py
+!host_support/windows_install.py
 !llm/__init__.py
 !llm/adapters/__init__.py
 !llm/adapters/anthropic.py

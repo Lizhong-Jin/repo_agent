@@ -16,7 +16,7 @@ if not __package__:
     enable_host_support()
 
 from host_support.integration import command_state, shell_path_plan
-from host_support.paths import installed_command, installed_python, user_bin_dir
+from host_support.paths import installed_command, installed_python, public_command, user_bin_dir
 
 if __package__:
     from .installation import (
@@ -92,7 +92,7 @@ def confirm_commands(agent_home: Path, bin_dir: Path) -> dict[str, str | None]:
     states = {}
     replacements = []
     for name in COMMANDS:
-        command = bin_dir / name
+        command = public_command(bin_dir, name)
         previous = command_state(command)
         states[name] = previous
         if previous is None:
@@ -101,7 +101,8 @@ def confirm_commands(agent_home: Path, bin_dir: Path) -> dict[str, str | None]:
         target = installed_command(agent_home, name)
         if old_target == target:
             continue
-        if old_target.name != name or old_target.parent.parts[-2:] != (".venv", "bin"):
+        if (old_target.name != target.name
+                or old_target.parent.parts[-2:] != target.parent.parts[-2:]):
             raise ValueError(
                 f"保留已有命令 {command}（无法识别为旧安装）；请用 --bin-dir 选择其他目录"
             )
@@ -122,7 +123,7 @@ def confirm_commands(agent_home: Path, bin_dir: Path) -> dict[str, str | None]:
 
 def check_command_states(bin_dir: Path, states: dict[str, str | None]) -> None:
     for name, previous in states.items():
-        if command_state(bin_dir / name) != previous:
+        if command_state(public_command(bin_dir, name)) != previous:
             raise ValueError(f"安装期间命令发生变化，未覆盖：{bin_dir / name}；请重新运行安装")
 
 
@@ -161,11 +162,11 @@ def install_command(
     *,
     approved_states: dict[str, str | None] | None = None,
 ) -> Path:
-    target = agent_home / ".venv" / "bin" / name
+    target = installed_command(agent_home, name)
     if not target.is_file():
         raise ValueError(f"未找到 {name} 入口，请通过 install.sh 安装")
     bin_dir.mkdir(parents=True, exist_ok=True)
-    command = bin_dir / name
+    command = public_command(bin_dir, name)
     previous = command_state(command)
     matches = previous is not None and Path(os.path.abspath(command.parent / previous)) == target
     if approved_states is not None:
@@ -177,8 +178,11 @@ def install_command(
         if item not in record["commands"]:
             record["commands"].append(item)
             save_record(record)
-    if not matches:
-        if previous is None:
+    if not matches or os.name == "nt":
+        if os.name == "nt":
+            from host_support.windows_install import publish_command
+            publish_command(command, target)
+        elif previous is None:
             command.symlink_to(target)
         else:
             # Keep the old command available until the replacement link is ready.
@@ -191,6 +195,19 @@ def install_command(
 
 
 def configure_path(bin_dir: Path, record: dict | None = None, transaction=None) -> list[Path]:
+    if os.name == "nt":
+        from host_support.windows_install import apply_path_change, path_change
+        change = path_change(bin_dir)
+        if change is None:
+            return []
+        if record is not None:
+            record.setdefault("windows_path", []).append(change)
+            save_record(record)
+        if transaction is not None:
+            transaction.state.setdefault("windows_path", []).append(change)
+            transaction.save()
+        apply_path_change(change)
+        return [bin_dir]
     files, line = shell_path_plan(bin_dir)
     for path in files:
         if path.is_symlink():
@@ -260,7 +277,7 @@ def main(argv=None, *, approved_commands=None) -> None:
     parser.add_argument(
         "--mode",
         choices=["native", "docker", "local"],
-        help="默认沿用本安装模式；首次为 native",
+        help="默认沿用本安装模式；首次 Windows 为 local，macOS/Linux 为 native",
     )
     parser.add_argument(
         "--languages",
@@ -294,6 +311,8 @@ def main(argv=None, *, approved_commands=None) -> None:
         agent_home = args.agent_home.expanduser().resolve(strict=True)
         bin_dir = args.bin_dir.expanduser().resolve()
         args.mode = args.mode or available_mode(agent_home)
+        if os.name == "nt" and args.mode == "native":
+            raise ValueError("Windows 安装支持 --mode local 或 docker；不提供 native 沙箱")
         selected_languages(args.languages)
         release = None
         if args.wheel:
@@ -574,7 +593,11 @@ def main(argv=None, *, approved_commands=None) -> None:
         print("已配置 PATH；打开新终端后，在任意项目目录执行 repo-agent。")
     else:
         print("请确认命令目录已在 PATH 中。")
-    print(f'当前终端立即使用：export PATH={shlex.quote(str(bin_dir))}:"$PATH"')
+    if os.name == "nt":
+        escaped = str(bin_dir).replace("'", "''")
+        print(f"当前 PowerShell 立即使用：$env:PATH = '{escaped};' + $env:PATH")
+    else:
+        print(f'当前终端立即使用：export PATH={shlex.quote(str(bin_dir))}:"$PATH"')
     if args.skip_sandbox and args.mode == "docker":
         print("已跳过镜像构建；Docker 模式仍需要镜像。仅文件操作可用 repo-agent --sandbox local。")
 

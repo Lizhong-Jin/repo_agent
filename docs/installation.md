@@ -6,7 +6,7 @@
 
 ## 独立发行版安装
 
-普通用户使用与目标系统和架构匹配的完整包 `repo-agent-<版本>-<平台>.tar.gz`，包含独立 Python、Agent wheel 和 Python 语言服务依赖，不需要预装 Python。支持 macOS/Linux 的 ARM64、x86_64，WSL2 使用对应架构的 Linux 包。包中不含系统工具链或项目的 PyTorch 等依赖。详见 [Python 环境](python-environments.md)。
+普通用户使用与目标系统和架构匹配的完整包 `repo-agent-<版本>-<平台>.tar.gz`，包含独立 Python、Agent wheel 和 Python 语言服务依赖，不需要预装 Python。macOS/Linux 支持 ARM64、x86_64，WSL2 使用对应架构的 Linux 包。Windows x86_64 使用自带 Python 与核心运行依赖的 `.zip` 包，入口见下节。包中不含系统工具链或项目的 PyTorch 等依赖。详见 [Python 环境](python-environments.md)。
 
 维护者的构建产物位于 `dist/<版本>/<平台>/`，每个压缩包旁有对应的 `.sha256` 文件；构建器默认生成全部平台，只提供完整包。构建命令与目录结构见[构建与分发](distribution.md)。
 
@@ -54,7 +54,7 @@ repo-agent uninstall
 
 卸载沿用归属检查：删除当前版本的 `.venv` 和仍指向它的命令，默认保留用户配置、系统工具链、发行版文件及恢复入口，不回退至旧安装。需要重装时可在该版本目录运行 `./install-release.sh`。如需删除已卸载版本的剩余文件，请先确认不再需要该目录内的恢复入口或修改后再手动删除。
 
-当前构建器生成的 schema 2 发行包仅保留一个顶层入口 `install-release.sh`，不包含源码专用的 `install.sh` 和 `uninstall.sh`。较早的 schema 1 包保留原有脚本，不能仅凭版本号判断是否支持新参数；旧包卸载可使用 `repo-agent uninstall` 或包内 `uninstall.sh`。对于新包，命令无法启动时，可在已安装版本目录执行：
+macOS/Linux 构建器生成的 schema 2 发行包仅保留一个顶层入口 `install-release.sh`，不包含源码专用的 `install.sh` 和 `uninstall.sh`。较早的 schema 1 包保留原有脚本，不能仅凭版本号判断是否支持新参数；旧包卸载可使用 `repo-agent uninstall` 或包内 `uninstall.sh`。对于新包，命令无法启动时，可在已安装版本目录执行：
 
 ```bash
 ./install-release.sh --recover             # 恢复中断的安装
@@ -68,6 +68,35 @@ repo-agent uninstall
 相同发行包允许重复安装。同版本号但内容不同的发行包会被拒绝，维护者应递增版本号；如确需替换，先卸载并手动移走原版本目录。安装其他版本时，发现旧命令会先询问确认；核心安装失败保留旧命令和旧环境。失败后保留已校验的版本文件以便重试，继续使用原安装命令即可；仅恢复事务可以在该版本目录执行 `./install-release.sh --recover`。当前没有自动检查更新、下载更新或回滚命令。
 
 压缩包 SHA256 和包内逐文件哈希用于发现损坏、文件缺失和内容不一致，不等同于发行者签名；请从可信来源取得安装器和发行包。
+
+## Windows x86_64 ZIP 安装
+
+支持 Windows 10 1809+ / Windows 11 x86_64、Windows PowerShell 5.1+。ZIP 内置锁定的 Python 3.13、pip、venv 和 Windows 离线 wheels，不需要预装 Python 或管理员权限。只提供一个安装脚本 `install_release.ps1`，卸载、检查和恢复均由它的参数完成。
+
+```powershell
+Expand-Archive .\repo-agent-0.1.2-windows-x86_64.zip -DestinationPath .
+Set-Location .\repo-agent-0.1.2-windows-x86_64
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --check
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --offline
+```
+
+上面的执行策略仅作用于本次 PowerShell 进程，不修改系统策略。首次默认 `local`；需要命令执行时选择 `--mode docker`，预先安装 Git for Windows 并启动 Docker Desktop 的 Linux 容器模式。离线 Docker 安装还须提前准备镜像并传 `--skip-sandbox`。Windows 不提供 `native` 沙箱；macOS/Linux 的默认 native 行为不变。
+
+目录布局沿用上表（`~` 为用户目录），命令名为 `repo-agent.exe`、`repo-agent-build-sandbox.exe`。安装器将独立 Python 校验并复制到用户数据目录的共享缓存，再在最终版本目录创建 `.venv`；安装成功后可以删除 ZIP 和解压目录。`AGENT_PYTHON_CACHE` 可指定缓存位置；`AGENT_PYTHON` 可指定完整解释器路径或 `system`。`--data-dir`、`--bin-dir` 支持含空格的路径，请用引号包裹。
+
+默认将命令目录加入当前用户的 PATH（HKCU），不修改系统 PATH，也不写 Bash/Zsh 配置。打开新终端，或执行安装末尾给出的当前终端 PATH 命令；`--no-path` 完全跳过此操作。命令通过归属记录管理，已有其他安装时确认接管；重装保留配置，核心失败恢复旧虚拟环境、命令和未被外部修改的 PATH。
+
+卸载前退出该版本的所有 Agent 进程，在已安装版本目录（默认如下）运行同一个脚本：
+
+```powershell
+Set-Location "$HOME/.local/share/repo-agent/versions/0.1.2"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --recover
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --uninstall --dry-run
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --uninstall
+# 如需清理未共享的用户配置，在卸载参数后追加 --purge
+```
+
+检查、恢复和卸载直接使用版本目录附带的 Python，不下载或创建运行时缓存，也不依赖 `.venv` 完好。卸载移除该版本虚拟环境与仍归属它的命令；默认保留用户配置、发行文件、共享 Python 缓存、项目、日志和备份。默认共享的 `~/.local/bin` PATH 保留；自定义命令目录仅在无其他安装共用且 PATH 未被外部修改时恢复。`--purge` / `--remove-image` 的归属保护与 macOS/Linux 相同。
 
 ## 源码安装与首次启动
 
@@ -89,7 +118,7 @@ repo-agent uninstall
 ./install.sh --bin-dir /path/to/bin --no-path # 自定义命令目录，不改 shell 配置
 ```
 
-首次默认 native，通过 macOS / Linux 原生沙箱执行工具并直接修改原项目。安装成功会记录所选模式，后续 `repo-agent` 和 `doctor` 沿用该模式；可用 `--sandbox` 或 `doctor --mode` 临时覆盖。Windows 请在 WSL2 内安装和运行；local 仅支持文件/Git 工具。详见[原生沙箱](native-sandbox.md)。`--skip-sandbox` 仅在 Docker 安装模式下跳过镜像构建，不会改变所选模式；native/local 不检查 Docker。
+首次默认 native，通过 macOS / Linux 原生沙箱执行工具并直接修改原项目。安装成功会记录所选模式，后续 `repo-agent` 和 `doctor` 沿用该模式；可用 `--sandbox` 或 `doctor --mode` 临时覆盖。Windows 源码 Shell 安装请在 WSL2 内运行，原生 Windows 使用上面的 ZIP 包；local 仅支持文件/Git 工具。详见[原生沙箱](native-sandbox.md)。`--skip-sandbox` 仅在 Docker 安装模式下跳过镜像构建，不会改变所选模式；native/local 不检查 Docker。
 
 ## 离线安装
 
@@ -139,14 +168,15 @@ repo-agent-build-sandbox
 
 ## 卸载
 
-命令仍可用时，两种安装都可以执行 `repo-agent uninstall`。命令损坏时，先选择对应的备用入口：
+macOS/Linux 命令仍可用时，可以执行 `repo-agent uninstall`；命令损坏时使用下表入口。Windows 请先退出 Agent，再使用版本目录中的 PowerShell 脚本卸载；该入口使用附带 Python，不依赖待删除的 `.venv`。
 
 | 安装类型 | 预览卸载 | 执行卸载 |
 | --- | --- | --- |
 | 源码安装 | `./uninstall.sh --dry-run` | `./uninstall.sh` |
-| 当前 schema 2 发行包 | `./install-release.sh --uninstall --dry-run` | `./install-release.sh --uninstall` |
+| macOS/Linux schema 2 发行包 | `./install-release.sh --uninstall --dry-run` | `./install-release.sh --uninstall` |
+| Windows schema 3 ZIP | `./install_release.ps1 --uninstall --dry-run` | `./install_release.ps1 --uninstall` |
 
-在对应安装目录执行。下列清理选项以源码入口为例；发行包使用 `./install-release.sh --uninstall` 后追加同样的选项：
+在对应安装目录执行。下列清理选项以源码入口为例；macOS/Linux 发行包使用 `./install-release.sh --uninstall`，Windows 使用 `./install_release.ps1 --uninstall` 后追加同样的选项。Windows 执行策略与完整命令见[ZIP 安装](#windows-x86_64-zip-安装)。
 
 ```bash
 ./uninstall.sh --dry-run
@@ -162,7 +192,7 @@ repo-agent-build-sandbox
 ./uninstall.sh --dry-run --purge --remove-image
 ```
 
-默认卸载移除当前安装管理的 `.venv` 和仍指向该安装的两个命令链接。配置和镜像默认保留，之后可再次执行带清理选项的卸载命令。重复卸载会跳过已经删除的内容。
+默认卸载移除当前安装管理的 `.venv` 和仍归属该安装的两个命令入口；macOS/Linux 使用链接，Windows 使用 `.exe` 与配套归属记录。配置和镜像默认保留，之后可再次执行带清理选项的卸载命令。重复卸载会跳过已经删除的内容。
 
 卸载器只依赖 Python 3.11+ 标准库，不导入 Agent 或第三方依赖；即使虚拟环境或依赖损坏，也可运行。`AGENT_PYTHON` 可以指定可用解释器。默认卸载无需 Docker；只有显式请求 `--remove-image` 时才检查 Docker。
 
@@ -235,7 +265,7 @@ AGENT_INSTALL_GOPROXY=https://your-go-proxy.example repo-agent toolchains instal
 
 `AGENT_INSTALL_RETRIES` 支持 0–5，`AGENT_INSTALL_TIMEOUT` 支持 1–3600 秒。`AGENT_INSTALL_PYPI_INDEX`、`AGENT_INSTALL_NPM_REGISTRY`、`AGENT_INSTALL_GOPROXY` 分别指定 Python、npm 和 Go 下载源；`AGENT_INSTALL_PROXY` 指定 HTTP(S) 代理。这些设置只传给安装子进程，不修改全局配置；未指定时继续使用已有包源/代理设置。证书使用既有的 `PIP_CERT` 等设置，不关闭证书校验。
 
-下载输出保存到 `${XDG_STATE_HOME:-~/.local/state}/repo-agent/install-logs/`，终端显示步骤、重试次数、失败分类及日志路径。日志文件权限为 600，过滤环境中的密钥及常见 URL/认证凭据；日志保留用于失败后的排查。排查后可自行删除该日志目录。`--check` 不下载、不创建这些日志。
+下载输出保存到 `${XDG_STATE_HOME:-~/.local/state}/repo-agent/install-logs/`，终端显示步骤、重试次数、失败分类及日志路径。macOS/Linux 日志文件权限为 600，Windows 日志继承用户目录 ACL；过滤环境中的密钥及常见 URL/认证凭据；日志保留用于失败后的排查。排查后可自行删除该日志目录。`--check` 不下载、不创建这些日志。
 
 `doctor` 不修改配置或任务项目、不发送模型请求、不拉取镜像。它检查当前命令实际指向、PATH 重复入口、运行依赖、配置来源与参数冲突、失效安装记录，并按模式实测语言服务。测试使用自动清理的临时示例；Docker 测试使用断网、只读、无项目挂载的临时容器。ERROR 返回退出码 1，仅 WARN 返回 0；尚未填写模型/Key 是 WARN。诊断不会显示密钥。虚拟环境损坏导致全局命令无法启动时，可在安装目录执行：
 

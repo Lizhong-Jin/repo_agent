@@ -33,9 +33,12 @@ class ReleaseTarget:
     name: str
     runtime_python: str
     archive_suffix: str = ".tar.gz"
+    runtime_archive_suffix: str = ".tar.gz"
 
     def wheel_platforms(self):
         system, arch = self.name.split("-")
+        if system == "windows":
+            return ["win_amd64"]
         if system == "linux":
             arch = "aarch64" if arch == "arm64" else arch
             return [f"manylinux_2_{minor}_{arch}" for minor in range(28, 16, -1)] + [
@@ -52,6 +55,9 @@ RELEASE_TARGETS = {
     for system in ("macos", "linux")
     for arch in ("arm64", "x86_64")
 }
+RELEASE_TARGETS["windows-x86_64"] = ReleaseTarget(
+    "windows-x86_64", "python/python.exe", archive_suffix=".zip"
+)
 
 
 def release_target(name):

@@ -3,7 +3,6 @@
 import importlib.util
 import json
 import sys
-import tarfile
 import tomllib
 import zipfile
 from pathlib import Path
@@ -48,7 +47,11 @@ def build_inputs(builder, tmp_path, monkeypatch):
     def prepare(root, output, target, **kwargs):
         (output / 'runtime').mkdir(parents=True)
         (output / 'runtime/target').write_text(target + '\n')
-        (output / 'runtime/python.tar.gz').write_bytes(target.encode())
+        if target == 'windows-x86_64':
+            (output / 'runtime/python').mkdir()
+            (output / 'runtime/python/python.exe').write_bytes(target.encode())
+        else:
+            (output / 'runtime/python.tar.gz').write_bytes(target.encode())
         (output / 'wheelhouse').mkdir()
         (output / f'wheelhouse/dependency-{target}.whl').write_bytes(target.encode())
         (output / 'bundle.json').write_text(json.dumps({'target': target}))
@@ -67,20 +70,24 @@ def test_default_builds_all_complete_platforms_with_one_shared_wheel(
     archives = builder.build(root, output, 'uv')
     targets = list(builder.runtime_records(root))
     version = tomllib.loads((root / 'pyproject.toml').read_text())['project']['version']
-    assert len(archives) == len(targets) == 4
+    assert len(archives) == len(targets) == 5
     assert len([command for command in calls if 'build' in command]) == 1
     wheels = set()
     for target, archive in zip(targets, archives, strict=True):
         prefix = f'repo-agent-{version}-{target}'
-        assert archive == output / version / target / f'{prefix}.tar.gz'
+        suffix = '.zip' if target == 'windows-x86_64' else '.tar.gz'
+        assert archive == output / version / target / f'{prefix}{suffix}'
         extracted = tmp_path / f'extracted-{target}'
-        with tarfile.open(archive) as tar:
-            assert all(name.startswith(prefix + '/') for name in tar.getnames())
-            tar.extractall(extracted, filter='data')
+        from cli.paths import extract_files
+        extracted.mkdir()
+        extract_files(archive, extracted)
         bundle = extracted / prefix
         manifest = read_release(bundle)
         assert (bundle / 'runtime/target').read_text().strip() == target
-        assert (bundle / 'runtime/python.tar.gz').read_bytes() == target.encode()
+        runtime = 'runtime/python/python.exe' if target == 'windows-x86_64' else 'runtime/python.tar.gz'
+        assert (bundle / runtime).read_bytes() == target.encode()
+        entries = {p.name for p in bundle.iterdir() if p.suffix in {'.sh', '.ps1'}}
+        assert entries == ({'install_release.ps1'} if target == 'windows-x86_64' else {'install-release.sh'})
         assert list((bundle / 'wheelhouse').iterdir()) == [
             bundle / f'wheelhouse/dependency-{target}.whl']
         wheels.add(digest(bundle / manifest['wheel']))
@@ -136,7 +143,7 @@ def test_all_platform_offline_archives_and_missing_input_fail_early(builder, tmp
         builder.runtime_archives(targets, None, offline=True)
 
 
-@pytest.mark.parametrize('target', ['', 'windows-x86_64'])
+@pytest.mark.parametrize('target', ['', 'windows-arm64'])
 def test_unsupported_or_empty_target_cannot_build_lightweight_package(
     builder, build_inputs, target,
 ):

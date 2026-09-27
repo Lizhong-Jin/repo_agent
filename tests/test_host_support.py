@@ -59,8 +59,8 @@ print('stdlib-only')
 def test_identity_is_normalized_without_enabling_unsupported_releases(system, machine, target):
     assert PlatformInfo.from_names(system, machine).target == target
     if system == "Windows":
-        with pytest.raises(ValueError, match="不支持"):
-            release_target(target)
+        assert release_target(target).runtime_python == "python/python.exe"
+        assert release_target(target).wheel_platforms() == ["win_amd64"]
     else:
         assert release_target(target).runtime_python == "python/bin/python3"
 
@@ -142,7 +142,7 @@ def test_descriptor_lock_is_exclusive_and_released_by_close(tmp_path):
 
 
 def test_unsupported_file_service_never_drops_nofollow_protection(tmp_path, monkeypatch):
-    monkeypatch.setattr(filesystem, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(filesystem, "os", SimpleNamespace(name="unsupported"))
     with pytest.raises(OSError) as error:
         filesystem.open_file(tmp_path / "file")
     assert error.value.errno == errno.ENOTSUP

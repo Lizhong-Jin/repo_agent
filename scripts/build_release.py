@@ -43,7 +43,7 @@ def runtime_archives(targets, source, *, offline):
     source = Path(source).expanduser().resolve(strict=True)
     if source.is_file() and len(targets) != 1:
         raise ValueError("运行时归档为单个文件时必须指定 --target；全平台构建请提供归档目录")
-    paths = {target: source / f"{target}{release_target(target).archive_suffix}" if source.is_dir() else source
+    paths = {target: source / f"{target}{release_target(target).runtime_archive_suffix}" if source.is_dir() else source
              for target in targets}
     for path in paths.values():
         if not path.is_file():
@@ -58,12 +58,14 @@ def write_release(bundle, output, version, target, wheel_name):
         if path.is_file()
     }
     manifest = {
-        "schema": 2,
+        "schema": 3 if target == "windows-x86_64" else 2,
         "name": "repo-agent",
         "version": version,
         "wheel": "wheels/" + wheel_name,
         "files": files,
     }
+    if target == "windows-x86_64":
+        manifest["target"] = target
     (bundle / "release.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
     )
@@ -74,14 +76,20 @@ def write_release(bundle, output, version, target, wheel_name):
     fd, temporary_archive = tempfile.mkstemp(prefix=".release-", dir=directory)
     os.close(fd)
     try:
-        with tarfile.open(temporary_archive, "w:gz") as archive:
-            for path in sorted(bundle.rglob("*")):
-                if path.is_file():
-                    archive.add(
-                        path,
-                        arcname=f"{release_directory}/{path.relative_to(bundle).as_posix()}",
-                        recursive=False,
-                    )
+        if release_target(target).archive_suffix == ".zip":
+            with zipfile.ZipFile(temporary_archive, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for path in sorted(bundle.rglob("*")):
+                    if path.is_file():
+                        archive.write(path, f"{release_directory}/{path.relative_to(bundle).as_posix()}")
+        else:
+            with tarfile.open(temporary_archive, "w:gz") as archive:
+                for path in sorted(bundle.rglob("*")):
+                    if path.is_file():
+                        archive.add(
+                            path,
+                            arcname=f"{release_directory}/{path.relative_to(bundle).as_posix()}",
+                            recursive=False,
+                        )
         verify_release_archive(Path(temporary_archive), bundle, prefix=release_directory)
         os.replace(temporary_archive, destination)
     finally:
@@ -106,7 +114,7 @@ def build(root, output, uv, *, target=None, runtime_archive=None, wheelhouse=Non
         raise ValueError("离线构建需要 --wheelhouse（包含构建依赖及所有目标的运行依赖）")
     check_configuration(root)
     sources = source_files(root)
-    bootstrap = bootstrap_files(root)
+    bootstrap_files(root)  # Validate every installer input before building.
     export_locks(root, uv, check=True, **({"offline": True} if offline else {}))
     node = root / "dependencies/node"
     declared = json.loads((node / "package.json").read_text())["dependencies"]
@@ -130,7 +138,6 @@ def build(root, output, uv, *, target=None, runtime_archive=None, wheelhouse=Non
         copy_files(root, stage, sources)
         bundle = work / "bundle"
         bundle.mkdir()
-        copy_files(root, bundle, bootstrap)
         environment = work / "build-env"
         subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
         python = str(environment_python(environment))
@@ -181,6 +188,7 @@ def build(root, output, uv, *, target=None, runtime_archive=None, wheelhouse=Non
                     wheelhouse=wheelhouse, offline=offline)
             platform_bundle = work / f'bundle-{selected}'
             shutil.copytree(bundle, platform_bundle)
+            copy_files(root, platform_bundle, bootstrap_files(root, target=selected))
             shutil.copytree(kit, platform_bundle, dirs_exist_ok=True)
             results.append(write_release(platform_bundle, output, version, selected, wheel.name))
         return results

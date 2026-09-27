@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from host_support.platforms import PlatformInfo, release_target  # noqa: E402
+from cli.paths import extract_files  # noqa: E402
 
 
 def runtime_records(root=ROOT):
@@ -33,6 +34,31 @@ def host_target():
 
 def platform_tags(target):
     return release_target(target).wheel_platforms()
+
+
+def windows_requirements(source, destination, version):
+    """pip --platform selects wheels, but does not change marker evaluation."""
+    from packaging.markers import default_environment
+    from packaging.requirements import Requirement
+
+    environment = default_environment()
+    environment.update(os_name='nt', sys_platform='win32', platform_system='Windows',
+                       platform_machine='AMD64', python_full_version=version,
+                       python_version='.'.join(version.split('.')[:2]),
+                       implementation_name='cpython', implementation_version=version)
+    result = []
+    for line in source.read_text().replace('\\\n', ' ').splitlines():
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        requirement, separator, hashes = line.partition('--hash=')
+        parsed = Requirement(requirement.strip())
+        if parsed.marker is not None and not parsed.marker.evaluate(environment):
+            continue
+        parsed.marker = None
+        if not separator:
+            raise ValueError('Windows requirements must remain hash-locked')
+        result.append(str(parsed) + ' --hash=' + hashes)
+    destination.write_text('\n'.join(result) + '\n')
 
 
 def prepare(root, output, target, *, with_dev=False, archive=None, wheelhouse=None, offline=False):
@@ -61,16 +87,24 @@ def prepare(root, output, target, *, with_dev=False, archive=None, wheelhouse=No
             actual = hashlib.file_digest(f, 'sha256').hexdigest()
         if actual != record['sha256']:
             raise ValueError('Python SHA256 mismatch')
+        if target == 'windows-x86_64':
+            # PowerShell can start this directly: no host Python, tar or network
+            # is required to bootstrap an extracted Windows ZIP release.
+            extract_files(packed, runtime)
+            if not (runtime / release_target(target).runtime_python).is_file():
+                raise ValueError('Windows Python archive is missing python/python.exe')
+            packed.unlink()
         shutil.copy2(root / 'runtime/python.lock', runtime / 'python.lock')
         (runtime / 'target').write_text(target + '\n')
         dependencies = stage / 'wheelhouse'
         dependencies.mkdir()
-        locks = ['requirements-lsp.lock']
+        locks = ['requirements-core.lock' if target == 'windows-x86_64' else 'requirements-lsp.lock']
         if with_dev:
             locks += ['requirements-build.lock', 'requirements-dev.lock']
         command = [sys.executable, '-m', 'pip', 'download', '--disable-pip-version-check',
                    '--require-hashes', '--only-binary=:all:', '--implementation', 'cp',
-                   '--python-version', record['version'], '--abi', 'cp313',
+                   '--python-version', record['version'],
+                   '--abi', 'cp' + ''.join(record['version'].split('.')[:2]),
                    '--dest', str(dependencies)]
         for tag in platform_tags(target):
             command += ['--platform', tag]
@@ -81,8 +115,17 @@ def prepare(root, output, target, *, with_dev=False, archive=None, wheelhouse=No
         if wheelhouse:
             command += ['--find-links', str(Path(wheelhouse).resolve(strict=True))]
         for name in locks:
-            command += ['-r', str(root / name)]
+            requirements = root / name
+            if target == 'windows-x86_64':
+                requirements = stage / name
+                windows_requirements(root / name, requirements, record['version'])
+            command += ['-r', str(requirements)]
+        if target == 'windows-x86_64':
+            # Every applicable transitive dependency is already explicitly locked.
+            command += ['--no-deps']
         subprocess.run(command, check=True)
+        for name in locks:
+            (stage / name).unlink(missing_ok=True)
         (stage / 'bundle.json').write_text(json.dumps({
             'target': target, 'python': record['version'], 'development': with_dev,
             'requirements': {name: hashlib.sha256((root / name).read_bytes()).hexdigest()

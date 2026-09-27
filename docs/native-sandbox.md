@@ -115,7 +115,7 @@ repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all
 - 工具环境不继承 API Key、代理设置、SSH Agent socket 或 Python 启动变量。HOME、缓存及临时目录指向本次调用的私有目录。
 - 开始会话时复制受信任的工具实现，worker 通过隔离的 Python 启动方式加载副本；修改 Agent 自身项目不会改变当前会话的工具实现。
 
-启动自检实际验证目录外文件读写被拒绝、网络被拒绝、子进程继承限制、工作目录写入和硬链接限制。自检失败直接报错，不自动切换为 local 或无限制执行。Linux 使用上述独立后端，Windows 原生进程暂不支持；Windows 用户应在具备 namespace 能力的 WSL2 环境运行。
+启动自检实际验证目录外文件读写被拒绝、网络被拒绝、子进程继承限制、工作目录写入和硬链接限制。自检失败直接报错，不自动切换为 local 或无限制执行。Linux 使用上述独立后端；Windows ZIP 提供 local / Docker 适配，不提供 native。需要本文的原生隔离能力时，Windows 用户应在具备 namespace 能力的 WSL2 中使用 Linux 包。
 
 ### 文件访问范围
 

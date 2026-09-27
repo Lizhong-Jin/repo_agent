@@ -4,11 +4,11 @@
 
 ## 快速开始
 
-需要 macOS / Linux；安装器默认准备独立 Python，无需预装。首次默认 native 模式，支持 macOS（Seatbelt）和 Linux（Bubblewrap + seccomp），不需要 Docker。Linux 需预先安装 bubblewrap 和 libseccomp，并允许非特权 user namespace；常规源码安装首次联网；平台完整包和预先准备的开发材料支持离线安装。
+安装器默认准备独立 Python，无需预装。macOS / Linux 首次默认 native 模式，使用 Seatbelt 或 Bubblewrap + seccomp，不需要 Docker；Linux 需预先安装 bubblewrap 和 libseccomp，并允许非特权 user namespace。Windows x86_64 已提供 ZIP 安装、local 文件/Git 模式和 Docker 适配，首次默认 local；尚无 Windows 原生沙箱，实机验证要求见[平台适配边界](docs/platform-adaptation.md)。
 
-普通用户选择对应系统和架构的平台完整包，解压后运行 `./install-release.sh`；运行环境保存在用户数据目录，安装后可删除下载目录。构建默认覆盖全部支持的平台，产物位于 `dist/<版本>/<平台>/`。详见[安装说明](docs/installation.md#独立发行版安装)和[构建与分发](docs/distribution.md)。
+普通用户选择对应系统和架构的平台完整包：macOS/Linux 解压 `.tar.gz` 后运行 `./install-release.sh`；Windows 解压 ZIP 后按[Windows 安装说明](docs/installation.md#windows-x86_64-zip-安装)运行 `install_release.ps1`。运行环境保存在用户数据目录，安装后可删除下载目录。构建默认覆盖五个平台目标，产物位于 `dist/<版本>/<平台>/`，详见[构建与分发](docs/distribution.md)。
 
-开发者在源码目录安装：
+macOS/Linux（含 WSL2）开发者在源码目录安装，首次通常联网准备依赖；离线方式见[安装说明](docs/installation.md#离线安装)：
 
 ```bash
 ./install.sh
@@ -27,7 +27,7 @@ repo-agent
 
 首次启动缺少模型或 API Key 时，终端会引导配置。也可以先运行 `repo-agent config model`。不需要为每个项目复制启动文件或初始化配置；默认使用当前目录，`--root` 可指定其他项目。
 
-**首次默认使用 macOS / Linux 原生沙箱（native），直接修改当前项目文件，支持命令、Python 和语言服务器。安装时显式选择其他模式后，启动会沿用该安装模式。** 仅需文件/Git 工具时可显式选择 local；需要 Docker 工作副本时先构建镜像，再显式选择 Docker：
+**macOS / Linux 首次安装默认 native，Windows 首次安装默认 local；启动沿用已记录的安装模式。** native 直接修改当前项目并支持隔离命令、Python 和语言服务器；local 不执行通用命令。需要 Docker 工作副本时先准备镜像，再显式选择 Docker。Windows 还需 Git for Windows 和 Docker Desktop 的 Linux 容器模式：
 
 ```bash
 repo-agent --sandbox native                      # macOS / Linux 原生沙箱
@@ -46,7 +46,7 @@ Docker 会话可使用 `/diff` 查看副本变更、`/apply` 回写原项目；l
 | 模型接入 | 9 个厂商预设，支持 Chat Completions、OpenAI Responses、Anthropic Messages、Gemini generateContent；[供应商列表](docs/llm.md#接入模型) |
 | 对话界面 | 流式回复、可滚动历史、思考内容显示、模型切换、累计用量与上下文占比 |
 | 会话管理 | 按项目保存，默认恢复最后一次会话；支持命名、改名、列表和日志跟随 |
-| 上下文管理 | `/compact` 手动/自动压缩、独立思考策略与有限精简、原始消息归档及只读历史回查；[使用说明](docs/context-compaction.md) |
+| 上下文管理 | `/compact` 手动/自动压缩、独立思考策略、有限精简与格式修复、失败诊断、原始消息归档及只读历史回查；[使用说明](docs/context-compaction.md) |
 | 文件与检索 | 文件读写、局部编辑、多文件严格补丁、目录操作、文件查找、内容搜索、Git 状态与差异 |
 | 隔离执行 | macOS / Linux 原生沙箱直接运行本机工具；Docker 使用工作副本，支持回写、冲突检查与备份恢复 |
 | 代码语义 | Python、JS/TS、Go、C/C++、CUDA 文件的符号、定义、引用、诊断、悬浮信息和工作区符号查询；具体能力取决于语言服务器 |

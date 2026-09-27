@@ -155,9 +155,9 @@ def test_bad_summary_keeps_original_but_counts_usage_and_archives(conversation):
     with pytest.raises(ValueError, match="摘要结构|summary structure"):
         conv.compact()
     assert conv.history == old and conv.compaction_state is None
-    assert conv.status.totals == {"input_tokens": 100, "output_tokens": 20}
+    assert conv.status.totals == {"input_tokens": 200, "output_tokens": 40}
     assert conv.archive.search("ORIGINAL_MARKER")["matches"]
-    assert conv.store.data["status"]["calls"] == 1
+    assert conv.store.data["status"]["calls"] == 2
 
 
 def test_save_failure_keeps_working_history_and_archive(conversation, monkeypatch):
@@ -667,7 +667,11 @@ def test_bounded_refinement_adopts_best_safe_result(
     for request in conv.runtime.llm.requests[1:]:
         payload = json.loads(request.messages[-1].content)
         assert payload["refining"]
-        conv.archive.validate_refs([item["ref"] for item in payload["records"]])
+        assert [item["ref"] for item in payload["records"]] == [
+            f"R{i}" for i in range(1, len(payload["records"]) + 1)
+        ]
+    conv.archive.validate_refs([ref for items in summary.values()
+                                for item in items for ref in item["refs"]])
 
 
 @pytest.mark.parametrize("size", [18000, 5850])

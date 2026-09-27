@@ -1,9 +1,13 @@
 """Locate installation state and shipped resources without consulting the task directory."""
 
 import json
+import os
+import shutil
+import stat
 import sys
 import tarfile
 import tempfile
+import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -43,6 +47,8 @@ def resource_path(name):
 def extract_files(archive, destination):
     """Accept only ordinary relative files/directories, never tar links or devices."""
     destination = Path(destination).resolve()
+    if zipfile.is_zipfile(archive):
+        return _extract_zip(archive, destination)
     with tarfile.open(archive, "r:gz") as bundle:
         members = bundle.getmembers()
         seen = set()
@@ -74,6 +80,41 @@ def extract_files(archive, destination):
                 target.chmod(0o755 if item.mode & 0o111 else 0o644)
 
 
+def _extract_zip(archive, destination):
+    from host_support.windows_files import validate_snapshot_names
+
+    with zipfile.ZipFile(archive) as bundle:
+        members = bundle.infolist()
+        if sum(item.file_size for item in members) > 512 * 1024 * 1024:
+            raise ValueError("发行包解压大小超过限制")
+        seen = set()
+        files = set()
+        for item in members:
+            name = item.filename.rstrip("/") if item.is_dir() else item.filename
+            path = archive_path(name)
+            mode = item.external_attr >> 16
+            if (str(path) != name or name in seen or item.flag_bits & 1
+                    or stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR)
+                    or not (destination / path).resolve().is_relative_to(destination)):
+                raise ValueError("ZIP 含不安全或重复的路径")
+            seen.add(name)
+            if not item.is_dir():
+                files.add(name)
+        validate_snapshot_names(seen)
+        if any(str(parent) in files for name in seen for parent in archive_path(name).parents):
+            raise ValueError("ZIP 文件与目录路径冲突")
+        for item in members:
+            path = destination / item.filename
+            if item.is_dir():
+                path.mkdir(parents=True, exist_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with bundle.open(item) as source, path.open("xb") as output:
+                    shutil.copyfileobj(source, output)
+                if os.name != "nt":
+                    path.chmod(0o755 if (item.external_attr >> 16) & 0o111 else 0o644)
+
+
 @contextmanager
 def docker_build_context():
     source = code_root()
@@ -96,7 +137,7 @@ def docker_build_context():
 def version_info():
     root = installation_root()
     try:
-        record = json.loads((root / ".repo-agent-install.json").read_text())
+        record = json.loads((root / ".repo-agent-install.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         record = {}
     if not isinstance(record, dict):

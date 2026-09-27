@@ -18,27 +18,98 @@ _active_access = ContextVar("native_file_access", default=None)
 
 
 def require_safe_descriptors():
-    if os.name != "posix":
+    if os.name not in {"posix", "nt"}:
         raise OSError(errno.ENOTSUP, "Safe descriptor access is not implemented on this platform")
 
 
 def open_directory(path, *, dir_fd=None):
     require_safe_descriptors()
+    if os.name == "nt":
+        from . import windows_files
+        return windows_files.open_directory(path, dir_fd=dir_fd)
     return os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
 
 
 def walk_descriptors(root):
     require_safe_descriptors()
-    yield from os.fwalk(root, follow_symlinks=False)
+    if os.name == "posix":
+        yield from os.fwalk(root, follow_symlinks=False)
+        return
+
+    def walk(path, fd):
+        dirs, names = [], []
+        for name in list_directory(fd):
+            info = stat_at(name, dir_fd=fd)
+            (dirs if stat.S_ISDIR(info.st_mode) else names).append(name)
+        yield str(path), dirs, names, fd
+        for name in dirs:
+            child = open_directory(name, dir_fd=fd)
+            try:
+                yield from walk(Path(path) / name, child)
+            finally:
+                os.close(child)
+
+    fd = open_directory(root)
+    try:
+        yield from walk(root, fd)
+    finally:
+        os.close(fd)
 
 
 def open_file(path, flags=os.O_RDONLY, mode=0o600, *, dir_fd=None, nonblocking=True):
     """Pin an entry without following its final link; callers validate type/size."""
     require_safe_descriptors()
+    if os.name == "nt":
+        from . import windows_files
+        return windows_files.open_file(path, flags, mode, dir_fd=dir_fd, nonblocking=nonblocking)
     flags |= os.O_NOFOLLOW
     if nonblocking:
         flags |= os.O_NONBLOCK
     return os.open(path, flags, mode, dir_fd=dir_fd)
+
+
+def stat_at(path, *, dir_fd):
+    if os.name == "nt":
+        from . import windows_files
+        return windows_files.stat_at(path, dir_fd=dir_fd)
+    return os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
+
+
+def list_directory(fd):
+    if os.name == "nt":
+        from . import windows_files
+        return windows_files.list_directory(fd)
+    return os.listdir(fd)
+
+
+def mkdir_at(path, mode=0o777, *, dir_fd):
+    if os.name == "nt":
+        from . import windows_files
+        return windows_files.mkdir_at(path, mode, dir_fd=dir_fd)
+    return os.mkdir(path, mode=mode, dir_fd=dir_fd)
+
+
+def unlink_at(path, *, dir_fd):
+    if os.name == "nt":
+        from . import windows_files
+        return windows_files.unlink_at(path, dir_fd=dir_fd)
+    return os.unlink(path, dir_fd=dir_fd)
+
+
+def rename_at(source, destination, *, src_dir_fd, dst_dir_fd, replace=False):
+    if os.name == "nt":
+        from . import windows_files
+        return windows_files.rename_at(source, destination, src_dir_fd=src_dir_fd,
+                                       dst_dir_fd=dst_dir_fd, replace=replace)
+    operation = os.replace if replace else os.rename
+    return operation(source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+
+
+def set_file_mode(fd, mode):
+    if os.name == "nt":
+        from . import windows_files
+        return windows_files.set_mode(fd, mode)
+    return os.fchmod(fd, mode)
 
 
 def current_file_access():
@@ -46,7 +117,7 @@ def current_file_access():
 
 
 class FileAccess:
-    """Pin directories and refuse link traversal at actual I/O time (POSIX only)."""
+    """Pin directories and refuse link traversal at actual I/O time."""
 
     def __init__(self, root, *, policy, protected_paths=(), read_only_paths=()):
         self.root = Path(root)
@@ -119,14 +190,14 @@ class FileAccess:
         # Callers resolve allowed aliases before content access. Metadata can
         # describe a link, but must never follow a replacement link here.
         with self.parent(path) as (parent, name):
-            info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            info = stat_at(name, dir_fd=parent)
         if follow_symlinks and stat.S_ISLNK(info.st_mode):
             raise PermissionError("Path changed to a symbolic link")
         return info
 
     def iterdir(self, path):
         with self.directory(path) as fd:
-            names = os.listdir(fd)
+            names = list_directory(fd)
         for name in names:
             yield Path(path) / name
 
@@ -202,7 +273,7 @@ class FileAccess:
                 final = index == len(parts) - 1
                 if parents or final:
                     try:
-                        os.mkdir(part, dir_fd=fd)
+                        mkdir_at(part, dir_fd=fd)
                     except FileExistsError:
                         if final and not exist_ok:
                             raise
@@ -214,20 +285,20 @@ class FileAccess:
 
     def unlink(self, path):
         with self.parent(path, write=True) as (fd, name):
-            self.regular(os.stat(name, dir_fd=fd, follow_symlinks=False))
-            os.unlink(name, dir_fd=fd)
+            self.regular(stat_at(name, dir_fd=fd))
+            unlink_at(name, dir_fd=fd)
 
     def rename(self, source, destination):
         with self.parent(source, write=True) as (src, src_name):
             with self.parent(destination, write=True) as (dst, dst_name):
-                self.regular(os.stat(src_name, dir_fd=src, follow_symlinks=False))
+                self.regular(stat_at(src_name, dir_fd=src))
                 try:
-                    os.stat(dst_name, dir_fd=dst, follow_symlinks=False)
+                    stat_at(dst_name, dir_fd=dst)
                 except FileNotFoundError:
                     pass
                 else:
                     raise FileExistsError(str(destination))
-                os.rename(src_name, dst_name, src_dir_fd=src, dst_dir_fd=dst)
+                rename_at(src_name, dst_name, src_dir_fd=src, dst_dir_fd=dst)
 
     def stage(self, target, content, mode):
         with self.parent(target, write=True) as (parent, _):
@@ -242,7 +313,7 @@ class FileAccess:
                 stream.write(content)
                 stream.flush()
                 if mode is not None:
-                    os.fchmod(stream.fileno(), mode & 0o777)
+                    set_file_mode(stream.fileno(), mode & 0o777)
                 os.fsync(stream.fileno())
             return staged
         except BaseException:
@@ -262,18 +333,18 @@ class _StagedFile:
             if (before.st_dev, before.st_ino) != (current.st_dev, current.st_ino):
                 raise PermissionError("Destination directory changed during write")
             try:
-                info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                info = stat_at(name, dir_fd=fd)
             except FileNotFoundError:
                 pass
             else:
                 self.access.regular(info)
-            os.replace(self.name, name, src_dir_fd=self.parent, dst_dir_fd=fd)
+            rename_at(self.name, name, src_dir_fd=self.parent, dst_dir_fd=fd, replace=True)
 
     def unlink(self, *, missing_ok=False):
         if self.parent is None:
             return
         try:
-            os.unlink(self.name, dir_fd=self.parent)
+            unlink_at(self.name, dir_fd=self.parent)
         except FileNotFoundError:
             if not missing_ok:
                 raise

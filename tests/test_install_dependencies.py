@@ -51,6 +51,7 @@ def test_shared_native_path_includes_managed_servers(tmp_path):
 
 
 def test_missing_toolchains_are_filled_by_brew(monkeypatch, tmp_path):
+    monkeypatch.setattr(dependencies, "sys", SimpleNamespace(platform="darwin"))
     commands = []
     available = ["python"]
     monkeypatch.setattr(dependencies, "brew_executable", lambda: "/opt/homebrew/bin/brew")
@@ -78,6 +79,7 @@ def test_python_only_needs_no_homebrew(monkeypatch, tmp_path):
 
 
 def test_check_reports_missing_brew_without_installing(monkeypatch, tmp_path):
+    monkeypatch.setattr(dependencies, "sys", SimpleNamespace(platform="darwin"))
     monkeypatch.setattr(dependencies, "brew_executable", lambda: None)
     monkeypatch.setattr(dependencies, "toolchain_report", lambda *a: ([], ["python"]))
     monkeypatch.setattr(

@@ -1,0 +1,52 @@
+name: Host file services
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: '1'
+
+jobs:
+  contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        python: ['3.11', '3.13']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -q tests/test_host_file_contracts.py tests/test_windows_files.py tests/test_windows_release.py
+
+  windows-release:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -e ".[dev]" uv packaging
+      - run: python scripts/build_release.py --target windows-x86_64 --output dist
+      - name: Test installation, reinstall, recovery and uninstall
+        shell: powershell
+        run: |
+          $env:REPO_AGENT_WINDOWS_ARCHIVE = (Get-ChildItem dist -Recurse -Filter '*windows-x86_64.zip').FullName
+          python -m pytest -q tests/test_windows_release.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64-release
+          path: |
+            dist/*/windows-x86_64/*.zip
+            dist/*/windows-x86_64/*.sha256
