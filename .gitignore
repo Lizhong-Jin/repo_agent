@@ -34,6 +34,10 @@ logs/
 *.trace.log
 *.trace.jsonl
 
+# Interrupted workspace writes and native sandbox probes (may appear in subdirectories)
+.repo-agent-write-*
+.native-probe-*
+
 # Local configuration and backups; keep the public template
 .env
 .env.*

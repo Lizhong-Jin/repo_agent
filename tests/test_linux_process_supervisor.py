@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from tools._internal import process_supervisor as module
-from tools._internal.process_supervisor import ProcessIdentity, ProcessSupervisor, ProcessTable
+from host_support import supervision as module
+from host_support.supervision import ProcessIdentity, ProcessSupervisor, ProcessTable
 
 
 @pytest.fixture

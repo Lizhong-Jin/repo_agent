@@ -12,6 +12,8 @@ from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
+from host_support.filesystem import open_directory, open_file, walk_descriptors
+
 from tools._internal.base import ExecutionKind, ToolResult, execution_kind_of
 from tools._internal.file_policy import runtime_protected_paths
 from tools.factory import create_default_tools
@@ -31,7 +33,7 @@ def files(
     """Never follow links; refuse special files and hard links on export."""
     result = {}
     total = 0
-    for directory, dirs, names, directory_fd in os.fwalk(root, follow_symlinks=False):
+    for directory, dirs, names, directory_fd in walk_descriptors(root):
         for name in list(dirs) + names:
             path = Path(directory) / name
             relative = path.relative_to(root).as_posix()
@@ -52,9 +54,7 @@ def files(
                 continue
             if stat.S_ISDIR(info.st_mode):
                 continue
-            descriptor = os.open(
-                name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd
-            )
+            descriptor = open_file(name, dir_fd=directory_fd)
             with os.fdopen(descriptor, "rb") as source:
                 current = os.fstat(source.fileno())
                 if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
@@ -343,20 +343,18 @@ class SandboxSession:
             parts = Path(name).parts
             if Path(name).is_absolute() or ".." in parts or self.policy.excluded(name):
                 raise ValueError(f"非法回写路径：{name}")
-            fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            fd = open_directory(self.root)
             try:
                 for part in parts[:-1]:
                     try:
                         os.mkdir(part, dir_fd=fd)
                     except FileExistsError:
                         pass
-                    child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                    child = open_directory(part, dir_fd=fd)
                     os.close(fd)
                     fd = child
                 try:
-                    source = os.open(
-                        parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd
-                    )
+                    source = open_file(parts[-1], dir_fd=fd)
                 except FileNotFoundError:
                     actual = None
                 else:

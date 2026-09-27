@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from host_support.filesystem import open_file
+
 from llm import Message, ToolDefinition
 from llm.token_estimation import estimate_context_tokens
 from tools import ExecutionKind, ToolResult
@@ -29,8 +31,8 @@ class HistoryArchive:
     @contextmanager
     def connect(self, *, write=False):
         # Reads never create an archive and SQLite enforces query-only access.
-        flags = os.O_NOFOLLOW | (os.O_RDWR | os.O_CREAT if write else os.O_RDONLY)
-        fd = os.open(self.path, flags, 0o600)
+        flags = os.O_RDWR | os.O_CREAT if write else os.O_RDONLY
+        fd = open_file(self.path, flags, nonblocking=False)
         try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:

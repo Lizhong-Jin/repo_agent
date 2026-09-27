@@ -8,6 +8,28 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
+if not __package__:
+    from _bootstrap import enable_host_support
+
+    enable_host_support()
+
+from host_support.languages import (
+    GO_MINIMUM,
+    GOPLS,
+    LANGUAGE_BY_NAME,
+    LANGUAGE_SPECS,
+    LANGUAGES,
+    tool_search_path,
+)
+from host_support.languages import (
+    TYPESCRIPT as TYPESCRIPT,
+)
+from host_support.languages import (
+    TYPESCRIPT_SERVER as TYPESCRIPT_SERVER,
+)
+from host_support.paths import installed_python, scripts_dir
+from host_support.probes import native_availability
+
 if __package__:
     from .install_network import run_download
     from .paths import resource_path
@@ -16,10 +38,6 @@ else:
     from paths import resource_path
 
 
-LANGUAGES = ("python", "typescript", "go", "cpp")
-TYPESCRIPT = "5.9.3"
-TYPESCRIPT_SERVER = "4.3.4"
-GOPLS = "v0.20.0"
 HINTS = {
     "python": "运行 repo-agent toolchains install python",
     "typescript": "运行 repo-agent toolchains install typescript",
@@ -29,40 +47,7 @@ HINTS = {
 
 
 def tool_path(python):
-    prefix = Path(python).absolute().parent.parent
-    if sys.platform == "linux":
-        return os.pathsep.join(
-            map(
-                str,
-                [
-                    prefix / "bin",
-                    prefix / "lsp/node_modules/.bin",
-                    "/usr/local/go/bin",
-                    "/usr/local/bin",
-                    "/usr/bin",
-                    "/bin",
-                    "/usr/sbin",
-                    "/sbin",
-                ],
-            )
-        )
-    return os.pathsep.join(
-        map(
-            str,
-            [
-                prefix / "bin",
-                prefix / "lsp/node_modules/.bin",
-                "/opt/homebrew/opt/llvm/bin",
-                "/usr/local/opt/llvm/bin",
-                "/opt/homebrew/bin",
-                "/usr/local/bin",
-                "/usr/bin",
-                "/bin",
-                "/usr/sbin",
-                "/sbin",
-            ],
-        )
-    )
+    return tool_search_path(python, platform=sys.platform)
 
 
 def selected_languages(value):
@@ -95,12 +80,7 @@ def toolchain_report(python, languages="all"):
     rows, available = [], []
     path = tool_path(python)
     for language in selected_languages(languages):
-        requirements = {
-            "python": (),
-            "typescript": ("node", "npm"),
-            "go": ("go",),
-            "cpp": ("clangd",),
-        }[language]
+        requirements = LANGUAGE_BY_NAME[language].requirements
         missing = []
         for name in requirements:
             executable = shutil.which(name, path=path)
@@ -122,7 +102,7 @@ def toolchain_report(python, languages="all"):
                     import re
 
                     match = re.search(r"go(\d+)\.(\d+)", result.stdout)
-                    if not match or tuple(map(int, match.groups())) < (1, 25):
+                    if not match or tuple(map(int, match.groups())) < GO_MINIMUM:
                         missing.append("go")
             except (OSError, subprocess.SubprocessError):
                 missing.append(name)
@@ -191,7 +171,7 @@ def prepare_toolchains(python, languages="all"):
         brew = brew_executable()
         if not brew:
             raise ValueError("缺少工具链且未找到 Homebrew；请先安装 Homebrew：https://brew.sh")
-        formulas = {"typescript": "node", "go": "go", "cpp": "llvm"}
+        formulas = {item.name: item.formula for item in LANGUAGE_SPECS if item.formula}
         packages = [formulas[name] for name in missing]
         print("通过 Homebrew 补齐共享工具链：" + ", ".join(packages), flush=True)
         run_download([brew, "install", *packages], label="安装共享工具链")
@@ -212,50 +192,12 @@ def prepare_toolchains(python, languages="all"):
 
 
 def native_preflight():
-    if sys.platform == "linux":
-        import ctypes
-
-        if not shutil.which("bwrap", path="/usr/bin:/bin:/usr/local/bin"):
-            return [
-                (
-                    "ERROR",
-                    "原生沙箱",
-                    "缺少 bubblewrap；Debian/Ubuntu 安装 bubblewrap libseccomp2，Fedora 安装 bubblewrap libseccomp",
-                )
-            ]
-        try:
-            ctypes.CDLL("libseccomp.so.2")
-        except OSError:
-            return [("ERROR", "原生沙箱", "缺少 libseccomp.so.2；请安装 libseccomp2 或 libseccomp")]
-        return [
-            (
-                "OK",
-                "原生沙箱",
-                "bubblewrap/libseccomp 存在；安装后将验证 user namespace、实际隔离和语言服务",
-            )
-        ]
-    if sys.platform != "darwin":
-        return [
-            (
-                "ERROR",
-                "原生沙箱",
-                "native 仅支持 macOS/Linux；Windows 请通过 WSL2 运行",
-            )
-        ]
-    if not Path("/usr/bin/sandbox-exec").is_file():
-        return [
-            (
-                "ERROR",
-                "原生沙箱",
-                "缺少 /usr/bin/sandbox-exec；请选择 --mode docker 或 --mode local",
-            )
-        ]
-    return [("OK", "原生沙箱", "sandbox-exec 存在；安装后将验证实际隔离和语言服务")]
+    return [result.row() for result in native_availability(sys.platform)]
 
 
 def install_language_servers(root, languages):
     """Managed servers live inside .venv: rollback/uninstall already own this directory."""
-    python = str(root / ".venv/bin/python")
+    python = str(installed_python(root))
     env = {**os.environ, "PATH": tool_path(python)}
     if "typescript" in languages:
         prefix = root / ".venv/lsp"
@@ -277,7 +219,7 @@ def install_language_servers(root, languages):
             label="安装 JS/TS 语言服务",
         )
     if "go" in languages:
-        env.update(GOBIN=str(root / ".venv/bin"), GOTOOLCHAIN="local", GOWORK="off")
+        env.update(GOBIN=str(scripts_dir(root / ".venv")), GOTOOLCHAIN="local", GOWORK="off")
         run_download(
             [
                 shutil.which("go", path=env["PATH"]),
@@ -299,7 +241,7 @@ def service_report(root, *, mode, languages=None, image="repo-agent-sandbox:v1")
     container = None
     if mode == "native":
         command = [
-            str(root / ".venv/bin/python"),
+            str(installed_python(root)),
             "-I",
             "-m",
             "sandbox.lsp_smoke",
@@ -307,7 +249,7 @@ def service_report(root, *, mode, languages=None, image="repo-agent-sandbox:v1")
             "native",
             *arguments,
         ]
-        env = {**os.environ, "PATH": tool_path(root / ".venv/bin/python")}
+        env = {**os.environ, "PATH": tool_path(installed_python(root))}
     else:
         container = "repo-agent-lsp-check-" + uuid4().hex
         command = [
@@ -382,14 +324,8 @@ def service_report(root, *, mode, languages=None, image="repo-agent-sandbox:v1")
 
 
 LANGUAGE_LABELS = {
-    "python": ("Python", "Python 3.11+", "pylsp"),
-    "typescript": (
-        "JavaScript / TypeScript / JSX / TSX",
-        "Node.js + npm",
-        "typescript-language-server + TypeScript",
-    ),
-    "go": ("Go", "Go 1.25+", "gopls"),
-    "cpp": ("C / C++ / CUDA 文件", "LLVM / clangd", "clangd"),
+    item.name: (item.label, item.toolchain_label, item.service_label)
+    for item in LANGUAGE_SPECS
 }
 
 
@@ -413,7 +349,7 @@ def command_works(command, env):
 
 def language_status(root):
     """Offline presence/startup checks in exactly the native runtime's search path."""
-    python = root / ".venv/bin/python"
+    python = installed_python(root)
     env = {
         **os.environ,
         "PATH": tool_path(python),

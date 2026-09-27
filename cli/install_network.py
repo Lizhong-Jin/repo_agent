@@ -2,11 +2,17 @@
 
 import os
 import re
-import signal
 import subprocess
 import tempfile
 import time
-from pathlib import Path
+
+if not __package__:
+    from _bootstrap import enable_host_support
+
+    enable_host_support()
+
+from host_support.paths import app_directory
+from host_support.processes import kill_process_group, start_process
 
 
 class DownloadError(ValueError):
@@ -170,20 +176,19 @@ def classify_failure(output, *, timed_out=False):
 
 def execute(command, *, check, capture_output, text, timeout, env, cwd):
     """Stop the entire installer process group before retry or environment rollback."""
-    with subprocess.Popen(
+    with start_process(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=text,
         env=env,
         cwd=cwd,
-        start_new_session=True,
     ) as process:
         try:
             stdout, stderr = process.communicate(timeout=timeout)
         except BaseException:
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                kill_process_group(process)
             except ProcessLookupError:
                 pass
             process.communicate()
@@ -197,10 +202,7 @@ def execute(command, *, check, capture_output, text, timeout, env, cwd):
 def run_download(command, *, label, env=None, cwd=None):
     retries, timeout = network_options()
     environment = download_environment(env)
-    directory = (
-        Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
-        / "repo-agent/install-logs"
-    )
+    directory = app_directory("state") / "install-logs"
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, name = tempfile.mkstemp(prefix="download-", suffix=".log", dir=directory)
     with os.fdopen(fd, "w", encoding="utf-8") as log:

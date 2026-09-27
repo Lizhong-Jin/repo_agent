@@ -7,15 +7,15 @@ from types import SimpleNamespace
 import pytest
 
 from tools._internal.process_runner import ProcessRunner
-from tools._internal.process_supervisor import ProcessIdentity, ProcessSupervisor
+from host_support.supervision import ProcessIdentity, ProcessSupervisor
 
 
 def fake_supervisor(monkeypatch, snapshot):
     # These shared ownership tests exercise the portable PID signalling path.
     # Linux pidfd behaviour is covered separately with controlled descriptors.
-    monkeypatch.setattr("tools._internal.process_supervisor.sys", SimpleNamespace(platform="darwin"))
+    monkeypatch.setattr("host_support.supervision.sys", SimpleNamespace(platform="darwin"))
     table = SimpleNamespace(read=lambda pid: snapshot.get(pid), snapshot=lambda: dict(snapshot))
-    monkeypatch.setattr("tools._internal.process_supervisor.ProcessTable", lambda: table)
+    monkeypatch.setattr("host_support.supervision.ProcessTable", lambda: table)
     process = SimpleNamespace(pid=101, poll=lambda: 0, wait=lambda **kw: 0)
     return ProcessSupervisor(process)
 
@@ -36,7 +36,7 @@ def test_tracks_observed_child_after_session_escape_and_reparenting(monkeypatch)
         signalled.append(pid)
         del snapshot[pid]
 
-    monkeypatch.setattr("tools._internal.process_supervisor.os.kill", kill)
+    monkeypatch.setattr("host_support.supervision.os.kill", kill)
     assert supervisor.cleanup() is None
     assert signalled == [102]
     assert 999 in snapshot
@@ -48,7 +48,7 @@ def test_pid_reuse_is_checked_again_immediately_before_signal(monkeypatch):
     supervisor = fake_supervisor(monkeypatch, snapshot)
     snapshot[101] = ProcessIdentity(101, 1, 101, (9, 0))
     monkeypatch.setattr(
-        "tools._internal.process_supervisor.os.kill", lambda *a: pytest.fail("Reused PID signalled")
+        "host_support.supervision.os.kill", lambda *a: pytest.fail("Reused PID signalled")
     )
     supervisor._signal(old, signal.SIGTERM)
     assert supervisor.refresh(force=True) == []
@@ -58,7 +58,7 @@ def test_zombie_group_does_not_require_signal_permission(monkeypatch):
     snapshot = {101: ProcessIdentity(101, 1, 101, (1, 0), zombie=True)}
     supervisor = fake_supervisor(monkeypatch, snapshot)
     monkeypatch.setattr(
-        "tools._internal.process_supervisor.os.kill", lambda *a: pytest.fail("Zombie signalled")
+        "host_support.supervision.os.kill", lambda *a: pytest.fail("Zombie signalled")
     )
     assert supervisor.cleanup() is None
     assert supervisor.diagnostics[-1]["outcome"] == "confirmed"
@@ -71,7 +71,7 @@ def test_permission_failure_includes_stage_signal_and_errno(monkeypatch):
     def denied(*args):
         raise PermissionError(errno.EPERM, "simulated restriction")
 
-    monkeypatch.setattr("tools._internal.process_supervisor.os.kill", denied)
+    monkeypatch.setattr("host_support.supervision.os.kill", denied)
     assert supervisor.cleanup() is not None
     assert any(
         d["errno"] == errno.EPERM and d["signal"] == signal.SIGKILL for d in supervisor.diagnostics

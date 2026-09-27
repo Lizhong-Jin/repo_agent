@@ -1,7 +1,13 @@
 """Pinned online/offline wheel installation; no implicit source builds."""
 
-import platform
 from pathlib import Path
+
+if not __package__:
+    from _bootstrap import enable_host_support
+
+    enable_host_support()
+
+from host_support.platforms import PlatformInfo
 
 
 def source_flags(wheelhouse=None, *, offline=False):
@@ -33,7 +39,5 @@ def verify_bundle_platform(root):
     marker = Path(root) / 'runtime/target'
     if not marker.exists():
         return
-    system = {'Darwin': 'macos', 'Linux': 'linux'}.get(platform.system())
-    arch = {'arm64': 'arm64', 'aarch64': 'arm64', 'x86_64': 'x86_64'}.get(platform.machine())
-    if marker.read_text().strip() != f'{system}-{arch}':
+    if marker.read_text().strip() != PlatformInfo.detect().target:
         raise ValueError('安装包平台不匹配')

@@ -1,6 +1,5 @@
 """Standard-library maintenance checks and cooperative process locks (macOS/Linux)."""
 
-import fcntl
 import importlib
 import json
 import os
@@ -13,14 +12,24 @@ import sys
 from contextlib import contextmanager
 from pathlib import Path
 
+if not __package__:
+    from _bootstrap import enable_host_support
+
+    enable_host_support()
+
+from host_support.diagnostics import print_diagnostics
+from host_support.filesystem import open_file
+from host_support.locking import lock_descriptor
+from host_support.paths import environment_python, scripts_dir
+
 
 @contextmanager
 def file_lock(path):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    fd = open_file(path, os.O_RDWR | os.O_CREAT, nonblocking=False)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_descriptor(fd, blocking=False)
         except BlockingIOError:
             raise ValueError(f"另一个安装、卸载或配置操作正在进行，请稍后重试：{path}") from None
         yield
@@ -164,7 +173,7 @@ def environment_report(root, *, docker=True):
         try:
             result = probe(
                 [
-                    str(venv / "bin/python"),
+                    str(environment_python(venv)),
                     "-c",
                     "import json,sys;print(json.dumps([sys.prefix,list(sys.version_info[:2])]))",
                 ]
@@ -172,12 +181,12 @@ def environment_report(root, *, docker=True):
             prefix, version = json.loads(result.stdout) if result.returncode == 0 else (None, None)
             valid = prefix == str(venv) and version == list(sys.version_info[:2])
             for name in ("repo-agent", "repo-agent-build-sandbox"):
-                entry = venv / "bin" / name
+                entry = scripts_dir(venv) / name
                 # pip can use a shell trampoline for paths containing spaces.
                 valid = (
                     valid
                     and entry.is_file()
-                    and str(venv / "bin/python") in entry.read_text()[:1024]
+                    and str(environment_python(venv)) in entry.read_text()[:1024]
                 )
             add(
                 "OK" if valid else "WARN",
@@ -219,6 +228,4 @@ def environment_report(root, *, docker=True):
 
 
 def print_report(rows):
-    for level, label, detail in rows:
-        print(f"[{level}] {label}：{detail}")
-    return not any(level == "ERROR" for level, _, _ in rows)
+    return print_diagnostics(rows)

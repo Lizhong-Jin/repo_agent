@@ -6,6 +6,8 @@ agent/**
 cli/**
 !dependencies
 dependencies/**
+!host_support
+host_support/**
 !llm
 llm/**
 !sandbox
@@ -47,6 +49,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !build_manifest.py
 !build_support.py
 !cli/__init__.py
+!cli/_bootstrap.py
 !cli/config.py
 !cli/config_command.py
 !cli/config_storage.py
@@ -79,6 +82,21 @@ agent/skills/builtin/gpu-kernel-development/**
 !cli/uninstall.py
 !dependencies/node/package-lock.json
 !dependencies/node/package.json
+!host_support/__init__.py
+!host_support/archives.py
+!host_support/diagnostics.py
+!host_support/execution.py
+!host_support/filesystem.py
+!host_support/integration.py
+!host_support/languages.py
+!host_support/locking.py
+!host_support/paths.py
+!host_support/platforms.py
+!host_support/probes.py
+!host_support/processes.py
+!host_support/python_environments.py
+!host_support/storage.py
+!host_support/supervision.py
 !llm/__init__.py
 !llm/adapters/__init__.py
 !llm/adapters/anthropic.py
@@ -107,6 +125,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !requirements-lsp.lock
 !sandbox/Dockerfile
 !sandbox/__init__.py
+!sandbox/backend.py
 !sandbox/build.py
 !sandbox/compute_probe.py
 !sandbox/docker.py
@@ -118,7 +137,9 @@ agent/skills/builtin/gpu-kernel-development/**
 !sandbox/linux_policy.py
 !sandbox/linux_preflight.py
 !sandbox/lsp_smoke.py
+!sandbox/macos_native.py
 !sandbox/native.py
+!sandbox/native_common.py
 !sandbox/native_gpu_probe.py
 !sandbox/operator_smoke.py
 !sandbox/policy.py

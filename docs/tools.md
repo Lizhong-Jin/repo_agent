@@ -141,6 +141,7 @@ runtime = AgentRuntime(client, tools=registered_tools, tool_groups=groups)
 
 - `tools/_internal/_workspace.py`：轻量 `WorkspaceTool` 基类，统一工作区根目录及正整数限制校验；内置写操作共用的进程内锁也在此处。
 - `tools/_internal/file_policy.py`：`PathPolicy` 保存一次操作使用的保护路径配置，允许复用当前条目的元数据检查硬链接；保留 `is_credential_path()` 供其他工具调用。相对环境配置路径仍按当前工作目录解析。
+- `host_support/filesystem.py`：提供不跟随链接的描述符操作和 native 轻量文件服务；`tools/_internal/file_access.py` 为它注入工作区 `PathPolicy` 与只读目录约束。底层机制不替代工具层授权。
 - `tools/_internal/_file_io.py`：`FileSnapshot` 和 `read_snapshot()` 负责有上限的字节读取，按需计算 SHA-256；严格读取模式检查打开前后文件身份。`StagedWrites` 统一临时文件、同步落盘、权限复制、替换及失败/取消清理。文本编码与换行规则由工具决定。
 - `tools/_internal/_file_entries.py`：共享目录条目检查和内容搜索遍历。普通文件的一次元数据查询同时用于类型、大小和硬链接保护；符号链接单独查询目标，保留链接自身的类型信息。
 
@@ -164,7 +165,7 @@ runtime = AgentRuntime(client, tools=registered_tools, tool_groups=groups)
 
 ### 复用进程执行逻辑
 
-`tools/_internal/process_runner.py` 的 `ProcessRunner` 负责进程启动、环境变量校验、有限输出缓存、超时和清理；`tools/execute.py` 的 `RunCommandTool` 负责模型参数、工作目录策略和 `ToolResult` 封装。其他工具可直接复用 runner：
+`host_support/processes.py` 的 `ProcessRunner` 负责进程启动、环境变量校验、有限输出缓存、超时和清理；`tools/_internal/process_runner.py` 保留兼容导出，`tools/execute.py` 的 `RunCommandTool` 负责模型参数、工作目录策略和 `ToolResult` 封装。其他受信任工具可直接复用 runner：
 
 ```python
 import sys
@@ -188,7 +189,7 @@ else:
 
 `ProcessRunner` 是受信任应用代码使用的底层接口，不直接暴露给模型，不应用文件保护策略。`RunCommandTool` / `RunPythonTool` 默认返回 `SANDBOX_REQUIRED`；只有受信任的隔离执行调用方显式启用 `execution_allowed=True`。该参数不在模型工具 schema 中，CLI 不提供本地绕过开关。`create_default_tools()` 默认不注册命令工具；Docker worker 显式启用；native 主进程复用命令工具的参数和路径校验，但将 runner 替换为始终通过平台沙箱（Seatbelt 或 Bubblewrap/seccomp）启动的执行器。这个开关本身不创建隔离环境。
 
-超时覆盖运行和输出收集，不因持续输出自动续期，清理通常额外耗时最多约 3 秒；`cleanup_error` 表示清理未完成或无法确认，Windows 后代进程清理仍为尽力处理。native 使用 `supervise_tree=True`，由 `tools/_internal/process_supervisor.py` 在外层跟踪 PID 与内核启动时间、观察后代并执行 TERM → KILL → 核验，避免依赖沙箱 worker 内部的进程组探测。该选项支持 macOS/Linux，属于采样式监督，不能保证发现采样间迅速脱离的所有后代；不向模型暴露任意 PID 终止接口。native 仅在清理无法确认时暂停执行与写入，正常超时清理成功后继续工作，详见 [原生沙箱](native-sandbox.md#超时结果与恢复)。
+超时覆盖运行和输出收集，不因持续输出自动续期，清理通常额外耗时最多约 3 秒；`cleanup_error` 表示清理未完成或无法确认，Windows 后代进程清理仍为尽力处理。native 使用 `supervise_tree=True`，由 `host_support/supervision.py` 在外层跟踪 PID 与内核启动时间、观察后代并执行 TERM → KILL → 核验，避免依赖沙箱 worker 内部的进程组探测。该选项支持 macOS/Linux，属于采样式监督，不能保证发现采样间迅速脱离的所有后代；不向模型暴露任意 PID 终止接口。native 仅在清理无法确认时暂停执行与写入，正常超时清理成功后继续工作，详见 [原生沙箱](native-sandbox.md#超时结果与恢复)。
 
 Linux 的进程身份来自 `/proc/<pid>/stat`，按字节解析以容忍任意进程名。支持时使用 pidfd 绑定目标，在打开句柄后再次核验身份，再发送 TERM/KILL，最终关闭句柄；缺少 Python API 或内核返回 `ENOSYS` 时回退到 PID 信号。权限拒绝不会触发这个回退。诊断记录 `via=pidfd/pid`，以及 `pidfd_open` / `pidfd_send_signal` 等失败阶段。可移植单元测试位于 `tests/test_linux_process_supervisor.py`，真实 namespace、超时和取消测试位于 `tests/test_linux_native.py`；Linux native 已有独立 PID namespace 作为进程生命周期边界，pidfd 本身不提供资源配额或沙箱隔离。
 

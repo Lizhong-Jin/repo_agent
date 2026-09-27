@@ -2,10 +2,15 @@
 
 import os
 import re
-import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
 from uuid import uuid4
+
+if not __package__:
+    from _bootstrap import enable_host_support
+
+    enable_host_support()
+
+from host_support.storage import atomic_write
 
 if __package__:
     from .maintenance import file_lock
@@ -61,15 +66,11 @@ def replace_config(path, content, before):
     if read_bytes(path) != before:
         raise ValueError("用户配置已被其他操作修改，请重试")
     backup = create_backup(path, before) if before is not None and before != content else None
-    fd, temporary = tempfile.mkstemp(prefix=".model-settings-", dir=path.parent)
-    try:
-        with os.fdopen(fd, "wb") as output:
-            output.write(content)
+    def unchanged():
         if read_bytes(path) != before:
             raise ValueError("用户配置已被其他操作修改，请重试")
-        os.replace(temporary, path)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
+
+    atomic_write(path, content, prefix=".model-settings-", before_replace=unchanged)
     return backup
 
 

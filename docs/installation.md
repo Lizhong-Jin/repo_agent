@@ -10,11 +10,11 @@
 
 维护者的构建产物位于 `dist/<版本>/<平台>/`，每个压缩包旁有对应的 `.sha256` 文件；构建器默认生成全部平台，只提供完整包。构建命令与目录结构见[构建与分发](distribution.md)。
 
-发行压缩包自带与文件名对应的顶层文件夹，直接解压即可，无需预先创建空目录。以下以 0.1.1 的 macOS ARM64 完整包为例，其他平台替换后缀：
+发行压缩包自带与文件名对应的顶层文件夹，直接解压即可，无需预先创建空目录。以下以 0.1.2 的 macOS ARM64 完整包为例，其他平台替换后缀：
 
 ```bash
-tar -xzf repo-agent-0.1.1-macos-arm64.tar.gz
-cd repo-agent-0.1.1-macos-arm64
+tar -xzf repo-agent-0.1.2-macos-arm64.tar.gz
+cd repo-agent-0.1.2-macos-arm64
 ./install-release.sh
 ./install-release.sh --check
 ```
@@ -24,9 +24,9 @@ cd repo-agent-0.1.1-macos-arm64
 已有源码时，也可以直接安装构建好的压缩包；更新后的安装器兼容新格式和旧版平铺格式：
 
 ```bash
-./install-release.sh --archive dist/0.1.1/macos-arm64/repo-agent-0.1.1-macos-arm64.tar.gz
+./install-release.sh --archive dist/0.1.2/macos-arm64/repo-agent-0.1.2-macos-arm64.tar.gz
 # 使用从可信发布来源取得的 SHA256 做整个压缩包校验
-./install-release.sh --archive dist/0.1.1/macos-arm64/repo-agent-0.1.1-macos-arm64.tar.gz --sha256 <SHA256>
+./install-release.sh --archive dist/0.1.2/macos-arm64/repo-agent-0.1.2-macos-arm64.tar.gz --sha256 <SHA256>
 ```
 
 默认位置：
@@ -53,6 +53,17 @@ repo-agent uninstall
 ```
 
 卸载沿用归属检查：删除当前版本的 `.venv` 和仍指向它的命令，默认保留用户配置、系统工具链、发行版文件及恢复入口，不回退至旧安装。需要重装时可在该版本目录运行 `./install-release.sh`。如需删除已卸载版本的剩余文件，请先确认不再需要该目录内的恢复入口或修改后再手动删除。
+
+当前构建器生成的 schema 2 发行包仅保留一个顶层入口 `install-release.sh`，不包含源码专用的 `install.sh` 和 `uninstall.sh`。较早的 schema 1 包保留原有脚本，不能仅凭版本号判断是否支持新参数；旧包卸载可使用 `repo-agent uninstall` 或包内 `uninstall.sh`。对于新包，命令无法启动时，可在已安装版本目录执行：
+
+```bash
+./install-release.sh --recover             # 恢复中断的安装
+./install-release.sh --uninstall --dry-run # 预览卸载
+./install-release.sh --uninstall           # 默认保留用户配置
+# 可按需追加 --purge 或 --remove-image
+```
+
+也可以从解压目录运行备用卸载入口；默认定位用户数据目录下的同一版本，安装时指定过 `--data-dir` 的，需传入相同路径。在已安装版本目录运行则自动识别自定义数据目录。备用卸载不下载 Python，不要求 `venv`/`ensurepip`；虚拟环境损坏时会尝试已有受管 Python 和系统 Python 3.11+，也可通过 `AGENT_PYTHON` 显式指定。
 
 相同发行包允许重复安装。同版本号但内容不同的发行包会被拒绝，维护者应递增版本号；如确需替换，先卸载并手动移走原版本目录。安装其他版本时，发现旧命令会先询问确认；核心安装失败保留旧命令和旧环境。失败后保留已校验的版本文件以便重试，继续使用原安装命令即可；仅恢复事务可以在该版本目录执行 `./install-release.sh --recover`。当前没有自动检查更新、下载更新或回滚命令。
 
@@ -128,7 +139,14 @@ repo-agent-build-sandbox
 
 ## 卸载
 
-在需要卸载的安装目录执行：
+命令仍可用时，两种安装都可以执行 `repo-agent uninstall`。命令损坏时，先选择对应的备用入口：
+
+| 安装类型 | 预览卸载 | 执行卸载 |
+| --- | --- | --- |
+| 源码安装 | `./uninstall.sh --dry-run` | `./uninstall.sh` |
+| 当前 schema 2 发行包 | `./install-release.sh --uninstall --dry-run` | `./install-release.sh --uninstall` |
+
+在对应安装目录执行。下列清理选项以源码入口为例；发行包使用 `./install-release.sh --uninstall` 后追加同样的选项：
 
 ```bash
 ./uninstall.sh --dry-run
@@ -164,7 +182,7 @@ repo-agent-build-sandbox
 
 镜像标签对应的镜像已被重新构建、切换了 Docker 主机、仍有容器使用，或另一个登记安装可能使用时，会保留并说明原因。Docker 无法访问时，已授权的本地文件清理仍会完成，保留镜像记录并返回非零退出码；Docker 恢复后可重试。
 
-没有记录的旧版安装不会按文件名猜测删除。升级后重新运行 `./install.sh --skip-sandbox`，即可记录当前安装的资源；旧版未标记的 Shell 配置块仍保留，未记录的旧镜像也不会自动删除。如果命令已经指向另一份副本，安装器会在开始安装前列出旧、新位置，确认后切换；也可通过 `--bin-dir` 选择独立命令目录。
+没有记录的旧版安装不会按文件名猜测删除。源码安装升级后重新运行 `./install.sh --skip-sandbox`；发行版在其安装目录重新运行 `./install-release.sh --skip-sandbox`，即可记录当前安装的资源；旧版未标记的 Shell 配置块仍保留，未记录的旧镜像也不会自动删除。如果命令已经指向另一份副本，安装器会在开始安装前列出旧、新位置，确认后切换；也可通过 `--bin-dir` 选择独立命令目录。
 
 ## 安装记录与多个副本
 
@@ -179,6 +197,8 @@ repo-agent-build-sandbox
 卸载不是 Git 回滚，也不会清空系统临时目录、其他项目目录或历史开发缓存。它不会恢复安装前已有虚拟环境中的旧依赖版本；重新安装时会创建新的运行环境。
 
 ## 安装检查、失败恢复与诊断
+
+以下脚本命令用于源码安装。发行版在已安装版本目录使用 `./install-release.sh --check` 或 `./install-release.sh --recover`；`repo-agent doctor` 适用于两种安装。
 
 ```bash
 ./install.sh --check                  # 按安装模式检查环境，不做修改、不询问补齐

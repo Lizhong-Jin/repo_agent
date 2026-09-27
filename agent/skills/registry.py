@@ -8,6 +8,8 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from host_support.filesystem import open_directory, open_file
+
 import yaml
 
 from tools._internal.file_policy import is_credential_path
@@ -87,7 +89,7 @@ def _parse(raw: bytes, folder: str, source: str, base_path: str | None) -> Skill
 
 
 def _read_at(directory_fd: int, filename: str) -> bytes:
-    fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+    fd = open_file(filename, dir_fd=directory_fd)
     with os.fdopen(fd, "rb") as stream:
         info = os.fstat(stream.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
@@ -119,11 +121,10 @@ class SkillRegistry:
             raise SkillError(f"技能目录超过 {MAX_CATALOG_CHARS} 字符，请缩短描述或减少技能数量")
 
     def _discover(self, root: Path, folder: str, *, builtin: bool):
-        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        root_fd = os.open(root, directory_flags)
+        root_fd = open_directory(root)
         try:
             try:
-                directory_fd = os.open(folder, directory_flags, dir_fd=root_fd)
+                directory_fd = open_directory(folder, dir_fd=root_fd)
             except FileNotFoundError:
                 return
             try:
@@ -136,7 +137,7 @@ class SkillRegistry:
                     source = f"{folder}/{name}/SKILL.md"
                     if not builtin and is_credential_path(root / source, root / source):
                         raise SkillError(f"{source}: 技能路径受保护")
-                    skill_fd = os.open(name, directory_flags, dir_fd=directory_fd)
+                    skill_fd = open_directory(name, dir_fd=directory_fd)
                     try:
                         try:
                             raw = _read_at(skill_fd, "SKILL.md")

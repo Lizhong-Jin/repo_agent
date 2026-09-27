@@ -293,7 +293,11 @@ def test_actual_offline_pip_failure_rolls_back(tmp_path, existing):
         root, bins = tmp_path / "fresh", tmp_path / "bin"
         root.mkdir()
     shutil.copytree(SOURCE / "cli", root / "cli", ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(SOURCE / "host_support", root / "host_support",
+                    ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copy2(SOURCE / "install.sh", root / "install.sh")
+    (root / "scripts").mkdir(exist_ok=True)
+    shutil.copy2(SOURCE / "scripts/installer-entry.sh", root / "scripts/installer-entry.sh")
     (root / ".env.example").write_text("LLM_MODEL=\n")
     (root / "pyproject.toml").write_text(
         '[build-system]\nrequires=["repo-agent-test-unavailable-build-package==0.0.0"]\nbuild-backend="unavailable"\n'
@@ -480,7 +484,10 @@ def test_recovery_retry_after_docker_failure_keeps_restored_venv(tmp_path, monke
 def test_doctor_and_install_check_are_read_only(tmp_path):
     copy = tmp_path / "source"
     shutil.copytree(SOURCE / "cli", copy / "cli", ignore=shutil.ignore_patterns("__pycache__"))
-    for name in ("install.sh", "pyproject.toml", ".env.example"):
+    shutil.copytree(SOURCE / "host_support", copy / "host_support",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    for name in ("install.sh", "scripts/installer-entry.sh", "pyproject.toml", ".env.example"):
+        (copy / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(SOURCE / name, copy / name)
     (copy / ".venv/bin").mkdir(parents=True)
     (copy / ".venv/pyvenv.cfg").write_text("home = /old/python\n")

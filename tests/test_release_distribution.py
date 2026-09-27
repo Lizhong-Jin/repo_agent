@@ -260,8 +260,9 @@ def test_real_release_survives_download_removal(tmp_path, monkeypatch, install_f
     info = json.loads(run([command, "version"]))
     root = tmp_path / "data/repo-agent/versions" / manifest["version"]
     assert info["installation"] == str(root) and info["kind"] == "release"
-    base = run([root / ".venv/bin/python", "-I", "-c",
-                "import sys; print(sys.base_prefix)"]).strip()
+    base = run(
+        [root / ".venv/bin/python", "-I", "-c", "import sys; print(sys.base_prefix)"]
+    ).strip()
     assert Path(base).is_relative_to(tmp_path / "runtimes")
     origin = json.loads(
         run(
@@ -312,7 +313,14 @@ def test_real_release_survives_download_removal(tmp_path, monkeypatch, install_f
     before = config.read_bytes()
     run([command, "uninstall", "--dry-run"])
     assert command.exists()
-    run([command, "uninstall"])
+    if install_from_archive:
+        python = root / ".venv/bin/python"
+        python.unlink()
+        python.write_text("#!/bin/bash\nexit 1\n")
+        python.chmod(0o755)
+        run(["/bin/bash", root / "install-release.sh", "--uninstall"])
+    else:
+        run([command, "uninstall"])
     assert not command.is_symlink() and not (root / ".venv").exists()
     assert config.read_bytes() == before
 
@@ -445,3 +453,46 @@ def test_wrapped_archive_still_checks_hidden_template(tmp_path, monkeypatch):
     )
     with pytest.raises(SystemExit):
         release_install.main(["--archive", str(archive), "--check"])
+
+
+@pytest.mark.parametrize("missing", [None, "scripts/installer-entry.sh", "cli/uninstall.py"])
+def test_schema_two_requires_shared_entry_and_accepts_no_source_scripts(tmp_path, missing):
+    root = bundle_at(tmp_path / "release")
+    manifest = read_release(root)
+    manifest["schema"] = 2
+    for name in ("install.sh", "uninstall.sh"):
+        del manifest["files"][name]
+        (root / name).unlink()
+    for name in (
+        "scripts/installer-entry.sh",
+        "scripts/bootstrap-python.sh",
+        "runtime/python.lock",
+        "cli/uninstall.py",
+    ):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(name)
+        manifest["files"][name] = digest(path)
+    if missing:
+        del manifest["files"][missing]
+        (root / missing).unlink()
+    (root / "release.json").write_text(json.dumps(manifest))
+    if missing:
+        with pytest.raises(ValueError, match="必要文件"):
+            read_release(root)
+    else:
+        assert read_release(root)["schema"] == 2
+
+
+def test_uninstall_missing_version_does_not_create_installation(tmp_path, monkeypatch):
+    bundle = bundle_at(tmp_path / "download")
+    monkeypatch.setattr(release_install, "__file__", str(bundle / "cli/release_install.py"))
+    target = tmp_path / "absent"
+    release_install.main(["--uninstall", "--data-dir", str(target)])
+    assert not target.exists()
+
+
+def test_uninstall_flags_require_uninstall(tmp_path, monkeypatch):
+    with pytest.raises(SystemExit) as error:
+        release_install.main(["--purge"])
+    assert error.value.code == 2

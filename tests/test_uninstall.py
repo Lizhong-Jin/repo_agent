@@ -243,7 +243,9 @@ def test_invalid_install_is_rejected_before_creating_environment(installations, 
     (root / "cli").mkdir(parents=True)
     for name in (
         "install.sh",
+        "scripts/installer-entry.sh",
         "uninstall.sh",
+        "cli/_bootstrap.py",
         "cli/installation.py",
         "cli/uninstall.py",
         "cli/setup.py",
@@ -256,7 +258,10 @@ def test_invalid_install_is_rejected_before_creating_environment(installations, 
         "cli/install_packages.py",
         "cli/toolchains.py",
     ):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(SOURCE / name, root / name)
+    shutil.copytree(SOURCE / "host_support", root / "host_support",
+                    ignore=shutil.ignore_patterns("__pycache__"))
     # Missing project metadata must fail preflight, before creating an environment.
     env = {
         **os.environ,
@@ -404,7 +409,9 @@ def test_shell_install_cancellation_precedes_all_writes(installations, tmp_path,
     (new / "cli").mkdir(parents=True)
     for name in (
         "install.sh",
+        "scripts/installer-entry.sh",
         "cli/setup.py",
+        "cli/_bootstrap.py",
         "cli/installation.py",
         "cli/maintenance.py",
         "cli/install_transaction.py",
@@ -415,7 +422,10 @@ def test_shell_install_cancellation_precedes_all_writes(installations, tmp_path,
         "cli/install_packages.py",
         "cli/toolchains.py",
     ):
+        (new / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(SOURCE / name, new / name)
+    shutil.copytree(SOURCE / "host_support", new / "host_support",
+                    ignore=shutil.ignore_patterns("__pycache__"))
     before = snapshot(tmp_path)
     result = subprocess.run(
         [str(new / "install.sh"), "--mode", "local", "--skip-sandbox"],
@@ -574,3 +584,65 @@ def test_uninstall_keeps_preferences_until_unshared_purge(installations):
     assert preferences.exists()
     assert uninstall(root, purge=True)
     assert not preferences.exists()
+
+
+@pytest.mark.parametrize("from_download", [False, True])
+def test_release_entry_uninstalls_with_broken_venv_and_stdlib_python(
+    installations, tmp_path, from_download
+):
+    import json
+    import shlex
+
+    import build_manifest
+    from cli.release_manifest import digest
+
+    (tmp_path / "data/versions").mkdir(parents=True)
+    root, data, bins = installations("data/versions/0.1.0")
+    names = build_manifest.bootstrap_files(SOURCE)
+    build_manifest.copy_files(SOURCE, root, names)
+    names = [path.relative_to(SOURCE).as_posix() for path in names]
+    wheel = "wheels/repo_agent-0.1.0-py3-none-any.whl"
+    (root / "wheels").mkdir()
+    (root / wheel).write_bytes(b"placeholder")
+    manifest = {
+        "schema": 2,
+        "name": "repo-agent",
+        "version": "0.1.0",
+        "wheel": wheel,
+        "files": {name: digest(root / name) for name in [*names, wheel]},
+    }
+    (root / "release.json").write_text(json.dumps(manifest))
+    entry = root
+    if from_download:
+        entry = tmp_path / "download"
+        build_manifest.copy_files(root, entry, [root / name for name in [*names, wheel, "release.json"]])
+    # Damaged release resources and venv must not block journal-based cleanup.
+    (root / ".env.example").unlink()
+    python = root / ".venv/bin/python"
+    python.write_text("#!/bin/bash\nexit 1\n")
+    python.chmod(0o755)
+    system_bin = tmp_path / "system-bin"
+    system_bin.mkdir()
+    fallback = system_bin / "python3"
+    fallback.write_text("#!/bin/bash\nexec " + shlex.quote(sys.executable) + ' -S "$@"\n')
+    fallback.chmod(0o755)
+    # Maintenance may inspect cached Python but must never download it.
+    (entry / "scripts/bootstrap-python.sh").write_text(
+        '#!/bin/bash\n[[ "$2" == --recover ]] || touch "$1/unexpected-download"\nexit 1\n'
+    )
+    env = {key: value for key, value in os.environ.items() if key != "AGENT_PYTHON"}
+    env["PATH"] = str(system_bin) + os.pathsep + env.get("PATH", "")
+    args = ["/bin/bash", str(entry / "install-release.sh"), "--uninstall"]
+    if from_download:
+        args += ["--data-dir", str(tmp_path / "data")]
+    before = snapshot(tmp_path)
+    preview = subprocess.run(args + ["--dry-run"], env=env, capture_output=True, text=True)
+    assert preview.returncode == 0, preview.stdout + preview.stderr
+    assert snapshot(tmp_path) == before
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (root / ".venv").exists()
+    assert not (bins / "repo-agent").is_symlink()
+    assert Path(data["config"]).exists()
+    assert (root / "install-release.sh").exists()
+    assert not (entry / "unexpected-download").exists()

@@ -338,7 +338,7 @@ def test_timeout_keeps_output_and_allows_later_calls(native_project):
 
 @REAL_NATIVE
 def test_native_timeout_cleans_child_that_changes_session(native_project):
-    from tools._internal.process_supervisor import ProcessTable
+    from host_support.supervision import ProcessTable
 
     root, backend = native_project
     child = "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready', flush=True); time.sleep(10)"

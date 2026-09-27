@@ -1,10 +1,9 @@
 """Select project Python without executing project-controlled code on the host."""
 
-import os
-import shutil
-import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+from host_support.python_environments import discover_python
 
 
 @dataclass(frozen=True)
@@ -16,39 +15,16 @@ class ProjectPython:
 
 def select_python(workspace, explicit=None, *, environment=None, agent_python=None,
                   trusted_paths=()):
-    env = os.environ if environment is None else environment
-    agent = Path(agent_python or sys.executable).absolute()
     workspace = Path(workspace).resolve()
-    selected, source = None, None
-    if explicit or env.get('AGENT_PROJECT_PYTHON'):
-        value = explicit or env['AGENT_PROJECT_PYTHON']
-        candidate = Path(value).expanduser()
-        if not candidate.is_absolute():
-            candidate = workspace / candidate
-        selected, source = candidate.absolute(), 'explicit'
-    else:
-        candidates = []
-        for key in ('VIRTUAL_ENV', 'CONDA_PREFIX'):
-            if env.get(key):
-                candidates.append((Path(env[key]).expanduser() / 'bin/python', key))
-        candidates.append((workspace / '.venv/bin/python', 'workspace .venv'))
-        for name in ('python', 'python3'):
-            found = shutil.which(name, path=env.get('PATH', ''))
-            if found:
-                candidates.append((Path(found), 'launch PATH'))
-        for path, origin in candidates:
-            path = path.absolute()
-            # Preserve the venv entry path: resolving its python symlink would
-            # silently switch to the base interpreter and lose project packages.
-            if path == agent or path.parent == agent.parent:
-                continue
-            if path.is_file() and os.access(path, os.X_OK):
-                selected, source = path, origin
-                break
-        if selected is None:
-            return ProjectPython(agent, 'agent fallback', ())
-    if not selected.is_file() or not os.access(selected, os.X_OK):
-        raise ValueError(f'项目 Python 不可执行：{selected}')
+    chosen = discover_python(workspace, explicit, environment=environment, agent_python=agent_python)
+    if chosen.source == 'agent fallback':
+        return ProjectPython(chosen.executable, chosen.source, ())
+    return ProjectPython(chosen.executable, chosen.source,
+                         authorized_read_paths(workspace, chosen.executable, trusted_paths))
+
+
+def authorized_read_paths(workspace, selected, trusted_paths=()):
+    """POSIX sandbox grants; discovery itself never authorizes host directories."""
     resolved = selected.resolve(strict=True)
     config = selected.parent.parent / 'pyvenv.cfg'
     roots = {resolved.parent.parent}
@@ -77,4 +53,4 @@ def select_python(workspace, explicit=None, *, environment=None, agent_python=No
         for path in roots
     ):
         raise ValueError('项目 Python 必须使用常规环境的 bin/python 路径')
-    return ProjectPython(selected, source, tuple(sorted(roots)))
+    return tuple(sorted(roots))

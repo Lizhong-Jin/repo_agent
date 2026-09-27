@@ -12,8 +12,8 @@
 .venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
 .venv/bin/python -m pip install --require-hashes -r requirements-build.lock
 .venv/bin/python -m pytest -q
-.venv/bin/ruff check agent cli llm tools sandbox scripts examples tests build_support.py build_manifest.py
-.venv/bin/ruff format --check agent cli llm tools sandbox scripts examples tests build_support.py build_manifest.py
+.venv/bin/ruff check agent cli llm tools sandbox host_support scripts examples tests build_support.py build_manifest.py
+.venv/bin/ruff format --check agent cli llm tools sandbox host_support scripts examples tests build_support.py build_manifest.py
 python3 build_manifest.py
 python3 scripts/lock_dependencies.py --check
 ```

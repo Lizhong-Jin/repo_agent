@@ -8,6 +8,13 @@ import subprocess
 from contextlib import ExitStack
 from pathlib import Path
 
+if not __package__:
+    from _bootstrap import enable_host_support
+
+    enable_host_support()
+
+from host_support.paths import installed_command, user_bin_dir
+
 if __package__:
     from .installation import (
         COMMANDS,
@@ -48,7 +55,7 @@ def other_installations(data: dict) -> tuple[list[dict], bool]:
             except (OSError, ValueError):
                 uncertain = True
     # Older installations have no registry. Public command links still reveal their use.
-    bins = {Path.home().resolve() / ".local/bin"}
+    bins = {user_bin_dir().resolve()}
     bins.update(Path(path) for path in data.get("bin_dirs", []))
     bins.update(Path(item["path"]).parent for item in data["commands"])
     for directory in bins:
@@ -56,7 +63,7 @@ def other_installations(data: dict) -> tuple[list[dict], bool]:
             command = directory / name
             if command.is_symlink():
                 target = Path(os.path.abspath(command.parent / os.readlink(command)))
-                if target != Path(data["root"]) / ".venv/bin" / name:
+                if target != installed_command(Path(data["root"]), name):
                     uncertain = True
             elif command.exists():
                 uncertain = True
@@ -69,7 +76,7 @@ def unchanged_parent(path: Path) -> bool:
 
 def unlink_owned_command(item: dict, root: Path, *, dry_run: bool) -> bool:
     path, target = Path(item["path"]), Path(item["target"])
-    if path.name not in COMMANDS or target != root / ".venv/bin" / path.name:
+    if path.name not in COMMANDS or target != installed_command(root, path.name):
         raise ValueError("安装记录的命令路径无效")
     if not path.exists() and not path.is_symlink():
         return True
@@ -118,7 +125,7 @@ def clean_shell(data: dict, others: list[dict], uncertain: bool, *, dry_run: boo
         path, bin_dir = Path(item["path"]), Path(item["bin_dir"])
         if not path.exists() and not path.is_symlink():
             continue
-        shared = bin_dir == Path.home().resolve() / ".local/bin" or uncertain
+        shared = bin_dir == user_bin_dir().resolve() or uncertain
         shared |= any(
             Path(command["path"]).parent == bin_dir
             for other in others
@@ -280,7 +287,8 @@ def uninstall(root: Path, *, dry_run=False, purge=False, remove_image=False):
             stack.enter_context(file_lock(registry_dir().parent / ".maintenance.lock"))
             stack.enter_context(file_lock(root / ".repo-agent-operation.lock"))
         if (root / TRANSACTION).exists():
-            raise ValueError("有未完成的安装恢复；请先运行 ./install.sh --recover")
+            entry = "install-release.sh" if (root / "release.json").is_file() else "install.sh"
+            raise ValueError(f"有未完成的安装恢复；请先运行 ./{entry} --recover")
         return _uninstall(root, dry_run=dry_run, purge=purge, remove_image=remove_image)
 
 

@@ -11,6 +11,13 @@ import tempfile
 from pathlib import Path
 from uuid import uuid4
 
+if not __package__:
+    from _bootstrap import enable_host_support
+
+    enable_host_support()
+
+from host_support.paths import installed_command
+
 if __package__:
     from .installation import (
         COMMANDS,
@@ -182,7 +189,8 @@ class InstallTransaction:
         try:
             self.cleanup()
         except OSError:
-            print("安装已完成；旧环境备份清理未完成，可稍后执行 ./install.sh --recover。")
+            entry = "install-release.sh" if (self.root / "release.json").is_file() else "install.sh"
+            print(f"安装已完成；旧环境备份清理未完成，可稍后执行 ./{entry} --recover。")
 
     def cleanup(self):
         tag = self.state["staging_image"]
@@ -222,7 +230,7 @@ class InstallTransaction:
             current = os.readlink(path) if path.is_symlink() else None
             if current == old and (current is not None or not path.exists()):
                 return
-            if current != str(self.root / ".venv/bin" / name):
+            if current != str(installed_command(self.root, name)):
                 raise ValueError(f"命令已被外部修改，未覆盖：{path}")
             if old is None:
                 path.unlink()
@@ -315,7 +323,8 @@ class InstallTransaction:
                 attempt(lambda path=path, value=value: restore_file(Path(path), value))
         if errors:
             raise ValueError(
-                "恢复未完成，保留恢复记录；重新运行 install.sh 重试：" + "; ".join(errors)
+                "恢复未完成，保留恢复记录；重新运行安装入口并加 --recover 重试："
+                + "; ".join(errors)
             )
         self.cleanup()
         print("已恢复安装前的环境、命令和 PATH；已有用户配置及新建配置模板均保留。")

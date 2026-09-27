@@ -22,7 +22,7 @@ repo-agent-build-sandbox = "sandbox.build:main"
 include-package-data = false
 
 [tool.setuptools.packages.find]
-include = ["agent", "agent.*", "cli", "cli.*", "llm", "llm.*", "sandbox", "sandbox.*", "tools", "tools.*"]
+include = ["agent", "agent.*", "cli", "cli.*", "llm", "llm.*", "sandbox", "sandbox.*", "tools", "tools.*", "host_support", "host_support.*"]
 exclude = ["*..git", "*..git.*", "*..venv", "*..venv.*", "*.venv", "*.venv.*", "*.node_modules", "*.node_modules.*", "*.__pycache__", "*.__pycache__.*", "*.build", "*.build.*", "*.dist", "*.dist.*", "*.logs", "*.logs.*", "*..pytest_cache", "*..pytest_cache.*", "*..ruff_cache", "*..ruff_cache.*"]
 
 [tool.setuptools.package-data]

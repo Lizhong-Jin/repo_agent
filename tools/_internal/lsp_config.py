@@ -11,6 +11,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from host_support.languages import lsp_definitions
+
 
 @dataclass(frozen=True)
 class LspLanguageConfig:
@@ -97,30 +99,4 @@ class LspRegistry:
 
 def default_lsp_registry() -> LspRegistry:
     """Build defaults without locating executables or starting subprocesses."""
-    typescript = ("typescript-language-server", "--stdio")
-    clangd = ("clangd", "--background-index=false", "--clang-tidy=false", "-j=1")
-    return LspRegistry(
-        (
-            LspLanguageConfig(
-                "pylsp", "python", (".py", ".pyi"), (sys.executable, "-I", "-m", "pylsp")
-            ),
-            LspLanguageConfig(
-                "typescript-language-server", "javascript", (".js", ".mjs", ".cjs"), typescript
-            ),
-            LspLanguageConfig(
-                "typescript-language-server", "javascriptreact", (".jsx",), typescript
-            ),
-            LspLanguageConfig(
-                "typescript-language-server", "typescript", (".ts", ".mts", ".cts"), typescript
-            ),
-            LspLanguageConfig(
-                "typescript-language-server", "typescriptreact", (".tsx",), typescript
-            ),
-            LspLanguageConfig("gopls", "go", (".go",), ("gopls", "serve"), 30),
-            LspLanguageConfig("clangd", "c", (".c", ".h"), clangd),
-            LspLanguageConfig("clangd", "cuda", (".cu", ".cuh"), clangd, 30),
-            LspLanguageConfig(
-                "clangd", "cpp", (".cpp", ".cc", ".cxx", ".C", ".hpp", ".hh", ".hxx"), clangd
-            ),
-        )
-    )
+    return LspRegistry(tuple(LspLanguageConfig(*row) for row in lsp_definitions(sys.executable)))

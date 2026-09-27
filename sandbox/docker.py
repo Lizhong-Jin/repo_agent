@@ -6,16 +6,12 @@ import subprocess
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Protocol
 
 from tools._internal.base import ToolResult
 from tools._internal.process_runner import ProcessRunner
 
+from .backend import SandboxBackend as SandboxBackend
 from .policy import SandboxPolicy
-
-
-class SandboxBackend(Protocol):
-    def execute(self, workspace: Path, name: str, arguments: dict) -> ToolResult: ...
 
 
 class DockerBackend:

@@ -6,18 +6,12 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
+from host_support.storage import atomic_write
+
 
 def atomic_json(path: Path, value: dict) -> None:
-    temporary = path.with_name(path.name + "." + uuid4().hex)
-    try:
-        with temporary.open("x", encoding="utf-8") as output:
-            os.chmod(temporary, 0o600)
-            json.dump(value, output, ensure_ascii=False)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    atomic_write(path, json.dumps(value, ensure_ascii=False).encode("utf-8"),
+                 prefix=path.name + ".", sync=True, mode=0o600)
 
 
 class WritebackGuard:

@@ -3,7 +3,6 @@
 import argparse
 import hashlib
 import json
-import platform
 import shutil
 import subprocess
 import sys
@@ -12,6 +11,8 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from host_support.platforms import PlatformInfo, release_target  # noqa: E402
 
 
 def runtime_records(root=ROOT):
@@ -27,23 +28,11 @@ def runtime_records(root=ROOT):
 
 
 def host_target():
-    systems = {'Darwin': 'macos', 'Linux': 'linux'}
-    arches = {'arm64': 'arm64', 'aarch64': 'arm64', 'x86_64': 'x86_64', 'AMD64': 'x86_64'}
-    try:
-        return systems[platform.system()] + '-' + arches[platform.machine()]
-    except KeyError as error:
-        raise ValueError('Supported targets: macOS/Linux, arm64/x86_64') from error
+    return release_target(PlatformInfo.detect().target).name
 
 
 def platform_tags(target):
-    system, arch = target.split('-')
-    if system == 'linux':
-        arch = 'aarch64' if arch == 'arm64' else arch
-        # Promise glibc >= 2.28; include older compatible wheels as fallback.
-        return [f'manylinux_2_{minor}_{arch}' for minor in range(28, 16, -1)] + [
-            f'manylinux2014_{arch}']
-    from packaging.tags import mac_platforms
-    return list(mac_platforms((11, 0) if arch == 'arm64' else (10, 15), arch))
+    return release_target(target).wheel_platforms()
 
 
 def prepare(root, output, target, *, with_dev=False, archive=None, wheelhouse=None, offline=False):

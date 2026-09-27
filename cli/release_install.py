@@ -8,13 +8,21 @@ import tempfile
 from contextlib import ExitStack
 from pathlib import Path
 
+if not __package__:
+    from _bootstrap import enable_host_support
+
+    enable_host_support()
+
+from host_support.paths import app_directory, user_bin_dir
+
 if __package__:
-    from . import setup
+    from . import setup, uninstall
     from .maintenance import file_lock
     from .paths import extract_files
     from .release_manifest import digest, read_release
 else:
     import setup
+    import uninstall
     from maintenance import file_lock
     from paths import extract_files
     from release_manifest import digest, read_release
@@ -61,7 +69,7 @@ def main(argv=None):
     parser.add_argument("--archive", type=Path, help="发行 tar.gz 文件；已解压发行包可省略")
     parser.add_argument("--sha256", help="可选：校验整个发行 tar.gz 的 SHA256")
     parser.add_argument("--data-dir", type=Path, help="用户数据目录，默认 XDG_DATA_HOME/repo-agent")
-    parser.add_argument("--bin-dir", type=Path, default=Path.home() / ".local/bin")
+    parser.add_argument("--bin-dir", type=Path, default=user_bin_dir())
     parser.add_argument("--mode", choices=["native", "docker", "local"])
     parser.add_argument("--languages", default="all")
     choice = parser.add_mutually_exclusive_group()
@@ -74,7 +82,13 @@ def main(argv=None):
     operation = parser.add_mutually_exclusive_group()
     operation.add_argument("--check", action="store_true")
     operation.add_argument("--recover", action="store_true")
+    operation.add_argument("--uninstall", action="store_true", help="卸载该发行版本，默认保留配置")
+    parser.add_argument("--dry-run", action="store_true", help="预览卸载")
+    parser.add_argument("--purge", action="store_true", help="卸载时清理未共享的配置")
+    parser.add_argument("--remove-image", action="store_true", help="卸载时清理归属明确的镜像")
     args = parser.parse_args(argv)
+    if not args.uninstall and (args.dry_run or args.purge or args.remove_image):
+        parser.error("--dry-run、--purge、--remove-image 需要 --uninstall")
     try:
         with ExitStack() as stack:
             bundle = Path(__file__).resolve().parents[1]
@@ -89,7 +103,7 @@ def main(argv=None):
                 bundle = locate_release_root(bundle)
             elif args.sha256:
                 raise ValueError("--sha256 需要同时提供 --archive")
-            release = read_release(bundle)
+            release = read_release(bundle, verify=not args.uninstall)
             data_dir = args.data_dir
             if data_dir is None:
                 # Recovery/reinstall from an installed version keeps a custom data directory.
@@ -100,16 +114,25 @@ def main(argv=None):
                 ):
                     data_dir = bundle.parent.parent
                 else:
-                    data_dir = (
-                        Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
-                        / "repo-agent"
-                    )
+                    data_dir = app_directory("data")
             base = data_dir.expanduser().resolve()
             if (base / "versions").is_symlink():
                 raise ValueError("versions 目录不能是链接")
             target = base / "versions" / release["version"]
             if target.is_symlink():
                 raise ValueError("发行版安装目录不能是链接")
+            if args.uninstall:
+                # Never stage a new payload or depend on a working venv to uninstall.
+                # The uninstall journal checks ownership even if release files are damaged.
+                if not target.exists():
+                    print(f"未找到已安装版本：{target}；未删除任何文件。")
+                    return
+                forwarded = ["--agent-home", str(target)]
+                for name in ("dry_run", "purge", "remove_image"):
+                    if getattr(args, name):
+                        forwarded.append("--" + name.replace("_", "-"))
+                uninstall.main(forwarded)
+                return
             parent = target
             while not parent.exists():
                 parent = parent.parent
@@ -154,7 +177,7 @@ def main(argv=None):
             forwarded += ["--bootstrap", "--wheel", str(target / release["wheel"])]
             setup.main(forwarded, approved_commands=approved)
     except (OSError, ValueError, tarfile.TarError) as error:
-        parser.exit(1, f"发行版安装未完成：{error}\n")
+        parser.exit(1, f"发行版{'卸载' if args.uninstall else '安装'}未完成：{error}\n")
 
 
 if __name__ == "__main__":

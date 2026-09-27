@@ -10,6 +10,14 @@ import tempfile
 from contextlib import ExitStack
 from pathlib import Path
 
+if not __package__:
+    from _bootstrap import enable_host_support
+
+    enable_host_support()
+
+from host_support.integration import command_state, shell_path_plan
+from host_support.paths import installed_command, installed_python, user_bin_dir
+
 if __package__:
     from .installation import (
         COMMANDS,
@@ -80,15 +88,6 @@ else:
     )
 
 
-def command_state(command: Path) -> str | None:
-    """Snapshot the link itself, including dangling links; reject unrelated files."""
-    if command.is_symlink():
-        return os.readlink(command)
-    if command.exists():
-        raise ValueError(f"保留已有命令 {command}（不是安装链接）；请用 --bin-dir 选择其他目录")
-    return None
-
-
 def confirm_commands(agent_home: Path, bin_dir: Path) -> dict[str, str | None]:
     states = {}
     replacements = []
@@ -99,7 +98,7 @@ def confirm_commands(agent_home: Path, bin_dir: Path) -> dict[str, str | None]:
         if previous is None:
             continue
         old_target = Path(os.path.abspath(command.parent / previous))
-        target = agent_home / ".venv/bin" / name
+        target = installed_command(agent_home, name)
         if old_target == target:
             continue
         if old_target.name != name or old_target.parent.parts[-2:] != (".venv", "bin"):
@@ -192,22 +191,7 @@ def install_command(
 
 
 def configure_path(bin_dir: Path, record: dict | None = None, transaction=None) -> list[Path]:
-    shell = Path(os.environ.get("SHELL", "")).name
-    if shell == "zsh":
-        files = [Path(os.environ.get("ZDOTDIR") or Path.home()) / ".zshrc"]
-    elif shell == "bash":
-        login = next(
-            (
-                Path.home() / name
-                for name in (".bash_profile", ".bash_login", ".profile")
-                if (Path.home() / name).exists()
-            ),
-            Path.home() / ".bash_profile",
-        )
-        files = [Path.home() / ".bashrc", login]
-    else:
-        return []
-    line = f'export PATH={shlex.quote(str(bin_dir))}:"$PATH"'
+    files, line = shell_path_plan(bin_dir)
     for path in files:
         if path.is_symlink():
             print(f"保留符号链接形式的 shell 配置，请手动设置 PATH：{path}")
@@ -269,7 +253,7 @@ def preserve_managed_servers(transaction, root):
 def main(argv=None, *, approved_commands=None) -> None:
     parser = argparse.ArgumentParser(description="配置 Repo Agent 用户安装")
     parser.add_argument("--agent-home", type=Path, required=True)
-    parser.add_argument("--bin-dir", type=Path, default=Path.home() / ".local" / "bin")
+    parser.add_argument("--bin-dir", type=Path, default=user_bin_dir())
     parser.add_argument(
         "--skip-sandbox", action="store_true", help="兼容选项：Docker 模式跳过镜像构建"
     )
@@ -343,7 +327,7 @@ def main(argv=None, *, approved_commands=None) -> None:
             if args.mode == "native":
                 rows += native_preflight()
                 if not any(level == "ERROR" for level, _, _ in rows):
-                    optional = preparation_report(agent_home / ".venv/bin/python", args.languages)
+                    optional = preparation_report(installed_python(agent_home), args.languages)
                     if not (args.check and args.toolchains):
                         optional = [
                             (
@@ -408,7 +392,7 @@ def main(argv=None, *, approved_commands=None) -> None:
                     transaction.fresh_venv()
                     prepare_venv(record)
                     subprocess.run([python, "-m", "venv", str(agent_home / ".venv")], check=True)
-                    python = str(agent_home / ".venv/bin/python")
+                    python = str(installed_python(agent_home))
                     print("安装核心依赖……", flush=True)
                     locked = [python, '-m', 'pip', 'install', '--require-hashes',
                               '--only-binary=:all:', *package_flags,
@@ -490,7 +474,7 @@ def main(argv=None, *, approved_commands=None) -> None:
                     )
                     for name in COMMANDS:
                         subprocess.run(
-                            [str(agent_home / ".venv/bin" / name), "--help"],
+                            [str(installed_command(agent_home, name)), "--help"],
                             cwd=agent_home,
                             check=True,
                             stdout=subprocess.DEVNULL,
@@ -512,7 +496,7 @@ def main(argv=None, *, approved_commands=None) -> None:
                         if item["tag"] != transaction.state["staging_image"]
                     ]
                 for name in COMMANDS:
-                    if not (agent_home / ".venv/bin" / name).is_file():
+                    if not (installed_command(agent_home, name)).is_file():
                         raise ValueError(f"未找到 {name} 入口，请通过 install.sh 安装")
                 check_command_states(bin_dir, approved_states)
                 commands = []

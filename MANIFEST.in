@@ -17,6 +17,7 @@ recursive-include cli *.py
 recursive-include llm *.py
 recursive-include sandbox *.py
 recursive-include tools *.py
+recursive-include host_support *.py
 include agent/skills/builtin/*/SKILL.md
 include sandbox/Dockerfile
 prune agent/.git
@@ -119,5 +120,25 @@ prune tools/.pytest_cache
 prune tools/**/.pytest_cache
 prune tools/.ruff_cache
 prune tools/**/.ruff_cache
+prune host_support/.git
+prune host_support/**/.git
+prune host_support/.venv
+prune host_support/**/.venv
+prune host_support/venv
+prune host_support/**/venv
+prune host_support/node_modules
+prune host_support/**/node_modules
+prune host_support/__pycache__
+prune host_support/**/__pycache__
+prune host_support/build
+prune host_support/**/build
+prune host_support/dist
+prune host_support/**/dist
+prune host_support/logs
+prune host_support/**/logs
+prune host_support/.pytest_cache
+prune host_support/**/.pytest_cache
+prune host_support/.ruff_cache
+prune host_support/**/.ruff_cache
 global-exclude *.pyc *.pyo .env .env.*
 include .env.example

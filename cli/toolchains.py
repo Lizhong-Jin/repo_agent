@@ -8,6 +8,13 @@ import tempfile
 from contextlib import ExitStack
 from pathlib import Path
 
+if not __package__:
+    from _bootstrap import enable_host_support
+
+    enable_host_support()
+
+from host_support.paths import installed_python, scripts_dir
+
 if __package__:
     from .dependencies import (
         LANGUAGES,
@@ -44,7 +51,7 @@ else:
 def install_server(root, language):
     """Download JS/Go into a staging directory; preserve existing files on failure."""
     if language == "python":
-        python = str(root / ".venv/bin/python")
+        python = str(installed_python(root))
         run_download(
             [
                 python,
@@ -64,7 +71,7 @@ def install_server(root, language):
         return  # clangd is supplied by the LLVM toolchain.
     with tempfile.TemporaryDirectory(prefix=".toolchain-", dir=root / ".venv") as temporary:
         staging = Path(temporary)
-        (staging / ".venv/bin").mkdir(parents=True)
+        (scripts_dir(staging / ".venv")).mkdir(parents=True)
         install_language_servers(staging, [language])
         relative = "bin/gopls" if language == "go" else "lsp"
         source, target = staging / ".venv" / relative, root / ".venv" / relative
@@ -115,7 +122,7 @@ def install_missing(root, languages):
         for language in languages:
             status = next(row for row in language_status(root) if row["language"] == language)
             if not status["toolchain"]:
-                prepare_toolchains(root / ".venv/bin/python", language)
+                prepare_toolchains(installed_python(root), language)
             # Recheck: installing LLVM already supplies clangd.
             status = next(row for row in language_status(root) if row["language"] == language)
             if status["service"]:

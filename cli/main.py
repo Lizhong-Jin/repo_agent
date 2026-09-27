@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from host_support.execution import backend_capabilities
+
 from agent import AgentRuntime
 from agent.compaction import CompactionSettings
 from agent.history import HistoryArchive, HistoryTool
@@ -16,7 +18,7 @@ from llm import ConfigurationError, LLMClient, LLMConfig, LLMError
 from llm.providers import get_provider
 from sandbox import SandboxPolicy, SandboxSession
 from sandbox.environment import DEFAULT_IMAGE, check_image_profile, detect_environment
-from sandbox.native import NativeBackend
+from sandbox.native import create_native_backend as NativeBackend
 from tools import create_default_tools
 from tools._internal.web_backend import WebBackend
 from tools.tool_groups import DEFAULT_TOOL_GROUPS
@@ -195,12 +197,11 @@ def _main() -> None:
             )
         except argparse.ArgumentTypeError as error:
             parser.error(str(error))
-    if args.project_python and args.sandbox != "native":
+    if args.project_python and not backend_capabilities(args.sandbox, platform=sys.platform).project_python:
         parser.error("--project-python 仅用于 native 模式")
+    capabilities = backend_capabilities(args.sandbox, platform=sys.platform)
     gpu_requested = args.sandbox_profile == "cuda" or args.sandbox_gpus is not None
-    if gpu_requested and not (
-        args.sandbox == "docker" or (args.sandbox == "native" and sys.platform == "linux")
-    ):
+    if gpu_requested and not capabilities.gpu:
         parser.error("GPU profile 仅适用于 Docker 或 Linux / WSL2 native 模式")
     if args.sandbox_profile == "standard" and args.sandbox_gpus is not None:
         parser.error("GPU selection requires the cuda profile")
@@ -296,12 +297,12 @@ def _main() -> None:
             chosen = native.execution_context().get('python_environments', {})
             if chosen:
                 print(f"项目 Python：{chosen['project']}（{chosen['source']}）")
-            platform_label = "Linux" if sys.platform == "linux" else "macOS"
+            platform_label = capabilities.label
             print(
                 f"[执行环境：{platform_label} native] 工具断网；直接修改原项目，无副本回写",
                 flush=True,
             )
-            if sys.platform == "linux":
+            if capabilities.gpu:
                 gpu = native.execution_context()["gpu_access"]
                 if gpu["enabled"]:
                     print(

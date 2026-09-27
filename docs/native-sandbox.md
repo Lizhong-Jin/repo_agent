@@ -41,7 +41,7 @@ repo-agent --sandbox native
 
 Fedora 的对应包是 `bubblewrap libseccomp`。需要其他语言时，先准备 Node.js/npm、Go 1.25+ 或 clangd，再使用 `repo-agent toolchains install` 安装受管语言服务。安装器不自动提权或修改 Linux 系统包。某些发行版的 AppArmor、sysctl 策略或外层容器会禁止非特权 namespace；启动自检失败会明确报错，不会自动放宽安全策略或退回 local。
 
-`sandbox/native.py` 自动选择 `sandbox/linux_native.py`，共用工具接口、受信任代码副本、输出收集和进程监督。每次隔离执行调用创建独立 namespace，挂载原工作区及私有临时目录；`sandbox/linux_exec.py` 在执行项目代码前加载 seccomp，禁止 sockets（含 Unix socket）、io_uring、硬链接及重新配置 namespace/mount 等系统调用，子进程继承这些限制。匿名 `socketpair` 保留给 Node/libuv 等进程内部通信，不能用于连接宿主机服务。
+`sandbox/native.py` 的 `create_native_backend()` 选择 `sandbox/linux_native.py`；`sandbox/native_common.py` 管理共用工具接口、受信任代码副本和调用生命周期，`host_support` 提供输出收集与进程监督。每次隔离执行调用创建独立 namespace，挂载原工作区及私有临时目录；`sandbox/linux_exec.py` 在执行项目代码前加载 seccomp，禁止 sockets（含 Unix socket）、io_uring、硬链接及重新配置 namespace/mount 等系统调用，子进程继承这些限制。匿名 `socketpair` 保留给 Node/libuv 等进程内部通信，不能用于连接宿主机服务。
 
 | 路径或资源 | Linux native 权限 |
 | --- | --- |
@@ -105,7 +105,7 @@ repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all
 
 ## macOS 实现与权限
 
-`sandbox/native.py` 实现与 Docker 相同的工具调用接口，但直接访问原项目。每次隔离执行调用用 `/usr/bin/sandbox-exec` 加载宿主机生成的 Seatbelt 策略。命令和 Python 由外层主进程直接启动沙箱进程、监督子进程并收集输出；Git、环境探测和 LSP 工具通过独立 worker 执行；纯文件工具使用上面的轻量文件服务。模型、密钥、会话和日志由外部主进程管理。
+`sandbox/macos_native.py` 实现 Seatbelt 策略、读取范围和自检，继承 `sandbox/native_common.py` 的公共调用流程，并通过 `sandbox/native.py` 的工厂选择。工具调用接口与 Docker 共用约定，但直接访问原项目。每次隔离执行调用用 `/usr/bin/sandbox-exec` 加载宿主机生成的 Seatbelt 策略。命令和 Python 由外层主进程直接启动沙箱进程、监督子进程并收集输出；Git、环境探测和 LSP 工具通过独立 worker 执行；纯文件工具使用上面的轻量文件服务。模型、密钥、会话和日志由外部主进程管理。
 
 - 允许读取工作区、系统库、当前 Python 安装及依赖、常见系统工具链；目录元数据查询范围较宽，文件内容读取仍受策略控制。
 - 仅工作目录和每次调用的私有临时目录可写。解释器及其依赖目录只读，即使位于项目内也不允许安装或修改。
@@ -131,7 +131,7 @@ repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all
 | 会话状态目录、`AGENT_ENV_FILE` / `AGENT_LOG_DIR` 指定的路径 | 禁止读写 |
 | `.git` | 禁止写；仅 `git_status` / `git_diff` 工具可读 |
 
-系统读取白名单还包括 `/usr`、`/bin`、`/sbin`、`/opt/homebrew`、部分 `/Library` 和 `/System` 子目录、`/private/etc` 及必要的系统数据库目录；具体列表见 `NativeBackend._read_paths()`。这意味着隔离规则不是“只能读取项目”，也不保证隐藏白名单外的文件元数据。当前没有按命令临时追加任意目录权限的 CLI 开关。
+系统读取白名单还包括 `/usr`、`/bin`、`/sbin`、`/opt/homebrew`、部分 `/Library` 和 `/System` 子目录、`/private/etc` 及必要的系统数据库目录；具体列表见 `MacOSNativeBackend._read_paths()`。这意味着隔离规则不是“只能读取项目”，也不保证隐藏白名单外的文件元数据。当前没有按命令临时追加任意目录权限的 CLI 开关。
 
 保护规则按路径和文件名执行，不扫描内容判断是否含密钥。普通源码里硬编码的密钥仍可能被读到。符号链接不能扩大目标权限；已有普通文件硬链接会让工作区检查失败，新建硬链接也被禁止。
 

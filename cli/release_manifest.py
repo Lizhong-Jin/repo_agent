@@ -5,6 +5,13 @@ import json
 import re
 from pathlib import Path
 
+if not __package__:
+    from _bootstrap import enable_host_support
+
+    enable_host_support()
+
+from host_support.archives import archive_path
+
 
 def digest(path):
     with Path(path).open("rb") as source:
@@ -19,7 +26,7 @@ def read_release(root, *, verify=True):
     data = json.loads(manifest.read_text())
     if (
         not isinstance(data, dict)
-        or data.get("schema") != 1
+        or data.get("schema") not in (1, 2)
         or data.get("name") != "repo-agent"
         or not isinstance(data.get("version"), str)
         or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9.+-]*", data.get("version", ""))
@@ -28,7 +35,7 @@ def read_release(root, *, verify=True):
         raise ValueError("无法识别发行清单")
     seen = set()
     for name, expected in data["files"].items():
-        relative = Path(name)
+        relative = archive_path(name)
         if (
             relative.is_absolute()
             or ".." in relative.parts
@@ -53,9 +60,7 @@ def read_release(root, *, verify=True):
         raise ValueError("发行包缺少 wheel")
     required = {
         wheel,
-        "install.sh",
         "install-release.sh",
-        "uninstall.sh",
         "cli/setup.py",
         "cli/release_install.py",
         ".env.example",
@@ -64,6 +69,17 @@ def read_release(root, *, verify=True):
         "requirements-lsp.lock",
         "uv.lock",
     }
+    if data["schema"] == 1:
+        required.update({"install.sh", "uninstall.sh"})
+    else:
+        required.update(
+            {
+                "scripts/installer-entry.sh",
+                "scripts/bootstrap-python.sh",
+                "runtime/python.lock",
+                "cli/uninstall.py",
+            }
+        )
     if (
         not isinstance(wheel, str)
         or not wheel.startswith("wheels/")

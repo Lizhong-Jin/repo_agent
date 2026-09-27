@@ -8,6 +8,7 @@
 
 | 模块 | 主要文件 | 职责 |
 | --- | --- | --- |
+| 宿主平台服务 | [host_support/](host_support/)、[平台适配边界](docs/platform-adaptation.md) | 标准库实现的平台标识、目录和解释器布局、安全文件操作、锁、原子写入、进程生命周期、工具链清单与诊断 |
 | 命令入口 | [cli/main.py](cli/main.py)、[cli/settings.py](cli/settings.py) | 分发命令、加载参数、选择项目和执行环境 |
 | 交互界面 | [cli/tui.py](cli/tui.py)、[cli/interactive.py](cli/interactive.py)、[cli/live.py](cli/live.py) | 全屏/普通终端、流式显示、用量和上下文状态 |
 | 会话管理 | [agent/session.py](agent/session.py)、[cli/session.py](cli/session.py)、[cli/sessions_command.py](cli/sessions_command.py) | 项目隔离、快照、名称索引、恢复、会话查询和日志查看 |
@@ -21,7 +22,7 @@
 | 工具调度与分组 | [tools/dispatch.py](tools/dispatch.py)、[tools/tool_groups.py](tools/tool_groups.py) | 按显式执行类别调度；按需加载工具定义，独立管理会话可见性 |
 | Web 工具 | [tools/web_tools.py](tools/web_tools.py)、[tools/_internal/](tools/_internal/) | 主进程受控搜索、网页抓取和分页缓存，按配置启用 |
 | 系统提示词 | [agent/prompt.py](agent/prompt.py) | 通用任务规则；代码工作流程由 `coding` 等技能按需补充 |
-| 原生沙箱 | [sandbox/native.py](sandbox/native.py)、[sandbox/linux_native.py](sandbox/linux_native.py)、[sandbox/linux_gpu.py](sandbox/linux_gpu.py) | 平台隔离、原项目执行、Linux/WSL2 GPU 授权与驱动自检 |
+| 原生沙箱 | [sandbox/native.py](sandbox/native.py)、[sandbox/native_common.py](sandbox/native_common.py)、[sandbox/macos_native.py](sandbox/macos_native.py)、[sandbox/linux_native.py](sandbox/linux_native.py) | 显式选择后端、共享调用生命周期、各平台隔离策略与实际自检 |
 | 项目 Python | [sandbox/project_python.py](sandbox/project_python.py) | 选择项目解释器、构造读取范围和项目进程环境；可信 worker 继续使用 Agent Python |
 | Docker 沙箱 | [sandbox/session.py](sandbox/session.py)、[sandbox/docker.py](sandbox/docker.py)、[sandbox/writeback.py](sandbox/writeback.py) | 工作副本、容器、回写检查、备份与恢复 |
 | 追踪 | [agent/Tracing.py](agent/Tracing.py) | 模型/工具事件、计时、任务与运行片段统计 |
@@ -58,6 +59,10 @@ native 直接操作原项目，不使用副本回写。内置文件工具通过�
 Agent 安装默认使用受管 Python；native 可另选项目 Python 执行用户代码和探测依赖。可信 worker、控制进程与语言服务器的运行环境保持独立，Python LSP 通过分析环境配置访问项目依赖，见[Python 环境](docs/python-environments.md)。模型请求在宿主机发送，隔离 worker 不持有模型凭证。可选 Web 工具也在主进程单独注册，不进入沙箱工具工厂；Web 联网不改变命令断网策略。
 
 Runtime 按 `ExecutionKind` 调度工具。CLI 默认只向模型公开通用工具与加载器，`file_editing`、`coding` 两组通过 `load_tool_group` 按需加载；加载状态随会话保存，不能增加当前后端未授权的能力。完整边界见[工具调度](docs/tools.md#工具执行调度)与[工具组](docs/tools.md#按需加载工具组)。
+
+平台公共服务集中在 `host_support`，不依赖 Agent、CLI、工具或沙箱业务模块。安装引导和恢复可在未加载第三方依赖时导入它；文件工具为共享文件机制注入工作区策略。会话、Skills、配置与 Docker 回写按需复用文件描述符、锁或原子替换机制，工具、LSP 和安装下载共享进程生命周期机制，并保留各自协议与环境策略。
+
+`sandbox/native.py` 的 `create_native_backend` 显式选择后端；macOS 与 Linux 共同继承 `native_common.NativeBackendBase`，Linux 不继承 macOS 策略。`macos_native.py` 保留 Seatbelt 实现，Linux 的挂载、seccomp、GPU 与 WSL 专用模块保持独立。平台识别和能力描述不授予执行权限，也不表示 Windows 原生执行已得到支持。详见[平台适配边界](docs/platform-adaptation.md)。
 
 ## 上下文构造
 

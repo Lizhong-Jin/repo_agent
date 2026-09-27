@@ -1,16 +1,18 @@
 """Private, atomic project conversations; separate from per-process trace logs."""
 
-import fcntl
 import hashlib
 import json
 import os
 import re
 import stat
-import tempfile
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
+
+from host_support.filesystem import open_file
+from host_support.locking import lock_descriptor
+from host_support.storage import atomic_write
 
 from llm import LLMError, LLMRequest, Message
 from tools._internal.file_policy import session_state_root
@@ -20,7 +22,7 @@ MAX_BYTES = 64 * 1024 * 1024
 
 
 def _read(path):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    fd = open_file(path)
     with os.fdopen(fd, "rb") as stream:
         info = os.fstat(stream.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_BYTES:
@@ -124,12 +126,12 @@ class SessionStore:
             raise ValueError("会话目录不能是符号链接")
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self.directory, 0o700)
-        self._lock_fd = os.open(
-            self.directory / ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600
+        self._lock_fd = open_file(
+            self.directory / ".lock", os.O_RDWR | os.O_CREAT, nonblocking=False
         )
         try:
             try:
-                fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_descriptor(self._lock_fd, blocking=False)
             except BlockingIOError:
                 raise ValueError("此项目已有 Agent 会话运行，请退出该会话后再启动") from None
             if not self.new:
@@ -189,15 +191,7 @@ class SessionStore:
         content = json.dumps(data, ensure_ascii=False, allow_nan=False).encode()
         if len(content) > MAX_BYTES:
             raise ValueError("会话记录超过 64 MiB，无法保存；请启动新会话")
-        fd, temporary = tempfile.mkstemp(prefix=".session-", dir=self.directory)
-        try:
-            with os.fdopen(fd, "wb") as output:
-                output.write(content)
-                output.flush()
-                os.fsync(output.fileno())
-            os.replace(temporary, path)
-        finally:
-            Path(temporary).unlink(missing_ok=True)
+        atomic_write(path, content, prefix=".session-", sync=True)
 
     def save(self, data):
         if self._lock_fd is None:
@@ -238,11 +232,10 @@ def validate_name(name):
 
 
 def open_log(path, *, write=False, exclusive=False):
-    flags = os.O_NOFOLLOW | os.O_NONBLOCK
-    flags |= (os.O_WRONLY | os.O_CREAT | os.O_APPEND) if write else os.O_RDONLY
+    flags = (os.O_WRONLY | os.O_CREAT | os.O_APPEND) if write else os.O_RDONLY
     if exclusive:
         flags |= os.O_EXCL
-    fd = os.open(path, flags, 0o600)
+    fd = open_file(path, flags)
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
@@ -276,10 +269,10 @@ class SessionCatalog:
         if self.directory.is_symlink():
             raise ValueError("会话目录不能是符号链接")
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        fd = os.open(self.directory / ".metadata.lock",
-                     os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        fd = open_file(self.directory / ".metadata.lock",
+                       os.O_RDWR | os.O_CREAT, nonblocking=False)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            lock_descriptor(fd)
             path = self.directory / "index"
             if path.exists() or path.is_symlink():
                 index = _read(path)
@@ -357,12 +350,12 @@ class SessionCatalog:
 
     def running(self):
         try:
-            fd = os.open(self.directory / ".lock", os.O_RDONLY | os.O_NOFOLLOW)
+            fd = open_file(self.directory / ".lock", nonblocking=False)
         except FileNotFoundError:
             return False
         try:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_descriptor(fd, blocking=False)
                 return False
             except BlockingIOError:
                 return True

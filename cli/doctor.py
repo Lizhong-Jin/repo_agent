@@ -7,6 +7,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+if not __package__:
+    from _bootstrap import enable_host_support
+
+    enable_host_support()
+
+from host_support.paths import installed_command, installed_python
+
 if __package__:
     from .dependencies import available_mode, native_preflight, service_report
     from .install_transaction import TRANSACTION
@@ -79,7 +86,7 @@ def diagnose(root, workspace, *, mode=None, docker=None):
         add("ERROR", "安装记录", "记录损坏或属于其他目录，请检查复制/移动后的安装")
     for name in COMMANDS:
         command = shutil.which(name)
-        expected = root / ".venv/bin" / name
+        expected = installed_command(root, name)
         if command:
             actual = Path(command).resolve()
             add("OK" if actual == expected else "WARN", name, f"{command} → {actual}")
@@ -94,7 +101,7 @@ def diagnose(root, workspace, *, mode=None, docker=None):
             add("WARN", "PATH 重复命令", ", ".join(sorted(candidates)))
     try:
         result = probe(
-            [str(root / ".venv/bin/python"), "-I", "-c", "import cli.main, sandbox.build"], cwd=root
+            [str(installed_python(root)), "-I", "-c", "import cli.main, sandbox.build"], cwd=root
         )
         add(
             "OK" if result.returncode == 0 else "ERROR",
@@ -137,7 +144,7 @@ def diagnose(root, workspace, *, mode=None, docker=None):
         except (OSError, subprocess.SubprocessError):
             add("WARN", "沙箱镜像", "检查失败或超时")
     try:
-        result = probe([str(root / ".venv/bin/python"), "-m", "pip", "check"], cwd=root)
+        result = probe([str(installed_python(root)), "-m", "pip", "check"], cwd=root)
         add(
             "OK" if result.returncode == 0 else "ERROR",
             "Python 依赖一致性",

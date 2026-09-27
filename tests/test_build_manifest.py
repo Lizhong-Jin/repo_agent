@@ -44,6 +44,7 @@ def test_manifest_import_and_check_need_only_standard_library():
         "dependencies/node/package-lock.json",
         "sandbox/Dockerfile",
         "cli/__init__.py",
+        "host_support/__init__.py",
     ],
 )
 def test_missing_required_inputs_fail_early(source, name):
@@ -92,9 +93,9 @@ def test_shared_policy_excludes_local_state_and_refuses_symlinks(source, tmp_pat
 
 
 def test_missing_installer_fails_bootstrap_but_is_not_a_wheel_input(source):
-    (source / "install.sh").unlink()
+    (source / "install-release.sh").unlink()
     assert manifest.source_files(source)
-    with pytest.raises(ValueError, match="install.sh"):
+    with pytest.raises(ValueError, match="install-release.sh"):
         manifest.bootstrap_files(source)
 
 
@@ -150,6 +151,8 @@ def test_real_wheel_and_sdist_keep_new_resource_and_drop_removed_module(source, 
     with zipfile.ZipFile(wheel) as archive:
         assert archive.read("agent/release_fixture.json") == resource.read_bytes()
         assert "cli/removed_fixture.py" in archive.namelist()
+        assert "host_support/processes.py" in archive.namelist()
+        assert "sandbox/native_common.py" in archive.namelist()
         assert "cli/.env" not in archive.namelist()
         assert "cli/undeclared.json" not in archive.namelist()
     # Rebuild in the SAME tree to exercise stale build/lib and egg-info caches.
@@ -178,6 +181,7 @@ def test_real_wheel_and_sdist_keep_new_resource_and_drop_removed_module(source, 
         context.write_bytes(archive.read("cli/resources/docker-context.tar.gz"))
     with tarfile.open(context) as archive:
         assert archive.extractfile("agent/release_fixture.json").read() == resource.read_bytes()
+        assert "host_support/filesystem.py" in archive.getnames()
         assert "build_manifest.py" in archive.getnames()
         assert "cli/.env" not in archive.getnames()
     # The release verifier refuses a wheel with an omitted declared resource.
@@ -239,3 +243,11 @@ def test_release_verification_checks_enclosing_folder(tmp_path):
     manifest.verify_release_archive(archive, bundle, prefix="repo-agent-0.1.0")
     with pytest.raises(ValueError):
         manifest.verify_release_archive(archive, bundle, prefix="repo-agent-0.2.0")
+
+
+def test_release_bootstrap_excludes_source_entry_points():
+    names = {path.relative_to(ROOT).as_posix() for path in manifest.bootstrap_files(ROOT)}
+    assert "install-release.sh" in names
+    assert "scripts/installer-entry.sh" in names
+    assert "install.sh" not in names
+    assert "uninstall.sh" not in names

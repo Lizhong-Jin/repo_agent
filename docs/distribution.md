@@ -47,23 +47,25 @@ npm install --package-lock-only --ignore-scripts --prefix dependencies/node
 
 ## 产物目录与包内容
 
+发行包仅提供顶层 `install-release.sh`，安装、恢复和备用卸载共用内部的 `scripts/installer-entry.sh`；源码仓库继续保留 `install.sh` / `uninstall.sh`。新构建清单使用 schema 2，强制校验共用脚本及卸载模块；新版安装器仍可读取 schema 1 的旧发行包。修改后需要重新构建发行包，已有压缩包不会自动变化。发布时应按上面的流程递增版本号。
+
 默认输出到 `dist/<版本>/<平台>/`；`--output` 仅替换 `dist` 这一层，版本来自 `pyproject.toml`。例如：
 
 ```text
 dist/
-└── 0.1.1/
+└── 0.1.2/
     ├── macos-arm64/
-    │   ├── repo-agent-0.1.1-macos-arm64.tar.gz
-    │   └── repo-agent-0.1.1-macos-arm64.tar.gz.sha256
+    │   ├── repo-agent-0.1.2-macos-arm64.tar.gz
+    │   └── repo-agent-0.1.2-macos-arm64.tar.gz.sha256
     ├── macos-x86_64/
-    │   ├── repo-agent-0.1.1-macos-x86_64.tar.gz
-    │   └── repo-agent-0.1.1-macos-x86_64.tar.gz.sha256
+    │   ├── repo-agent-0.1.2-macos-x86_64.tar.gz
+    │   └── repo-agent-0.1.2-macos-x86_64.tar.gz.sha256
     ├── linux-arm64/
-    │   ├── repo-agent-0.1.1-linux-arm64.tar.gz
-    │   └── repo-agent-0.1.1-linux-arm64.tar.gz.sha256
+    │   ├── repo-agent-0.1.2-linux-arm64.tar.gz
+    │   └── repo-agent-0.1.2-linux-arm64.tar.gz.sha256
     └── linux-x86_64/
-        ├── repo-agent-0.1.1-linux-x86_64.tar.gz
-        └── repo-agent-0.1.1-linux-x86_64.tar.gz.sha256
+        ├── repo-agent-0.1.2-linux-x86_64.tar.gz
+        └── repo-agent-0.1.2-linux-x86_64.tar.gz.sha256
 ```
 
 Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独输出到发布目录。每个压缩包只有一个 `repo-agent-<版本>-<平台>/` 顶层文件夹，内含固定的 `runtime/python.tar.gz`、运行时锁文件、平台标记和 `wheelhouse/`。完整包不包含项目的 PyTorch/CUDA 依赖、系统工具链或开发用 pytest/Ruff；后者通过源码开发材料准备。
@@ -115,7 +117,7 @@ Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独
 真实安装验收选择与当前机器匹配的完整包。以下示例使用临时用户目录和受管 Python 离线安装，删除下载目录后检查启动、配置恢复、doctor、Docker 构建上下文和卸载；Docker 入口使用模拟程序，不构建真实镜像、不调用模型 API：
 
 ```bash
-REPO_AGENT_TEST_ARCHIVE="$PWD/dist/0.1.1/macos-arm64/repo-agent-0.1.1-macos-arm64.tar.gz" \
+REPO_AGENT_TEST_ARCHIVE="$PWD/dist/0.1.2/macos-arm64/repo-agent-0.1.2-macos-arm64.tar.gz" \
   .venv/bin/python -m pytest -q tests/test_release_distribution.py
 ```
 

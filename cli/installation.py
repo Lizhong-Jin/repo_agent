@@ -3,27 +3,25 @@
 import argparse
 import hashlib
 import json
-import os
 import subprocess
-import tempfile
 from pathlib import Path
 from uuid import uuid4
+
+if not __package__:
+    from _bootstrap import enable_host_support
+
+    enable_host_support()
+
+from host_support.paths import app_directory, installed_command, user_config_path
+from host_support.storage import atomic_write
 
 MANIFEST = ".repo-agent-install.json"
 COMMANDS = ("repo-agent", "repo-agent-build-sandbox")
 DEFAULT_IMAGE = "repo-agent-sandbox:v1"
 
 
-def user_config_path() -> Path:
-    if os.environ.get("AGENT_CONFIG_DIR"):
-        return Path(os.environ["AGENT_CONFIG_DIR"]).expanduser().resolve() / ".env"
-    base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    return base.expanduser().resolve() / "repo-agent/.env"
-
-
 def registry_dir() -> Path:
-    base = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
-    return base.expanduser().resolve() / "repo-agent/installations"
+    return app_directory("state") / "installations"
 
 
 def registry_name(root: Path) -> str:
@@ -32,14 +30,8 @@ def registry_name(root: Path) -> str:
 
 def write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd, temporary = tempfile.mkstemp(prefix=".install-", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as output:
-            json.dump(data, output, ensure_ascii=False, indent=2)
-            output.write("\n")
-        os.replace(temporary, path)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
+    content = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    atomic_write(path, content.encode("utf-8"), prefix=".install-")
 
 
 def read_record(path: Path, root: Path | None = None) -> dict:
@@ -77,7 +69,7 @@ def read_record(path: Path, root: Path | None = None) -> dict:
         if (
             not path.is_absolute()
             or path.name not in COMMANDS
-            or Path(item["target"]) != Path(data["root"]) / ".venv/bin" / path.name
+            or Path(item["target"]) != installed_command(Path(data["root"]), path.name)
         ):
             raise ValueError("安装记录的命令路径无效")
     for item in data["shell"]:

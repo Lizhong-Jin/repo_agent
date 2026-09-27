@@ -7,7 +7,7 @@ from types import MappingProxyType
 
 import pytest
 
-from tools._internal import process_runner as process_module
+from host_support import processes as process_module
 from tools._internal.process_runner import ProcessRunner
 from tools.execute import RunCommandTool
 

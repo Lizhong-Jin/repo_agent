@@ -16,12 +16,13 @@ import logging
 import math
 import os
 import queue
-import signal
 import subprocess
 import threading
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+
+from host_support.processes import kill_process_group, start_process
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -134,7 +135,7 @@ class LspClient:
                 self._check_failure()
                 return
             try:
-                self._process = subprocess.Popen(
+                self._process = start_process(
                     self.command,
                     cwd=self.root,
                     env=self.env,
@@ -142,7 +143,7 @@ class LspClient:
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    start_new_session=os.name == "posix",
+                    windows_group=False,
                 )
                 for target in (self._read_loop, self._write_loop, self._stderr_loop):
                     thread = threading.Thread(target=target, daemon=True)
@@ -556,10 +557,7 @@ class LspClient:
         process = self._process
         if process is not None:
             try:
-                if os.name == "posix":
-                    os.killpg(process.pid, signal.SIGKILL)
-                elif process.poll() is None:
-                    process.kill()
+                kill_process_group(process)
             except ProcessLookupError:
                 pass
             except OSError:

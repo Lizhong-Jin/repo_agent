@@ -13,15 +13,17 @@ import sys
 from pathlib import Path
 from time import perf_counter
 
+from host_support.languages import sandbox_environment
+
 from .linux_gpu import NativeGPU
 from .linux_mounts import MountTable
 from .linux_policy import PolicyPlan, PolicyScan
 from .linux_policy import outermost as _outermost
-from .native import NativeBackend
+from .native_common import NativeBackendBase
 from .wsl_drivers import WSLDriverStore
 
 
-class LinuxNativeBackend(NativeBackend):
+class LinuxNativeBackend(NativeBackendBase):
     platform_name = "linux"
     isolation = "bubblewrap+seccomp"
     temporary_root = "/tmp"
@@ -175,12 +177,7 @@ class LinuxNativeBackend(NativeBackend):
         return argv
 
     def _environment(self, scratch):
-        environment = super()._environment(scratch)
-        environment["PATH"] = os.pathsep.join([
-            str(self.python.parent), str(self.python.parent.parent / "lsp/node_modules/.bin"),
-            "/usr/local/go/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
-        ])
-        environment["LANG"] = "C.UTF-8"
+        environment = sandbox_environment(self.python, scratch, platform="linux")
         if self.gpu:
             environment.update(self.gpu.environment(scratch))
             bins = []

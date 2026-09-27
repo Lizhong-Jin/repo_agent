@@ -7,6 +7,13 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+if not __package__:
+    from _bootstrap import enable_host_support
+
+    enable_host_support()
+
+from host_support.archives import archive_path
+
 
 def code_root():
     return Path(__file__).resolve().parents[1]
@@ -42,7 +49,7 @@ def extract_files(archive, destination):
         if sum(item.size for item in members) > 512 * 1024 * 1024:
             raise ValueError("发行包解压大小超过限制")
         for item in members:
-            name = Path(item.name)
+            name = archive_path(item.name)
             if (
                 name.is_absolute()
                 or ".." in name.parts

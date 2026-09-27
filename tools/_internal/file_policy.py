@@ -5,6 +5,8 @@ import stat
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 
+from host_support.paths import session_state_root
+
 PROTECTED_NAMES = frozenset(
     {
         ".git",
@@ -42,11 +44,6 @@ def is_protected_leaf(name: str) -> bool:
     name = name.lower()
     return (name in PROTECTED_NAMES or name == ".env"
             or name.startswith(".env.") or name.endswith(PROTECTED_SUFFIXES))
-
-
-def session_state_root() -> Path:
-    base = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
-    return base.expanduser().resolve() / "repo-agent/sessions"
 
 
 def runtime_protected_paths(root=None):

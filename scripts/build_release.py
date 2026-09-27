@@ -19,6 +19,9 @@ from prepare_python_bundle import prepare, runtime_records
 
 # This policy module is stdlib-only; setuptools is installed later in the build venv.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from host_support.paths import environment_python  # noqa: E402
+from host_support.platforms import release_target  # noqa: E402
+
 from build_manifest import (  # noqa: E402
     CONTEXT_ARCHIVE,
     RESOURCE_FILES,
@@ -40,7 +43,7 @@ def runtime_archives(targets, source, *, offline):
     source = Path(source).expanduser().resolve(strict=True)
     if source.is_file() and len(targets) != 1:
         raise ValueError("运行时归档为单个文件时必须指定 --target；全平台构建请提供归档目录")
-    paths = {target: source / f"{target}.tar.gz" if source.is_dir() else source
+    paths = {target: source / f"{target}{release_target(target).archive_suffix}" if source.is_dir() else source
              for target in targets}
     for path in paths.values():
         if not path.is_file():
@@ -50,12 +53,12 @@ def runtime_archives(targets, source, *, offline):
 
 def write_release(bundle, output, version, target, wheel_name):
     files = {
-        str(path.relative_to(bundle)): hashlib.sha256(path.read_bytes()).hexdigest()
+        path.relative_to(bundle).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted(bundle.rglob("*"))
         if path.is_file()
     }
     manifest = {
-        "schema": 1,
+        "schema": 2,
         "name": "repo-agent",
         "version": version,
         "wheel": "wheels/" + wheel_name,
@@ -67,7 +70,7 @@ def write_release(bundle, output, version, target, wheel_name):
     directory = output / version / target
     directory.mkdir(parents=True, exist_ok=True)
     release_directory = f"repo-agent-{version}-{target}"
-    destination = directory / f"{release_directory}.tar.gz"
+    destination = directory / f"{release_directory}{release_target(target).archive_suffix}"
     fd, temporary_archive = tempfile.mkstemp(prefix=".release-", dir=directory)
     os.close(fd)
     try:
@@ -130,7 +133,7 @@ def build(root, output, uv, *, target=None, runtime_archive=None, wheelhouse=Non
         copy_files(root, bundle, bootstrap)
         environment = work / "build-env"
         subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
-        python = str(environment / "bin/python")
+        python = str(environment_python(environment))
         package_flags = (["--no-index", "--no-cache-dir"] if offline else [])
         if wheelhouse:
             package_flags += ["--find-links", str(Path(wheelhouse).resolve(strict=True))]

@@ -13,7 +13,7 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-PACKAGES = ("agent", "cli", "llm", "sandbox", "tools")
+PACKAGES = ("agent", "cli", "llm", "sandbox", "tools", "host_support")
 LOCK_FILES = tuple(f"requirements-{kind}.lock" for kind in ("core", "lsp", "build", "dev"))
 # Files installed in cli/resources, with explicit source -> wheel destination mapping.
 RESOURCE_FILES = (
@@ -28,8 +28,12 @@ RESOURCE_FILES = (
 PACKAGE_RESOURCES = ("agent/skills/builtin/*/SKILL.md", "sandbox/Dockerfile")
 PUBLIC_METADATA = ("pyproject.toml", "uv.lock")
 BUILD_FILES = ("build_manifest.py", "build_support.py", "MANIFEST.in", ".dockerignore")
-INSTALL_SCRIPTS = ("install.sh", "install-release.sh", "uninstall.sh",
-                   "scripts/bootstrap-python.sh", "runtime/python.lock")
+INSTALL_SCRIPTS = (
+    "install-release.sh",
+    "scripts/installer-entry.sh",
+    "scripts/bootstrap-python.sh",
+    "runtime/python.lock",
+)
 CONTEXT_ARCHIVE = "cli/resources/docker-context.tar.gz"
 EXCLUDED_DIRS = (
     ".git",
@@ -123,7 +127,7 @@ def bootstrap_files(root):
         *PUBLIC_METADATA,
         ".env.example",
         *LOCK_FILES,
-        *(name for name in package_sources(root) if name.startswith("cli/")),
+        *(name for name in package_sources(root) if name.startswith(("cli/", "host_support/"))),
     }
     return [regular_file(root, name) for name in sorted(names)]
 
