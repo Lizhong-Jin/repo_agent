@@ -119,11 +119,13 @@ class InstallTransaction:
     def change_link(self, name):
         if os.name == "nt":
             from host_support.windows_install import command_payloads
-            payloads = command_payloads(public_command(Path(self.state["bin_dir"]), name),
-                                        installed_command(self.root, name))
+
+            payloads = command_payloads(
+                public_command(Path(self.state["bin_dir"]), name),
+                installed_command(self.root, name),
+            )
             self.state.setdefault("windows_commands", {})[name] = {
-                str(path): {"before": snapshot(path),
-                            "after": base64.b64encode(content).decode()}
+                str(path): {"before": snapshot(path), "after": base64.b64encode(content).decode()}
                 for path, content in payloads.items()
             }
         self.state["changed_links"].append(name)
@@ -189,7 +191,13 @@ class InstallTransaction:
         try:
             self.cleanup()
         except OSError:
-            entry = "install_release.ps1" if os.name == "nt" else "install-release.sh" if (self.root / "release.json").is_file() else "install.sh"
+            entry = (
+                "install_release.ps1"
+                if os.name == "nt"
+                else "install-release.sh"
+                if (self.root / "release.json").is_file()
+                else "install.sh"
+            )
             print(f"安装已完成；旧环境备份清理未完成，可稍后执行 ./{entry} --recover。")
 
     def cleanup(self):
@@ -258,6 +266,7 @@ class InstallTransaction:
             attempt(lambda name=name: link(name))
         for change in reversed(self.state.get("windows_path", [])):
             from host_support.windows_install import apply_path_change
+
             attempt(lambda change=change: apply_path_change(change, restore=True))
         for item in reversed(self.state["shell"]):
 
@@ -405,6 +414,7 @@ def recover_install(root):
                     raise ValueError
         if "windows_commands" in state:
             from host_support.windows_install import command_receipt
+
             for name, entries in state["windows_commands"].items():
                 if os.name != "nt" or name not in state["changed_links"]:
                     raise ValueError
@@ -420,6 +430,7 @@ def recover_install(root):
                             raise ValueError
         for change in state.get("windows_path", []):
             from host_support.windows_install import validate_path_change
+
             if os.name != "nt" or change["bin_dir"] != state["bin_dir"]:
                 raise ValueError
             validate_path_change(change)

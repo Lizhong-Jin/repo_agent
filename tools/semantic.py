@@ -966,7 +966,12 @@ class FindReferencesTool(LspToolBase):
         if not isinstance(arguments, dict):
             return tool_error(ToolErrorCode.INVALID_ARGUMENTS)
         if set(arguments) - {
-            "path", "line", "column", "include_declaration", "start_index", "limit",
+            "path",
+            "line",
+            "column",
+            "include_declaration",
+            "start_index",
+            "limit",
         }:
             return tool_error(
                 ToolErrorCode.INVALID_ARGUMENTS,
@@ -1540,23 +1545,17 @@ class GetHoverTool(LspToolBase):
                     "path": {
                         "type": "string",
                         "minLength": 1,
-                        "description": (
-                            "Path to a source file inside the workspace."
-                        ),
+                        "description": ("Path to a source file inside the workspace."),
                     },
                     "line": {
                         "type": "integer",
                         "minimum": 1,
-                        "description": (
-                            "1-based source line containing the symbol."
-                        ),
+                        "description": ("1-based source line containing the symbol."),
                     },
                     "column": {
                         "type": "integer",
                         "minimum": 1,
-                        "description": (
-                            "1-based UTF-16 column inside the symbol name."
-                        ),
+                        "description": ("1-based UTF-16 column inside the symbol name."),
                     },
                 },
                 "required": [
@@ -1609,15 +1608,17 @@ class GetHoverTool(LspToolBase):
                 # Send the validated snapshot without re-reading the file.
                 uri = client.sync_document(target, text=text)
                 result = client.request(
-                        "textDocument/hover",
-                        {
-                            "textDocument": {"uri": uri,},
-                            "position": {
-                                "line": lsp_line,
-                                "character": lsp_character,
-                            },
+                    "textDocument/hover",
+                    {
+                        "textDocument": {
+                            "uri": uri,
                         },
-                    )
+                        "position": {
+                            "line": lsp_line,
+                            "character": lsp_character,
+                        },
+                    },
+                )
             hover = self._normalize_hover(result, max_chars=self.max_hover_chars)
 
             # Verify the source file did not change during analysis.
@@ -1628,13 +1629,9 @@ class GetHoverTool(LspToolBase):
         except LspTimeoutError:
             return tool_error("LSP_TIMEOUT", "Language server timed out; retry the request.")
         except LspUnsupportedError:
-            return tool_error(
-                "LSP_UNSUPPORTED", "Server does not support hover or document sync."
-            )
+            return tool_error("LSP_UNSUPPORTED", "Server does not support hover or document sync.")
         except LspResponseError:
-            return tool_error(
-                "LSP_REQUEST_FAILED", "Language server rejected the hover request."
-            )
+            return tool_error("LSP_REQUEST_FAILED", "Language server rejected the hover request.")
         except FileNotFoundError:
             return tool_error(
                 "LSP_UNAVAILABLE",
@@ -1643,9 +1640,7 @@ class GetHoverTool(LspToolBase):
         except PermissionError:
             return tool_error(ToolErrorCode.PERMISSION_DENIED)
         except (ValueError, TypeError, KeyError):
-            return tool_error(
-                "LSP_INVALID_RESPONSE", "Server returned invalid hover response."
-            )
+            return tool_error("LSP_INVALID_RESPONSE", "Server returned invalid hover response.")
         except (LspError, OSError):
             return tool_error(
                 "LSP_ERROR",
@@ -1754,8 +1749,9 @@ class GetHoverTool(LspToolBase):
 
         parts = cls._normalize_hover_contents(hover["contents"])
         original_chars = sum(len(part["value"]) for part in parts)
-        parts, returned_chars, truncated = (
-            cls._truncate_hover_contents(parts, max_chars,)
+        parts, returned_chars, truncated = cls._truncate_hover_contents(
+            parts,
+            max_chars,
         )
         result: dict[str, Any] = {
             "contents": parts,
@@ -1777,10 +1773,12 @@ class GetHoverTool(LspToolBase):
         # "some markdown text"
         # ------------------------------------------------------------
         if isinstance(contents, str):
-            return [{
+            return [
+                {
                     "kind": "markdown",
                     "value": contents,
-                }]
+                }
+            ]
 
         # ------------------------------------------------------------
         # Either:
@@ -1810,14 +1808,14 @@ class GetHoverTool(LspToolBase):
             parts: list[dict[str, Any]] = []
             for part in contents:
                 if isinstance(part, str):
-                    parts.append({
+                    parts.append(
+                        {
                             "kind": "markdown",
                             "value": part,
-                        })
-                elif isinstance(part, dict):
-                    parts.append(
-                        cls._normalize_hover_part(part)
+                        }
                     )
+                elif isinstance(part, dict):
+                    parts.append(cls._normalize_hover_part(part))
                 else:
                     raise ValueError("Invalid hover content item")
             return parts
@@ -1891,6 +1889,7 @@ class GetHoverTool(LspToolBase):
             truncated = True
 
         return result, returned_chars, truncated
+
 
 # SearchWorkspaceSymbolsTool
 class SearchWorkspaceSymbolsTool(LspToolBase):

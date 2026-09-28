@@ -14,8 +14,12 @@ class Luid(C.Structure):
 
 
 class Adapter(C.Structure):
-    _fields_ = [("handle", C.c_uint32), ("luid", Luid),
-                ("sources", C.c_uint32), ("regions", C.c_uint32)]
+    _fields_ = [
+        ("handle", C.c_uint32),
+        ("luid", Luid),
+        ("sources", C.c_uint32),
+        ("regions", C.c_uint32),
+    ]
 
 
 class Enumeration(C.Structure):
@@ -23,8 +27,7 @@ class Enumeration(C.Structure):
 
 
 class Enumeration3(C.Structure):
-    _fields_ = [("filter", C.c_uint64), ("count", C.c_uint32),
-                ("adapters", C.POINTER(Adapter))]
+    _fields_ = [("filter", C.c_uint64), ("count", C.c_uint32), ("adapters", C.POINTER(Adapter))]
 
 
 class RegistryValue(C.Union):
@@ -32,20 +35,32 @@ class RegistryValue(C.Union):
 
 
 class Registry(C.Structure):
-    _fields_ = [("query_type", C.c_uint32), ("flags", C.c_uint32),
-                ("value_name", C.c_wchar * 260), ("value_type", C.c_uint32),
-                ("adapter_index", C.c_uint32), ("output_size", C.c_uint32),
-                ("status", C.c_uint32), ("output", RegistryValue)]
+    _fields_ = [
+        ("query_type", C.c_uint32),
+        ("flags", C.c_uint32),
+        ("value_name", C.c_wchar * 260),
+        ("value_type", C.c_uint32),
+        ("adapter_index", C.c_uint32),
+        ("output_size", C.c_uint32),
+        ("status", C.c_uint32),
+        ("output", RegistryValue),
+    ]
 
 
 class Query(C.Structure):
-    _fields_ = [("handle", C.c_uint32), ("kind", C.c_uint32),
-                ("data", C.c_void_p), ("size", C.c_uint32)]
+    _fields_ = [
+        ("handle", C.c_uint32),
+        ("kind", C.c_uint32),
+        ("data", C.c_void_p),
+        ("size", C.c_uint32),
+    ]
 
 
 def adapters(library):
-    for name, structure in (("D3DKMTEnumAdapters3", Enumeration3),
-                            ("D3DKMTEnumAdapters2", Enumeration)):
+    for name, structure in (
+        ("D3DKMTEnumAdapters3", Enumeration3),
+        ("D3DKMTEnumAdapters2", Enumeration),
+    ):
         function = getattr(library, name, None)
         if function is None:
             continue

@@ -2,13 +2,13 @@
 
 import asyncio
 import json
-from dataclasses import replace
 from types import SimpleNamespace
 
 import httpx
 import pytest
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from session_helpers import Model, perform
 
 from agent import AgentRuntime
 from agent.conversation import SavedConversation
@@ -16,65 +16,10 @@ from agent.session import SessionStore
 from agent.transcript import Transcript
 from cli.session_status import SessionStatus
 from cli.terminal.application import ConversationUI
-from llm import LLMClient, LLMConfig, LLMResponse, Message, ToolCall, Usage
-from llm.schemas import ProviderState
+from llm import LLMClient, LLMConfig, Message, ToolCall
 from sandbox import SandboxPolicy, SandboxSession
 from tools._internal.file_policy import session_state_root
 from tools.filesystem import ReadFileTool
-
-
-class Model:
-    def __init__(self, config=None):
-        self.config = config or LLMConfig("deepseek", "m", api_key="SYNTHETIC_KEY")
-        self.requests = []
-
-    def generate(self, request):
-        self.requests.append(request)
-        message = Message("assistant", "记住了：蓝色")
-        message = replace(
-            message,
-            provider_state=ProviderState(
-                self.config.provider,
-                self.config.model,
-                {"content": message.content, "reasoning_content": "visible thought"},
-                message.fingerprint(),
-            ),
-        )
-        return LLMResponse(
-            provider=self.config.provider,
-            model=self.config.model,
-            message=message,
-            finish_reason="stop",
-            usage=Usage(100, 10),
-        )
-
-
-@pytest.fixture
-def open_conversation(tmp_path):
-    stores = []
-
-    def create(project=None, *, new=False, model=None):
-        project = project or tmp_path / "project"
-        project.mkdir(exist_ok=True)
-        store = SessionStore(project, new=new).open()
-        stores.append(store)
-        model = model or Model()
-        status = SessionStatus(project, context_window=1000)
-        runtime = AgentRuntime(model, on_event=status)
-        conversation = SavedConversation(store, runtime, model.config, status)
-        conversation.checkpoint(strict=True)
-        return conversation
-
-    yield create
-    for store in stores:
-        store.close()
-
-
-def perform(conversation, text):
-    conversation.start_task(text)
-    result = conversation.runtime.run(text, history=conversation.history)
-    conversation.finish_task(result)
-    return result
 
 
 def read_saved(project):
@@ -339,7 +284,7 @@ def test_cli_auto_resume_and_new_flag(tmp_path, monkeypatch, capsys):
             ["repo-agent", "--sandbox", "local", "--model", "m", "--root", str(project), *flags],
         )
         inputs = iter([task, "/exit"])
-        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+        monkeypatch.setattr("builtins.input", lambda _, inputs=inputs: next(inputs))
         cli.main()
     assert any(m.get("content") == "remember blue" for m in calls[1]["messages"])
     assert not any(m.get("content") == "remember blue" for m in calls[2]["messages"])
@@ -469,7 +414,12 @@ def test_state_files_excluded_from_tools_and_sandbox(tmp_path, monkeypatch):
         path = store.directory / "private.json"
         path.write_text("conversation contents")
         relative = path.relative_to(tmp_path).as_posix()
-        assert ReadFileTool(tmp_path).execute({"reads": [{"path": relative}]}).data["results"][0]["error"]["code"] == "PROTECTED_FILE"
+        assert (
+            ReadFileTool(tmp_path)
+            .execute({"reads": [{"path": relative}]})
+            .data["results"][0]["error"]["code"]
+            == "PROTECTED_FILE"
+        )
         sandbox = SandboxSession(tmp_path, backend=SimpleNamespace())
         try:
             assert not (sandbox.workspace / session_state_root().relative_to(tmp_path)).exists()
@@ -546,7 +496,8 @@ def test_cli_reconnects_original_sandbox_and_new_flag_creates_copy(tmp_path, mon
     monkeypatch.setenv("DEEPSEEK_API_KEY", "synthetic-key")
     monkeypatch.setattr("cli.runtime_setup.LLMClient", lambda config: nullcontext(Model(config)))
     monkeypatch.setattr(
-        "cli.execution_environment.detect_environment", lambda **kw: DockerEnvironment("standard", "test", "x86_64")
+        "cli.execution_environment.detect_environment",
+        lambda **kw: DockerEnvironment("standard", "test", "x86_64"),
     )
     monkeypatch.setattr("cli.execution_environment.check_image_profile", lambda *args, **kw: None)
     monkeypatch.setattr(
@@ -573,7 +524,17 @@ def test_cli_reconnects_original_sandbox_and_new_flag_creates_copy(tmp_path, mon
     try:
         for flags in ([], [], ["--new-session"]):
             monkeypatch.setattr(
-                "sys.argv", ["repo-agent", "--sandbox", "docker", "--model", "m", "--root", str(project), *flags]
+                "sys.argv",
+                [
+                    "repo-agent",
+                    "--sandbox",
+                    "docker",
+                    "--model",
+                    "m",
+                    "--root",
+                    str(project),
+                    *flags,
+                ],
             )
             cli.main()
     finally:

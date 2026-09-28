@@ -9,11 +9,11 @@ from prompt_toolkit.output import DummyOutput
 from test_streaming import ANTHROPIC, CHAT, GEMINI, RESPONSES, Pieces, chat, sse
 
 from agent import AgentRuntime
+from cli.input import SessionInput
 from cli.interactive import display_result
 from cli.output import LiveOutput
-from cli.input import SessionInput
-from cli.thinking_control import ThinkingControl
 from cli.settings import add_runtime_arguments, request_options
+from cli.thinking_control import ThinkingControl
 from llm import AsyncLLMClient, ConfigurationError, LLMClient, LLMConfig, LLMRequest, Message
 from llm.errors import LLMTimeoutError
 

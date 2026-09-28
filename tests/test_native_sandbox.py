@@ -8,7 +8,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from test_sessions import open_conversation  # noqa: F401
 
 from sandbox.native import NativeBackend, seatbelt_profile
 from tools._internal.process_runner import ProcessResult
@@ -23,23 +22,27 @@ def test_native_rejects_other_platforms_before_creating_state(monkeypatch, tmp_p
 def test_policy_escapes_paths_and_does_not_grant_network_or_hardlinks(tmp_path):
     root = tmp_path / 'project "quoted" (name)'
     profile = seatbelt_profile(root, tmp_path / "scratch", [tmp_path / "runtime"], [])
-    assert '(deny default)' in profile
-    assert '(deny network*)' in profile and '(allow network' not in profile
-    assert '(deny file-link)' in profile
+    assert "(deny default)" in profile
+    assert "(deny network*)" in profile and "(allow network" not in profile
+    assert "(deny file-link)" in profile
     assert json.dumps(str(root)) in profile
     with pytest.raises(ValueError, match="控制字符"):
         seatbelt_profile(Path("/tmp/bad\npath"), tmp_path, [], [])
 
 
-@pytest.mark.parametrize("flags,mode", [([], "native"), (["--sandbox", "native"], "native"),
-                                      (["--sandbox", "local"], "local")])
+@pytest.mark.parametrize(
+    "flags,mode",
+    [([], "native"), (["--sandbox", "native"], "native"), (["--sandbox", "local"], "local")],
+)
 def test_cli_defaults_to_native_despite_old_writeback_config(tmp_path, monkeypatch, flags, mode):
     from cli import main as cli
     from llm import LLMClient
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
     monkeypatch.setenv("AGENT_SANDBOX_WRITEBACK", "on-success")
-    monkeypatch.setattr(sys, "argv", ["repo-agent", "--root", str(tmp_path), "--model", "m", *flags])
+    monkeypatch.setattr(
+        sys, "argv", ["repo-agent", "--root", str(tmp_path), "--model", "m", *flags]
+    )
     monkeypatch.setattr(LLMClient, "get_context_limit", lambda *a, **kw: None)
     native_calls = []
     closed = []
@@ -47,11 +50,17 @@ def test_cli_defaults_to_native_despite_old_writeback_config(tmp_path, monkeypat
     def native_backend(workspace, **options):
         assert options == {"profile": "auto", "gpus": None, "project_python": None}
         native_calls.append(workspace)
-        return SimpleNamespace(healthy=True, tools=lambda: [], close=lambda: closed.append(True),
-                               execution_context=lambda: {"gpu_access": {"enabled": False}})
+        return SimpleNamespace(
+            healthy=True,
+            tools=lambda: [],
+            close=lambda: closed.append(True),
+            execution_context=lambda: {"gpu_access": {"enabled": False}},
+        )
 
     monkeypatch.setattr("cli.execution_environment.NativeBackend", native_backend)
-    monkeypatch.setattr("cli.execution_environment.detect_environment", lambda **kw: pytest.fail("Docker selected"))
+    monkeypatch.setattr(
+        "cli.execution_environment.detect_environment", lambda **kw: pytest.fail("Docker selected")
+    )
     observed = []
 
     def interactive(runtime, **kwargs):
@@ -69,8 +78,19 @@ def test_explicit_direct_auto_writeback_is_rejected(monkeypatch, tmp_path):
     from cli.main import main
 
     for mode in ("local", "native"):
-        monkeypatch.setattr(sys, "argv", ["repo-agent", "--root", str(tmp_path),
-                                          "--sandbox", mode, "--sandbox-writeback", "on-success"])
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "repo-agent",
+                "--root",
+                str(tmp_path),
+                "--sandbox",
+                mode,
+                "--sandbox-writeback",
+                "on-success",
+            ],
+        )
         with pytest.raises(SystemExit) as error:
             main()
         assert error.value.code == 2
@@ -94,11 +114,28 @@ def test_language_server_timeout_blocks_later_calls(tmp_path, monkeypatch):
     backend.python = Path(sys.executable)
     backend.read_paths = ()
     backend.healthy = True
-    payload = json.dumps({"success": False, "data": {}, "error_code": "LSP_TIMEOUT",
-                          "error": "Language server timed out"})
-    monkeypatch.setattr(backend, "_run", lambda **kw: ProcessResult(
-        0, payload, "", False, None, 1, False, False,
-    ))
+    payload = json.dumps(
+        {
+            "success": False,
+            "data": {},
+            "error_code": "LSP_TIMEOUT",
+            "error": "Language server timed out",
+        }
+    )
+    monkeypatch.setattr(
+        backend,
+        "_run",
+        lambda **kw: ProcessResult(
+            0,
+            payload,
+            "",
+            False,
+            None,
+            1,
+            False,
+            False,
+        ),
+    )
     result = backend.execute(tmp_path, "get_symbols", {"path": "example.py"})
     assert result.error_code == "LSP_TIMEOUT"
     assert not backend.healthy
@@ -128,13 +165,26 @@ def test_command_validation_and_output_bypass_worker_protocol(bare_backend, monk
 
     def run(command=None, **kwargs):
         calls.append((command, kwargs))
-        return ProcessResult(None, "partial", "warning", True, None, 1000, False, False,
-                             status="timed_out", cleanup_status="confirmed", output_complete=False)
+        return ProcessResult(
+            None,
+            "partial",
+            "warning",
+            True,
+            None,
+            1000,
+            False,
+            False,
+            status="timed_out",
+            cleanup_status="confirmed",
+            output_complete=False,
+        )
 
     monkeypatch.setattr(backend, "_run", run)
     invalid = backend.execute(backend.workspace, "run_command", {"command": ["x"], "cwd": "../"})
     assert invalid.error_code == "PATH_OUTSIDE_WORKSPACE" and calls == []
-    result = backend.execute(backend.workspace, "run_python", {"code": "print('x')", "timeout_seconds": 1})
+    result = backend.execute(
+        backend.workspace, "run_python", {"code": "print('x')", "timeout_seconds": 1}
+    )
     command, kwargs = calls[0]
     assert command == [str(backend.python), "-u", "-c", "print('x')"]
     assert "request" not in kwargs
@@ -143,23 +193,39 @@ def test_command_validation_and_output_bypass_worker_protocol(bare_backend, monk
     assert result.data["execution_allowed"] and backend.healthy
 
 
-def test_degraded_backend_keeps_lightweight_reads_and_passive_environment(bare_backend, monkeypatch):
+def test_degraded_backend_keeps_lightweight_reads_and_passive_environment(
+    bare_backend, monkeypatch
+):
     backend = bare_backend
     backend.healthy = False
     calls = []
 
     def run(**kwargs):
         calls.append(kwargs)
-        return ProcessResult(0, json.dumps({"success": True, "data": {"files": []}}),
-                             "", False, None, 1, False, False, cleanup_status="confirmed")
+        return ProcessResult(
+            0,
+            json.dumps({"success": True, "data": {"files": []}}),
+            "",
+            False,
+            None,
+            1,
+            False,
+            False,
+            cleanup_status="confirmed",
+        )
 
     monkeypatch.setattr(backend, "_run", run)
     (backend.workspace / "a.py").write_text("still readable")
     assert backend.execute(backend.workspace, "read_file", {"reads": [{"path": "a.py"}]}).success
     assert calls == []
     assert not backend.healthy  # A successful read does not clear quarantine.
-    assert backend.execute(backend.workspace, "run_command", {"command": ["echo"]}).error_code == "NATIVE_UNHEALTHY"
-    monkeypatch.setattr("tools.execute.ProcessRunner.run", lambda *a, **kw: pytest.fail("Active environment probe"))
+    assert (
+        backend.execute(backend.workspace, "run_command", {"command": ["echo"]}).error_code
+        == "NATIVE_UNHEALTHY"
+    )
+    monkeypatch.setattr(
+        "tools.execute.ProcessRunner.run", lambda *a, **kw: pytest.fail("Active environment probe")
+    )
     result = backend.execute(backend.workspace, "get_execution_environment", {})
     assert result.success
     assert result.data["executor_healthy"] is False
@@ -170,10 +236,23 @@ def test_degraded_backend_keeps_lightweight_reads_and_passive_environment(bare_b
 
 def test_worker_failure_retains_bounded_output(bare_backend, monkeypatch):
     backend = bare_backend
-    monkeypatch.setattr(backend, "_run", lambda **kw: ProcessResult(
-        None, "first" + "x" * 50000 + "last", "error", True, None, 130000,
-        False, False, status="timed_out", cleanup_status="confirmed", output_complete=False,
-    ))
+    monkeypatch.setattr(
+        backend,
+        "_run",
+        lambda **kw: ProcessResult(
+            None,
+            "first" + "x" * 50000 + "last",
+            "error",
+            True,
+            None,
+            130000,
+            False,
+            False,
+            status="timed_out",
+            cleanup_status="confirmed",
+            output_complete=False,
+        ),
+    )
     result = backend.execute(backend.workspace, "git_status", {})
     assert result.error_code == "NATIVE_EXECUTION_FAILED"
     assert result.data["stdout"].startswith("first") and result.data["stdout"].endswith("last")
@@ -182,11 +261,29 @@ def test_worker_failure_retains_bounded_output(bare_backend, monkeypatch):
 
 
 def test_outer_supervisor_confirmation_recovers_inner_timeout(bare_backend, monkeypatch):
-    payload = json.dumps({"success": False, "data": {"cleanup_error": "inner permission denied"},
-                          "error_code": "LSP_TIMEOUT", "error": "timeout"})
-    monkeypatch.setattr(bare_backend, "_run", lambda **kw: ProcessResult(
-        0, payload, "", False, None, 1, False, False, cleanup_status="confirmed",
-    ))
+    payload = json.dumps(
+        {
+            "success": False,
+            "data": {"cleanup_error": "inner permission denied"},
+            "error_code": "LSP_TIMEOUT",
+            "error": "timeout",
+        }
+    )
+    monkeypatch.setattr(
+        bare_backend,
+        "_run",
+        lambda **kw: ProcessResult(
+            0,
+            payload,
+            "",
+            False,
+            None,
+            1,
+            False,
+            False,
+            cleanup_status="confirmed",
+        ),
+    )
     result = bare_backend.execute(bare_backend.workspace, "get_symbols", {"path": "a.py"})
     assert result.error_code == "LSP_TIMEOUT"
     assert result.data["inner_cleanup_error"] == "inner permission denied"
@@ -211,7 +308,9 @@ def test_native_edits_original_runs_tools_and_reports_actual_limits(native_proje
     assert {"run_command", "run_python", "get_symbols"} <= tools.keys()
     assert tools["write_file"].execute({"path": "test.txt", "content": "original"}).success
     assert (root / "test.txt").read_text() == "original"
-    result = tools["run_python"].execute({"code": "from pathlib import Path; Path('test.txt').write_text('edited')"})
+    result = tools["run_python"].execute(
+        {"code": "from pathlib import Path; Path('test.txt').write_text('edited')"}
+    )
     assert result.success and result.data["exit_code"] == 0, result
     assert (root / "test.txt").read_text() == "edited"
     result = tools["run_command"].execute({"command": ["/bin/echo", "ok"]})
@@ -234,7 +333,7 @@ def test_scripts_cannot_escape_or_read_credentials(native_project, tmp_path, mon
     (root / ".git").mkdir()
     (root / ".git" / "config").write_text("secret")
     monkeypatch.setenv("OPENAI_API_KEY", "must-not-inherit")
-    code = f'''
+    code = f"""
 import errno, os, pathlib, socket, subprocess, sys
 def denied(action):
     try:
@@ -247,13 +346,16 @@ outside = pathlib.Path({str(outside)!r})
 for path in (outside, pathlib.Path('alias'), pathlib.Path('.ENV'), pathlib.Path('.git/config')):
     denied(path.read_text)
     denied(lambda: path.write_text('changed'))
-denied(lambda: pathlib.Path({str(backend.runtime / 'tools/factory.py')!r}).write_text('changed'))
+denied(lambda: pathlib.Path({str(backend.runtime / "tools/factory.py")!r}).write_text('changed'))
 denied(lambda: socket.socket().connect(('127.0.0.1', 9)))
 denied(lambda: pathlib.Path('new.key').write_text('secret'))
 assert 'OPENAI_API_KEY' not in os.environ
-child = subprocess.run([sys.executable, '-I', '-c', 'open(' + repr(str(outside)) + ').read()'], capture_output=True)
+child = subprocess.run(
+    [sys.executable, '-I', '-c', 'open(' + repr(str(outside)) + ').read()'],
+    capture_output=True,
+)
 assert child.returncode != 0
-'''
+"""
     result = backend.execute(root, "run_python", {"code": code})
     assert result.success and result.data["exit_code"] == 0, result
     assert outside.read_text() == "not accessible"
@@ -281,10 +383,21 @@ def test_hardlink_and_failed_cleanup_stop_execution(native_project, tmp_path, mo
         backend.execute(root, "run_command", {"command": ["/bin/true"]})
     (root / "hardlink").unlink()
     with monkeypatch.context() as scoped:
-        scoped.setattr("sandbox.native.ProcessRunner.run", lambda *a, **kw: ProcessResult(
-            0, "partial output", "", False, "cleanup failed", 1, False, False,
-            cleanup_status="unknown", output_complete=False,
-        ))
+        scoped.setattr(
+            "sandbox.native.ProcessRunner.run",
+            lambda *a, **kw: ProcessResult(
+                0,
+                "partial output",
+                "",
+                False,
+                "cleanup failed",
+                1,
+                False,
+                False,
+                cleanup_status="unknown",
+                output_complete=False,
+            ),
+        )
         result = backend.execute(root, "run_command", {"command": ["/bin/true"]})
         assert not result.success and result.data["stdout"] == "partial output"
     assert not backend.healthy
@@ -306,7 +419,7 @@ def test_custom_protected_paths_and_runtime_ancestors_cannot_be_renamed(native_p
     (runtime / "module.py").write_text("trusted")
     backend.protected_paths = (*backend.protected_paths, private)
     backend.read_paths = (*backend.read_paths, runtime)
-    code = '''
+    code = """
 import errno
 from pathlib import Path
 for path in ('parent', 'toolchain'):
@@ -316,7 +429,7 @@ for path in ('parent', 'toolchain'):
         assert e.errno in (errno.EPERM, errno.EACCES), repr(e)
     else:
         raise AssertionError('protected ancestor renamed')
-'''
+"""
     result = backend.execute(root, "run_python", {"code": code})
     assert result.success and result.data["exit_code"] == 0, result
 
@@ -324,16 +437,29 @@ for path in ('parent', 'toolchain'):
 @REAL_NATIVE
 def test_timeout_keeps_output_and_allows_later_calls(native_project):
     root, backend = native_project
-    result = backend.execute(root, "run_python", {
-        "code": "import time,sys; print('started', flush=True); print('progress', file=sys.stderr, flush=True); time.sleep(10)", "timeout_seconds": 1,
-    })
+    result = backend.execute(
+        root,
+        "run_python",
+        {
+            "code": (
+                "import time,sys; print('started', flush=True); "
+                "print('progress', file=sys.stderr, flush=True); time.sleep(10)"
+            ),
+            "timeout_seconds": 1,
+        },
+    )
     assert result.data["timed_out"], result
     assert result.data["stdout"] == "started\n"
     assert result.data["stderr"] == "progress\n"
     assert result.data["cleanup_status"] == "confirmed"
     assert result.data["output_complete"] is False
     assert backend.healthy
-    assert backend.execute(root, "run_command", {"command": ["/bin/echo", "after timeout"]}).data["stdout"] == "after timeout\n"
+    assert (
+        backend.execute(root, "run_command", {"command": ["/bin/echo", "after timeout"]}).data[
+            "stdout"
+        ]
+        == "after timeout\n"
+    )
 
 
 @REAL_NATIVE
@@ -341,7 +467,10 @@ def test_native_timeout_cleans_child_that_changes_session(native_project):
     from host_support.supervision import ProcessTable
 
     root, backend = native_project
-    child = "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready', flush=True); time.sleep(10)"
+    child = (
+        "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "print('ready', flush=True); time.sleep(10)"
+    )
     code = (
         "import subprocess,sys,time; "
         f"p=subprocess.Popen([sys.executable,'-u','-c',{child!r}], start_new_session=True); "
@@ -364,8 +493,7 @@ def test_native_cli_records_mode_and_closes_backend(tmp_path, monkeypatch):
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
     monkeypatch.setenv("AGENT_SANDBOX_WRITEBACK", "on-success")
-    monkeypatch.setattr(sys, "argv", ["repo-agent", "--root", str(tmp_path),
-                                      "--model", "m"])
+    monkeypatch.setattr(sys, "argv", ["repo-agent", "--root", str(tmp_path), "--model", "m"])
     monkeypatch.setattr(LLMClient, "get_context_limit", lambda *a, **kw: None)
     backends = []
 

@@ -26,6 +26,7 @@ def open_directory(path, *, dir_fd=None):
     require_safe_descriptors()
     if os.name == "nt":
         from . import windows_files
+
         return windows_files.open_directory(path, dir_fd=dir_fd)
     return os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
 
@@ -61,6 +62,7 @@ def open_file(path, flags=os.O_RDONLY, mode=0o600, *, dir_fd=None, nonblocking=T
     require_safe_descriptors()
     if os.name == "nt":
         from . import windows_files
+
         return windows_files.open_file(path, flags, mode, dir_fd=dir_fd, nonblocking=nonblocking)
     flags |= os.O_NOFOLLOW
     if nonblocking:
@@ -71,6 +73,7 @@ def open_file(path, flags=os.O_RDONLY, mode=0o600, *, dir_fd=None, nonblocking=T
 def stat_at(path, *, dir_fd):
     if os.name == "nt":
         from . import windows_files
+
         return windows_files.stat_at(path, dir_fd=dir_fd)
     return os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
 
@@ -78,6 +81,7 @@ def stat_at(path, *, dir_fd):
 def list_directory(fd):
     if os.name == "nt":
         from . import windows_files
+
         return windows_files.list_directory(fd)
     return os.listdir(fd)
 
@@ -85,6 +89,7 @@ def list_directory(fd):
 def mkdir_at(path, mode=0o777, *, dir_fd):
     if os.name == "nt":
         from . import windows_files
+
         return windows_files.mkdir_at(path, mode, dir_fd=dir_fd)
     return os.mkdir(path, mode=mode, dir_fd=dir_fd)
 
@@ -92,6 +97,7 @@ def mkdir_at(path, mode=0o777, *, dir_fd):
 def unlink_at(path, *, dir_fd):
     if os.name == "nt":
         from . import windows_files
+
         return windows_files.unlink_at(path, dir_fd=dir_fd)
     return os.unlink(path, dir_fd=dir_fd)
 
@@ -99,8 +105,10 @@ def unlink_at(path, *, dir_fd):
 def rename_at(source, destination, *, src_dir_fd, dst_dir_fd, replace=False):
     if os.name == "nt":
         from . import windows_files
-        return windows_files.rename_at(source, destination, src_dir_fd=src_dir_fd,
-                                       dst_dir_fd=dst_dir_fd, replace=replace)
+
+        return windows_files.rename_at(
+            source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd, replace=replace
+        )
     operation = os.replace if replace else os.rename
     return operation(source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 
@@ -108,6 +116,7 @@ def rename_at(source, destination, *, src_dir_fd, dst_dir_fd, replace=False):
 def set_file_mode(fd, mode):
     if os.name == "nt":
         from . import windows_files
+
         return windows_files.set_mode(fd, mode)
     return os.fchmod(fd, mode)
 

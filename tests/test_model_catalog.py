@@ -4,8 +4,8 @@ import httpx
 import pytest
 from prompt_toolkit.mouse_events import MouseEventType
 
-from cli.session_status import SessionStatus
 from cli.model_picker import ModelPicker, pick_model
+from cli.session_status import SessionStatus
 from llm import LLMClient, LLMConfig
 from llm.model_catalog import (
     MODEL_CATALOG,

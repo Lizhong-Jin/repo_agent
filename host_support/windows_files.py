@@ -23,8 +23,11 @@ def validate_component(name):
     stem = name.split(".")[0].rstrip(" ").upper()
     reserved = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
     reserved.update(f"{prefix}{digit}" for prefix in ("COM", "LPT") for digit in "123456789¹²³")
-    if (any(ord(c) < 32 or c in '<>:"/\\|?*' for c in name)
-            or name.endswith((" ", ".")) or stem in reserved):
+    if (
+        any(ord(c) < 32 or c in '<>:"/\\|?*' for c in name)
+        or name.endswith((" ", "."))
+        or stem in reserved
+    ):
         raise ValueError(f"Unsafe Windows file name: {name!r}")
     return name
 
@@ -38,7 +41,7 @@ def validate_snapshot_names(names):
         parts = name.split("/")
         for index, part in enumerate(parts):
             validate_component(part)
-            prefix = "/".join(parts[:index + 1])
+            prefix = "/".join(parts[: index + 1])
             previous = seen.setdefault(prefix.casefold(), prefix)
             if previous != prefix:
                 raise ValueError(f"Windows path collision: {previous!r}, {prefix!r}")
@@ -56,9 +59,14 @@ class _UnicodeString(C.Structure):
 
 
 class _ObjectAttributes(C.Structure):
-    _fields_ = [("Length", C.c_uint32), ("RootDirectory", C.c_void_p),
-                ("ObjectName", C.POINTER(_UnicodeString)), ("Attributes", C.c_uint32),
-                ("SecurityDescriptor", C.c_void_p), ("SecurityQualityOfService", C.c_void_p)]
+    _fields_ = [
+        ("Length", C.c_uint32),
+        ("RootDirectory", C.c_void_p),
+        ("ObjectName", C.POINTER(_UnicodeString)),
+        ("Attributes", C.c_uint32),
+        ("SecurityDescriptor", C.c_void_p),
+        ("SecurityQualityOfService", C.c_void_p),
+    ]
 
 
 class _IOStatus(C.Structure):
@@ -66,19 +74,32 @@ class _IOStatus(C.Structure):
 
 
 class _BasicInfo(C.Structure):
-    _fields_ = [("CreationTime", C.c_longlong), ("LastAccessTime", C.c_longlong),
-                ("LastWriteTime", C.c_longlong), ("ChangeTime", C.c_longlong),
-                ("FileAttributes", C.c_uint32)]
+    _fields_ = [
+        ("CreationTime", C.c_longlong),
+        ("LastAccessTime", C.c_longlong),
+        ("LastWriteTime", C.c_longlong),
+        ("ChangeTime", C.c_longlong),
+        ("FileAttributes", C.c_uint32),
+    ]
 
 
 class _RenameInfo(C.Structure):
-    _fields_ = [("Flags", C.c_uint32), ("RootDirectory", C.c_void_p),
-                ("FileNameLength", C.c_uint32), ("FileName", C.c_ushort * 1)]
+    _fields_ = [
+        ("Flags", C.c_uint32),
+        ("RootDirectory", C.c_void_p),
+        ("FileNameLength", C.c_uint32),
+        ("FileName", C.c_ushort * 1),
+    ]
 
 
 class _Overlapped(C.Structure):
-    _fields_ = [("Internal", C.c_size_t), ("InternalHigh", C.c_size_t),
-                ("Offset", C.c_uint32), ("OffsetHigh", C.c_uint32), ("hEvent", C.c_void_p)]
+    _fields_ = [
+        ("Internal", C.c_size_t),
+        ("InternalHigh", C.c_size_t),
+        ("Offset", C.c_uint32),
+        ("OffsetHigh", C.c_uint32),
+        ("hEvent", C.c_void_p),
+    ]
 
 
 class _WindowsAPI:
@@ -88,29 +109,87 @@ class _WindowsAPI:
         self.crt = msvcrt
         self.nt = C.WinDLL("ntdll", use_last_error=True)
         self.kernel = C.WinDLL("kernel32", use_last_error=True)
-        self._bind(self.nt, "NtCreateFile", C.c_int32, [
-            C.POINTER(C.c_void_p), C.c_uint32, C.POINTER(_ObjectAttributes),
-            C.POINTER(_IOStatus), C.c_void_p, C.c_uint32, C.c_uint32, C.c_uint32,
-            C.c_uint32, C.c_void_p, C.c_uint32,
-        ])
-        self._bind(self.nt, "NtQueryDirectoryFile", C.c_int32, [
-            C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p, C.POINTER(_IOStatus),
-            C.c_void_p, C.c_uint32, C.c_int, C.c_ubyte, C.c_void_p, C.c_ubyte,
-        ])
-        self._bind(self.nt, "NtSetInformationFile", C.c_int32, [
-            C.c_void_p, C.POINTER(_IOStatus), C.c_void_p, C.c_uint32, C.c_int,
-        ])
+        self._bind(
+            self.nt,
+            "NtCreateFile",
+            C.c_int32,
+            [
+                C.POINTER(C.c_void_p),
+                C.c_uint32,
+                C.POINTER(_ObjectAttributes),
+                C.POINTER(_IOStatus),
+                C.c_void_p,
+                C.c_uint32,
+                C.c_uint32,
+                C.c_uint32,
+                C.c_uint32,
+                C.c_void_p,
+                C.c_uint32,
+            ],
+        )
+        self._bind(
+            self.nt,
+            "NtQueryDirectoryFile",
+            C.c_int32,
+            [
+                C.c_void_p,
+                C.c_void_p,
+                C.c_void_p,
+                C.c_void_p,
+                C.POINTER(_IOStatus),
+                C.c_void_p,
+                C.c_uint32,
+                C.c_int,
+                C.c_ubyte,
+                C.c_void_p,
+                C.c_ubyte,
+            ],
+        )
+        self._bind(
+            self.nt,
+            "NtSetInformationFile",
+            C.c_int32,
+            [
+                C.c_void_p,
+                C.POINTER(_IOStatus),
+                C.c_void_p,
+                C.c_uint32,
+                C.c_int,
+            ],
+        )
         self._bind(self.nt, "RtlNtStatusToDosError", C.c_uint32, [C.c_int32])
-        self._bind(self.kernel, "GetFileInformationByHandleEx", C.c_int,
-                   [C.c_void_p, C.c_int, C.c_void_p, C.c_uint32])
-        self._bind(self.kernel, "SetFileInformationByHandle", C.c_int,
-                   [C.c_void_p, C.c_int, C.c_void_p, C.c_uint32])
-        self._bind(self.kernel, "GetFinalPathNameByHandleW", C.c_uint32,
-                   [C.c_void_p, C.c_void_p, C.c_uint32, C.c_uint32])
+        self._bind(
+            self.kernel,
+            "GetFileInformationByHandleEx",
+            C.c_int,
+            [C.c_void_p, C.c_int, C.c_void_p, C.c_uint32],
+        )
+        self._bind(
+            self.kernel,
+            "SetFileInformationByHandle",
+            C.c_int,
+            [C.c_void_p, C.c_int, C.c_void_p, C.c_uint32],
+        )
+        self._bind(
+            self.kernel,
+            "GetFinalPathNameByHandleW",
+            C.c_uint32,
+            [C.c_void_p, C.c_void_p, C.c_uint32, C.c_uint32],
+        )
         self._bind(self.kernel, "CloseHandle", C.c_int, [C.c_void_p])
-        self._bind(self.kernel, "LockFileEx", C.c_int, [
-            C.c_void_p, C.c_uint32, C.c_uint32, C.c_uint32, C.c_uint32, C.POINTER(_Overlapped),
-        ])
+        self._bind(
+            self.kernel,
+            "LockFileEx",
+            C.c_int,
+            [
+                C.c_void_p,
+                C.c_uint32,
+                C.c_uint32,
+                C.c_uint32,
+                C.c_uint32,
+                C.POINTER(_Overlapped),
+            ],
+        )
 
     @staticmethod
     def _bind(library, name, result, arguments):
@@ -135,7 +214,10 @@ class _WindowsAPI:
     def check_name(self, fd, expected):
         buffer = C.create_unicode_buffer(32768)
         size = self.kernel.GetFinalPathNameByHandleW(
-            self.handle(fd), buffer, len(buffer), 4  # NORMALIZED | VOLUME_NAME_NONE
+            self.handle(fd),
+            buffer,
+            len(buffer),
+            4,  # NORMALIZED | VOLUME_NAME_NONE
         )
         if not size:
             raise C.WinError(C.get_last_error())
@@ -145,16 +227,21 @@ class _WindowsAPI:
         if actual.casefold() != expected.casefold():
             raise PermissionError("Windows short-name aliases are not allowed")
 
-    def open(self, name, parent, access, disposition=1, *, directory=False,
-             metadata=False, crt_flags=0):
+    def open(
+        self, name, parent, access, disposition=1, *, directory=False, metadata=False, crt_flags=0
+    ):
         encoded = name.encode("utf-16-le")
         if len(encoded) > 65532:
             raise ValueError("Windows path is too long")
         buffer = C.create_string_buffer(encoded + b"\0\0")
         string = _UnicodeString(len(encoded), len(encoded) + 2, C.addressof(buffer))
         attributes = _ObjectAttributes(
-            C.sizeof(_ObjectAttributes), self.handle(parent) if parent is not None else None,
-            C.pointer(string), 0x40, None, None,  # OBJ_CASE_INSENSITIVE
+            C.sizeof(_ObjectAttributes),
+            self.handle(parent) if parent is not None else None,
+            C.pointer(string),
+            0x40,
+            None,
+            None,  # OBJ_CASE_INSENSITIVE
         )
         handle, ios = C.c_void_p(), _IOStatus()
         # Synchronous, non-inheritable handles. OPEN_REPARSE_POINT applies even
@@ -164,14 +251,23 @@ class _WindowsAPI:
             options |= 0x1 if directory else 0x40
         if directory:
             access |= 0x20  # FILE_TRAVERSE
-        self.check(self.nt.NtCreateFile(
-            C.byref(handle), access | 0x100000 | 0x80, C.byref(attributes),
-            C.byref(ios), None, 0x80, 0x7, disposition, options, None, 0,
-        ))
-        try:
-            fd = self.crt.open_osfhandle(
-                handle.value, os.O_BINARY | os.O_NOINHERIT | crt_flags
+        self.check(
+            self.nt.NtCreateFile(
+                C.byref(handle),
+                access | 0x100000 | 0x80,
+                C.byref(attributes),
+                C.byref(ios),
+                None,
+                0x80,
+                0x7,
+                disposition,
+                options,
+                None,
+                0,
             )
+        )
+        try:
+            fd = self.crt.open_osfhandle(handle.value, os.O_BINARY | os.O_NOINHERIT | crt_flags)
         except BaseException:
             self.kernel.CloseHandle(handle)
             raise
@@ -242,8 +338,13 @@ def open_file(path, flags=os.O_RDONLY, mode=0o600, *, dir_fd=None, nonblocking=T
     with _parent(path, dir_fd) as (parent, name):
         if name is None:
             raise IsADirectoryError(str(path))
-        fd = _api().open(name, parent, access, disposition,
-                          crt_flags=flags & (os.O_APPEND | os.O_WRONLY | os.O_RDWR))
+        fd = _api().open(
+            name,
+            parent,
+            access,
+            disposition,
+            crt_flags=flags & (os.O_APPEND | os.O_WRONLY | os.O_RDWR),
+        )
     try:
         # Validate the opened object before any truncation (including hard links).
         if flags & os.O_TRUNC:
@@ -273,8 +374,17 @@ def list_directory(fd):
     result, restart = [], True
     while True:
         status = api.nt.NtQueryDirectoryFile(
-            api.handle(fd), None, None, None, C.byref(ios), buffer, len(buffer),
-            12, False, None, restart,  # FileNamesInformation
+            api.handle(fd),
+            None,
+            None,
+            None,
+            C.byref(ios),
+            buffer,
+            len(buffer),
+            12,
+            False,
+            None,
+            restart,  # FileNamesInformation
         )
         if status & 0xFFFFFFFF == 0x80000006:  # STATUS_NO_MORE_FILES
             return result
@@ -283,7 +393,7 @@ def list_directory(fd):
         offset = 0
         while True:
             following, _, size = struct.unpack_from("<III", buffer, offset)
-            name = buffer.raw[offset + 12:offset + 12 + size].decode("utf-16-le")
+            name = buffer.raw[offset + 12 : offset + 12 + size].decode("utf-16-le")
             if name not in {".", ".."}:
                 result.append(name)
             if not following:
@@ -303,9 +413,15 @@ def unlink_at(name, *, dir_fd):
         # Windows 10+ supports deletion of read-only staging files without
         # changing their attributes or weakening their ACLs.
         disposition, ios = C.c_uint32(1 | 2 | 16), _IOStatus()
-        api.check(api.nt.NtSetInformationFile(
-            api.handle(fd), C.byref(ios), C.byref(disposition), C.sizeof(disposition), 64,
-        ))
+        api.check(
+            api.nt.NtSetInformationFile(
+                api.handle(fd),
+                C.byref(ios),
+                C.byref(disposition),
+                C.sizeof(disposition),
+                64,
+            )
+        )
     finally:
         os.close(fd)
 

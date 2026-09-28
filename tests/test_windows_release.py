@@ -20,8 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_windows_bootstrap_is_the_only_top_level_entry():
     import build_manifest
 
-    files = {p.relative_to(ROOT).as_posix()
-             for p in build_manifest.bootstrap_files(ROOT, target="windows-x86_64")}
+    files = {
+        p.relative_to(ROOT).as_posix()
+        for p in build_manifest.bootstrap_files(ROOT, target="windows-x86_64")
+    }
     assert "install_release.ps1" in files
     assert not any(name.endswith(".sh") for name in files)
     assert not {"install.ps1", "uninstall.ps1"} & files
@@ -32,8 +34,11 @@ def test_windows_bootstrap_is_the_only_top_level_entry():
 def test_runtime_lock_windows_matches_platform_and_sha():
     from host_support.platforms import release_target
 
-    records = [line.split() for line in (ROOT / "runtime/python.lock").read_text().splitlines()
-               if line.startswith("windows-x86_64 ")]
+    records = [
+        line.split()
+        for line in (ROOT / "runtime/python.lock").read_text().splitlines()
+        if line.startswith("windows-x86_64 ")
+    ]
     assert len(records) == 1
     target, version, digest, url = records[0]
     assert version == "3.13.15" and len(digest) == 64
@@ -46,7 +51,9 @@ def test_runtime_lock_windows_matches_platform_and_sha():
 
 
 def test_cross_build_evaluates_markers_for_windows(tmp_path):
-    spec = importlib.util.spec_from_file_location("prepare", ROOT / "scripts/prepare_python_bundle.py")
+    spec = importlib.util.spec_from_file_location(
+        "prepare", ROOT / "scripts/prepare_python_bundle.py"
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     source, target = tmp_path / "input.lock", tmp_path / "output.lock"
@@ -77,9 +84,14 @@ def test_zip_paths_rejected_before_writing(tmp_path, name):
     assert not list(destination.iterdir())
 
 
-@pytest.mark.parametrize("names", [
-    ("file", "file/child"), ("folder/file", "folder/file/child"), ("Folder/a", "folder/b"),
-])
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("file", "file/child"),
+        ("folder/file", "folder/file/child"),
+        ("Folder/a", "folder/b"),
+    ],
+)
 def test_zip_ambiguous_tree_rejected_before_writing(tmp_path, names):
     from installer.paths import extract_files
 
@@ -99,9 +111,15 @@ def test_windows_defaults_local_and_preserves_recorded_mode(tmp_path, monkeypatc
 
     monkeypatch.setattr(dependencies, "sys", SimpleNamespace(platform="win32"))
     assert dependencies.available_mode(tmp_path) == "local"
-    (tmp_path / ".repo-agent-install.json").write_text(json.dumps({
-        "root": str(tmp_path.resolve()), "mode": "docker",
-    }), encoding="utf-8")
+    (tmp_path / ".repo-agent-install.json").write_text(
+        json.dumps(
+            {
+                "root": str(tmp_path.resolve()),
+                "mode": "docker",
+            }
+        ),
+        encoding="utf-8",
+    )
     assert dependencies.available_mode(tmp_path) == "docker"
 
 
@@ -138,7 +156,9 @@ def create_install(tmp_path, name):
 
 
 def test_windows_command_takeover_requires_confirmation_and_preserves_external_edits(
-    tmp_path, monkeypatch, windows_host,
+    tmp_path,
+    monkeypatch,
+    windows_host,
 ):
     first, record = create_install(tmp_path, "first")
     second, _ = create_install(tmp_path, "second")
@@ -227,8 +247,10 @@ def test_windows_path_rollback_after_interrupted_install(tmp_path, windows_host)
     assert windows_host["value"] == "existing-path"
 
 
-@pytest.mark.skipif(os.name != "nt" or not os.environ.get("REPO_AGENT_WINDOWS_ARCHIVE"),
-                    reason="Requires built Windows ZIP and a real Windows kernel")
+@pytest.mark.skipif(
+    os.name != "nt" or not os.environ.get("REPO_AGENT_WINDOWS_ARCHIVE"),
+    reason="Requires built Windows ZIP and a real Windows kernel",
+)
 def test_real_windows_release_survives_download_removal_and_uninstalls(tmp_path):
     from installer.paths import extract_files
     from installer.release_install import locate_release_root
@@ -242,22 +264,40 @@ def test_real_windows_release_survives_download_removal_and_uninstalls(tmp_path)
     extract_files(archive, download)
     bundle = locate_release_root(download)
     manifest = read_release(bundle)
-    env = {key: value for key, value in os.environ.items()
-           if not key.startswith(("AGENT_", "LLM_", "XDG_", "PYTHON")) and not key.endswith("_API_KEY")}
-    env.update(PYTHONUTF8="1", XDG_CONFIG_HOME=str(tmp_path / "config"), XDG_STATE_HOME=str(tmp_path / "state"),
-               XDG_DATA_HOME=str(tmp_path / "data"), AGENT_PYTHON_CACHE=str(tmp_path / "runtime"))
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("AGENT_", "LLM_", "XDG_", "PYTHON")) and not key.endswith("_API_KEY")
+    }
+    env.update(
+        PYTHONUTF8="1",
+        XDG_CONFIG_HOME=str(tmp_path / "config"),
+        XDG_STATE_HOME=str(tmp_path / "state"),
+        XDG_DATA_HOME=str(tmp_path / "data"),
+        AGENT_PYTHON_CACHE=str(tmp_path / "runtime"),
+    )
     bins = tmp_path / "commands with spaces"
     powershell = shutil.which("powershell.exe")
 
     def run(args):
-        result = subprocess.run([str(arg) for arg in args], env=env, capture_output=True,
-                                timeout=300)
-        assert result.returncode == 0, result.stdout.decode(errors="replace") + result.stderr.decode(errors="replace")
+        result = subprocess.run(
+            [str(arg) for arg in args], env=env, capture_output=True, timeout=300
+        )
+        assert result.returncode == 0, result.stdout.decode(
+            errors="replace"
+        ) + result.stderr.decode(errors="replace")
         return result.stdout.decode("utf-8")
 
     def script(root, *arguments):
-        return [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                root / "install_release.ps1", *arguments]
+        return [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            root / "install_release.ps1",
+            *arguments,
+        ]
 
     run(script(bundle, "--check", "--mode", "local", "--bin-dir", bins))
     assert not (tmp_path / "data").exists() and not (tmp_path / "runtime").exists()

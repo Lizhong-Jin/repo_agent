@@ -10,8 +10,13 @@ from host_support.storage import atomic_write
 
 
 def atomic_json(path: Path, value: dict) -> None:
-    atomic_write(path, json.dumps(value, ensure_ascii=False).encode("utf-8"),
-                 prefix=path.name + ".", sync=True, mode=0o600)
+    atomic_write(
+        path,
+        json.dumps(value, ensure_ascii=False).encode("utf-8"),
+        prefix=path.name + ".",
+        sync=True,
+        mode=0o600,
+    )
 
 
 class WritebackGuard:

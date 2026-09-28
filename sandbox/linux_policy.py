@@ -62,7 +62,10 @@ class PolicyPlan:
                     break
                 guards.add(parent)
         return cls(
-            workspace, read_paths, protected_paths, tuple(outermost(read_paths)),
+            workspace,
+            read_paths,
+            protected_paths,
+            tuple(outermost(read_paths)),
             tuple(outermost((workspace, *read_paths))),
             {parent: frozenset(names) for parent, names in children.items()},
             frozenset(path.name for path in protected_paths),
@@ -85,8 +88,16 @@ class PolicyScan:
     are intentionally not deduplicated merely because their inode IDs match.
     """
 
-    def __init__(self, plan, *, git_read, check_workspace_file=None,
-                 mount_table=None, pruned_paths=(), extra_roots=()):
+    def __init__(
+        self,
+        plan,
+        *,
+        git_read,
+        check_workspace_file=None,
+        mount_table=None,
+        pruned_paths=(),
+        extra_roots=(),
+    ):
         self.plan, self.git_read = plan, git_read
         self.check_workspace_file = check_workspace_file
         self.workspace = str(plan.workspace)
@@ -99,11 +110,24 @@ class PolicyScan:
         self.active_bucket = None
         self.buckets = {}
         self.metrics = dict(
-            scan_ms=0.0, enumeration_ms=0.0, rules_ms=0.0, mapping_ms=0.0,
-            metadata_ms=0.0, directory_opens=0, metadata_checks=0, by_root_mount=[],
-            directories_scanned=0, directories_reused=0, entries_classified=0,
-            roots=0, alias_roots=0, masks=0, git_paths=0, complete=False,
-            workspace_directories_scanned=0, workspace_entries_checked=0,
+            scan_ms=0.0,
+            enumeration_ms=0.0,
+            rules_ms=0.0,
+            mapping_ms=0.0,
+            metadata_ms=0.0,
+            directory_opens=0,
+            metadata_checks=0,
+            by_root_mount=[],
+            directories_scanned=0,
+            directories_reused=0,
+            entries_classified=0,
+            roots=0,
+            alias_roots=0,
+            masks=0,
+            git_paths=0,
+            complete=False,
+            workspace_directories_scanned=0,
+            workspace_entries_checked=0,
             workspace_validation_ms=0.0,
         )
 
@@ -182,8 +206,11 @@ class PolicyScan:
         finally:
             self.metrics["scan_ms"] = (perf_counter() - started) * 1000
             self.metrics["mapping_ms"] = max(
-                0.0, self.metrics["scan_ms"] - self.metrics["enumeration_ms"]
-                - self.metrics["rules_ms"] - self.metrics["workspace_validation_ms"]
+                0.0,
+                self.metrics["scan_ms"]
+                - self.metrics["enumeration_ms"]
+                - self.metrics["rules_ms"]
+                - self.metrics["workspace_validation_ms"]
                 - self.metrics["metadata_ms"],
             )
             self.metrics["by_root_mount"] = list(self.buckets.values())
@@ -212,9 +239,11 @@ class PolicyScan:
             info = root.stat()
             identities.append((root, canonical_root, info.st_dev, info.st_ino))
             self.metrics["alias_roots"] += root != canonical_root
-            reuse = not (root.is_relative_to(workspace)
-                         or canonical_root.is_relative_to(workspace)
-                         or workspace.is_relative_to(canonical_root))
+            reuse = not (
+                root.is_relative_to(workspace)
+                or canonical_root.is_relative_to(workspace)
+                or workspace.is_relative_to(canonical_root)
+            )
             mount = self.mount_table.containing(canonical_root)
             pending = [(str(root), str(canonical_root), root_masked, mount)]
             while pending:
@@ -223,15 +252,20 @@ class PolicyScan:
                     continue
                 mount = self.mount_table.mounts.get(canonical, mount)
                 key = (str(root), mount.path if mount else "")
-                self.active_bucket = self.buckets.setdefault(key, {
-                    "root": str(root), "mount": mount.path if mount else None,
-                    "filesystem": mount.filesystem if mount else None,
-                })
+                self.active_bucket = self.buckets.setdefault(
+                    key,
+                    {
+                        "root": str(root),
+                        "mount": mount.path if mount else None,
+                        "filesystem": mount.filesystem if mount else None,
+                    },
+                )
                 facts = self._entries(directory, canonical, reuse)
                 if isinstance(facts, int):
                     path = Path(directory)
-                    if (path.is_relative_to(workspace)
-                            or path.resolve(strict=True).is_relative_to(workspace)):
+                    if path.is_relative_to(workspace) or path.resolve(strict=True).is_relative_to(
+                        workspace
+                    ):
                         raise PermissionError(facts, "Cannot scan workspace", directory)
                     # Mask an unreadable system subtree in EVERY exposure path.
                     masks.append(path)
@@ -243,22 +277,31 @@ class PolicyScan:
                     git = name.lower() == ".git" and self.git_read and not fixed
                     if not masked and (fixed or (protected and not git)):
                         path = Path(directory) / name
-                        masks.append(path.parent if is_link
-                                     and not path.is_relative_to(workspace) else path)
+                        masks.append(
+                            path.parent if is_link and not path.is_relative_to(workspace) else path
+                        )
                         child_masked = True
                     elif not masked and git:
                         git_paths.append(Path(directory) / name)
                     # Masked workspace trees still need hard-link/special-file
                     # validation; suppress only their redundant policy entries.
                     if is_directory and (not child_masked or self._validates_workspace(directory)):
-                        pending.append((os.path.join(directory, name),
-                                        os.path.join(canonical, name), child_masked, mount))
+                        pending.append(
+                            (
+                                os.path.join(directory, name),
+                                os.path.join(canonical, name),
+                                child_masked,
+                                mount,
+                            )
+                        )
         # Resolve roots afresh: a retargeted alias must never reuse another tree's
         # observations. This is not a filesystem snapshot or a TOCTOU guarantee.
         for root, canonical, device, inode in identities:
             info = root.stat()
-            if (root.resolve(strict=True) != canonical
-                    or (info.st_dev, info.st_ino) != (device, inode)):
+            if root.resolve(strict=True) != canonical or (info.st_dev, info.st_ino) != (
+                device,
+                inode,
+            ):
                 raise ValueError(f"Linux native 扫描期间挂载目录发生变化：{root}")
         self.mount_table.verify()
         masks = outermost(masks)

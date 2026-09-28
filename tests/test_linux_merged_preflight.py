@@ -25,7 +25,9 @@ def success():
 
 @pytest.mark.parametrize("worker", [False, True])
 def test_real_launch_path_enumerates_workspace_once_including_masked_trees(
-    backend, monkeypatch, worker,
+    backend,
+    monkeypatch,
+    worker,
 ):
     files = []
     for name in ("src", "logs", ".git/objects", ".venv/lib"):
@@ -55,8 +57,9 @@ def test_real_launch_path_enumerates_workspace_once_including_masked_trees(
         backend._run(request={"name": "git_status", "arguments": {}}, git_read=True)
     else:
         backend.execute(backend.workspace, "run_command", {"command": ["/usr/bin/true"]})
-    workspace_visits = {path: count for path, count in visits.items()
-                        if path.is_relative_to(backend.workspace)}
+    workspace_visits = {
+        path: count for path, count in visits.items() if path.is_relative_to(backend.workspace)
+    }
     assert len(workspace_visits) == 7
     assert set(workspace_visits.values()) == {1}
     assert checks == Counter({path: 1 for path in files})
@@ -67,7 +70,10 @@ def test_real_launch_path_enumerates_workspace_once_including_masked_trees(
 @pytest.mark.parametrize("parent", ["src", "logs", ".git/objects", ".venv/lib", "private"])
 @pytest.mark.parametrize("kind", ["hardlink", "fifo", "socket"])
 def test_unsafe_entries_in_masked_and_readonly_trees_prevent_launch(
-    backend, monkeypatch, parent, kind,
+    backend,
+    monkeypatch,
+    parent,
+    kind,
 ):
     directory = backend.workspace / parent
     directory.mkdir(parents=True)
@@ -196,9 +202,17 @@ def test_child_failure_preserves_phase_error_and_duration(monkeypatch, failure):
     assert check["duration_ms"] >= 0
 
 
-@pytest.mark.parametrize("failure", [
-    "isolation", "outer_timeout", "truncated", "cleanup", "missing_isolation", "invalid_json",
-])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "isolation",
+        "outer_timeout",
+        "truncated",
+        "cleanup",
+        "missing_isolation",
+        "invalid_json",
+    ],
+)
 def test_host_rejects_invalid_combined_isolation_report(backend, monkeypatch, failure):
     backend.gpu = NativeGPU("nvidia", "all", ())
     report = startup_report(gpu={"cuda_kernel_verified": True, "devices": ["GPU-test"]})

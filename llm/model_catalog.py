@@ -69,8 +69,14 @@ def _register(provider, rows, *, thinking, independent_thinking, source, **metad
         sources = (source,) if isinstance(source, str) else source
         urls = tuple(url.format(model=model, slug=model.replace(".", "-")) for url in sources)
         MODEL_CATALOG.setdefault(provider, {})[model.lower()] = ModelInfo(
-            provider, model, deepcopy(thinking), context, output, sources=urls,
-            independent_thinking=deepcopy(independent_thinking), **metadata
+            provider,
+            model,
+            deepcopy(thinking),
+            context,
+            output,
+            sources=urls,
+            independent_thinking=deepcopy(independent_thinking),
+            **metadata,
         )
 
 
@@ -227,7 +233,10 @@ _register(
     independent_thinking={"mode": "enabled", "effort": "low"},
     source="https://ai.google.dev/gemini-api/docs/models/{model}",
     context_kind="input",
-    notes="Google 公布的是输入上限，不是输入与输出之和。 官方已于 2026-03-09 下线；仅保留历史配置解析。",
+    notes=(
+        "Google 公布的是输入上限，不是输入与输出之和。 "
+        "官方已于 2026-03-09 下线；仅保留历史配置解析。"
+    ),
     selectable=False,
 )
 
@@ -357,7 +366,9 @@ _register(
     thinking={"modes": ("auto", "enabled"), "budget_min": 1},
     independent_thinking={"mode": "enabled", "budget": 2048},
     source="https://help.aliyun.com/zh/model-studio/{slug}",
-    notes="官方页面上下文 81920 小于其列出的最大输入 126976; 暂取明确上下文字段，服务端元数据优先。",
+    notes=(
+        "官方页面上下文 81920 小于其列出的最大输入 126976; 暂取明确上下文字段，服务端元数据优先。"
+    ),
 )
 
 # --------------------------------------------------------------

@@ -9,8 +9,7 @@ from .policy import SandboxPolicy
 
 
 def _nvidia_cards():
-    return sorted(p for p in Path("/dev").glob("nvidia*")
-                  if re.fullmatch(r"nvidia[0-9]+", p.name))
+    return sorted(p for p in Path("/dev").glob("nvidia*") if re.fullmatch(r"nvidia[0-9]+", p.name))
 
 
 @dataclass(frozen=True)
@@ -23,7 +22,9 @@ class DeviceNode:
         try:
             info = path.lstat()
         except OSError as error:
-            raise ValueError(f"GPU 设备不可用：{path}；请先在宿主机安装驱动并加载 NVIDIA UVM 模块") from error
+            raise ValueError(
+                f"GPU 设备不可用：{path}；请先在宿主机安装驱动并加载 NVIDIA UVM 模块"
+            ) from error
         if not stat.S_ISCHR(info.st_mode):
             raise ValueError(f"GPU 路径必须是字符设备，不能是普通文件或符号链接：{path}")
         return cls(path, (info.st_dev, info.st_ino, info.st_rdev))
@@ -60,9 +61,13 @@ class NativeGPU:
         SandboxPolicy(gpus=selection)  # Share CLI syntax, never interpolate shell text.
         if Path("/dev/dxg").exists():
             if selection != "all":
-                raise ValueError("WSL2 native GPU 仅支持 --sandbox-gpus all；/dev/dxg 无法按显卡拆分授权")
+                raise ValueError(
+                    "WSL2 native GPU 仅支持 --sandbox-gpus all；/dev/dxg 无法按显卡拆分授权"
+                )
             if not Path("/usr/lib/wsl/lib/libcuda.so.1").is_file():
-                raise ValueError("WSL2 缺少 /usr/lib/wsl/lib/libcuda.so.1；请检查 Windows NVIDIA 驱动")
+                raise ValueError(
+                    "WSL2 缺少 /usr/lib/wsl/lib/libcuda.so.1；请检查 Windows NVIDIA 驱动"
+                )
             gpu = cls("wsl2", selection, (DeviceNode.read(Path("/dev/dxg")),))
         else:
             cards = _nvidia_cards()
@@ -77,9 +82,12 @@ class NativeGPU:
         # or LD_LIBRARY_PATH from the host (they may expose private/workspace files).
         for candidate in (Path("/usr/local/cuda"), Path("/opt/cuda")):
             root = candidate.resolve()
-            if (root != Path("/usr") and root != Path("/opt")
-                    and any(root.is_relative_to(p) for p in (Path("/usr"), Path("/opt")))
-                    and (root / "bin/nvcc").is_file()):
+            if (
+                root != Path("/usr")
+                and root != Path("/opt")
+                and any(root.is_relative_to(p) for p in (Path("/usr"), Path("/opt")))
+                and (root / "bin/nvcc").is_file()
+            ):
                 gpu = replace(gpu, cuda_home=root, read_paths=(*gpu.read_paths, root))
                 break
         return gpu
@@ -89,8 +97,14 @@ class NativeGPU:
         rows = []
         for line in inventory.splitlines():
             fields = [s.strip() for s in line.split(",")]
-            if (len(fields) != 3 or not fields[0].isdigit() or not fields[1].isdigit()
-                    or not re.fullmatch(r"GPU-[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", fields[2])):
+            if (
+                len(fields) != 3
+                or not fields[0].isdigit()
+                or not fields[1].isdigit()
+                or not re.fullmatch(
+                    r"GPU-[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", fields[2]
+                )
+            ):
                 raise ValueError("无法解析 nvidia-smi GPU 索引、设备号和 UUID")
             rows.append([fields[0], fields[1], "GPU-" + fields[2][4:].lower()])
         selected = [row for row in rows if self.requested.lower() in (row[0], row[2].lower())]
@@ -100,10 +114,15 @@ class NativeGPU:
         path = Path(f"/dev/nvidia{int(minor)}")
         if not any(node.path == path for node in self.devices):
             raise ValueError(f"所选 GPU 缺少设备节点：{path}")
-        return replace(self, visible_uuid=uuid, devices=tuple(
-            node for node in self.devices
-            if node.path == path or node.path.name in {"nvidiactl", "nvidia-uvm"}
-        ))
+        return replace(
+            self,
+            visible_uuid=uuid,
+            devices=tuple(
+                node
+                for node in self.devices
+                if node.path == path or node.path.name in {"nvidiactl", "nvidia-uvm"}
+            ),
+        )
 
     def mount_args(self):
         args = []

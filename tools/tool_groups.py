@@ -35,17 +35,29 @@ class ToolGroup:
 
 DEFAULT_TOOL_GROUPS = (
     ToolGroup(
-        "file_editing", "Create, edit, patch, move or delete workspace files and directories.",
+        "file_editing",
+        "Create, edit, patch, move or delete workspace files and directories.",
         ("write_file", "edit_file", "apply_patch", "make_directory", "delete_file", "move_file"),
     ),
     ToolGroup(
-        "coding", 
+        "coding",
         "Code execution and checking, including the following tools: "
         "git tools, inspect Git status and diffs; "
-        "execution tools, run commands, tests or Python in the configured sandbox; " 
-        "code_intelligence tools, find symbols, definitions, references, hover info and diagnostics;",
-        ("git_status", "git_diff", "run_command", "run_python", "get_symbols", "go_to_definition", 
-         "find_references", "get_diagnostics", "get_hover", "search_workspace_symbols"),
+        "execution tools, run commands, tests or Python in the configured sandbox; "
+        "code_intelligence tools, find symbols, definitions, references, "
+        "hover info and diagnostics;",
+        (
+            "git_status",
+            "git_diff",
+            "run_command",
+            "run_python",
+            "get_symbols",
+            "go_to_definition",
+            "find_references",
+            "get_diagnostics",
+            "get_hover",
+            "search_workspace_symbols",
+        ),
     ),
 )
 
@@ -82,8 +94,7 @@ class ToolGroupRegistry:
 
     def restore(self, names: Sequence[str]) -> tuple[str, ...]:
         """Revalidate saved names against the current catalog and environment."""
-        if (isinstance(names, (str, bytes))
-                or not all(isinstance(name, str) for name in names)):
+        if isinstance(names, (str, bytes)) or not all(isinstance(name, str) for name in names):
             raise ValueError("Loaded tool groups must be a sequence of names")
         allowed = dict.fromkeys(
             name for name in names if name in self.groups and self.available_members(name)
@@ -93,21 +104,34 @@ class ToolGroupRegistry:
 
     def load(self, name: str) -> ToolResult:
         if name not in self.groups:
-            return ToolResult(False, error_code="UNKNOWN_TOOL_GROUP",
-                              error=f"Unknown group. Groups: {', '.join(self.groups)}.")
+            return ToolResult(
+                False,
+                error_code="UNKNOWN_TOOL_GROUP",
+                error=f"Unknown group. Groups: {', '.join(self.groups)}.",
+            )
         members = self.available_members(name)
         if not members:
-            return ToolResult(False, error_code="TOOL_GROUP_UNAVAILABLE",
-                              error="This environment provides none of this group's tools. "
-                                    "Loading a group cannot enable execution permissions.")
+            return ToolResult(
+                False,
+                error_code="TOOL_GROUP_UNAVAILABLE",
+                error="This environment provides none of this group's tools. "
+                "Loading a group cannot enable execution permissions.",
+            )
         already_loaded = name in self._loaded
         self._loaded[name] = None
-        return ToolResult(True, {
-            "group": name, "tools": list(members), "already_loaded": already_loaded,
-            "unavailable_tools": [tool for tool in self.groups[name].tools if tool not in members],
-            "message": "Tool definitions will be available in the next model request. "
-                       "No grouped tool has been executed.",
-        })
+        return ToolResult(
+            True,
+            {
+                "group": name,
+                "tools": list(members),
+                "already_loaded": already_loaded,
+                "unavailable_tools": [
+                    tool for tool in self.groups[name].tools if tool not in members
+                ],
+                "message": "Tool definitions will be available in the next model request. "
+                "No grouped tool has been executed.",
+            },
+        )
 
 
 class LoadToolGroupTool:
@@ -129,14 +153,26 @@ class LoadToolGroupTool:
             "wait for the next response before calling newly enabled tools. Loading is idempotent "
             "and does not grant new permissions. Groups remain loaded until the conversation is "
             "cleared or a new session starts.\n" + catalog,
-            {"type": "object", "properties": {
-                "group": {"type": "string", "enum": list(self.registry.groups)},
-            }, "required": ["group"], "additionalProperties": False},
+            {
+                "type": "object",
+                "properties": {
+                    "group": {"type": "string", "enum": list(self.registry.groups)},
+                },
+                "required": ["group"],
+                "additionalProperties": False,
+            },
         )
 
     def execute(self, arguments) -> ToolResult:
-        if (not isinstance(arguments, dict) or set(arguments) != {"group"}
-                or not isinstance(arguments["group"], str) or not arguments["group"]):
-            return ToolResult(False, error_code="INVALID_ARGUMENTS",
-                              error="Provide exactly one non-empty string argument: group.")
+        if (
+            not isinstance(arguments, dict)
+            or set(arguments) != {"group"}
+            or not isinstance(arguments["group"], str)
+            or not arguments["group"]
+        ):
+            return ToolResult(
+                False,
+                error_code="INVALID_ARGUMENTS",
+                error="Provide exactly one non-empty string argument: group.",
+            )
         return self.registry.load(arguments["group"])

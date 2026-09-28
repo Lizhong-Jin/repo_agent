@@ -10,19 +10,43 @@ from llm.model_limits import ModelContextLimit
 @pytest.mark.parametrize(
     "provider,model,path,payload,expected,header",
     [
-        ("gemini", "models/gemini-test", "/v1/models/gemini-test",
-         {"name": "models/gemini-test", "inputTokenLimit": 1000, "outputTokenLimit": 100},
-         ModelContextLimit(1000, "input"), "x-goog-api-key"),
-        ("anthropic", "claude-latest", "/v1/models/claude-latest",
-         {"id": "claude-dated", "max_input_tokens": 2000, "max_tokens": 200},
-         ModelContextLimit(2000, "input"), "x-api-key"),
-        ("deepseek", "m", "/v1/models",
-         {"data": [{"id": "other", "context_length": 9000},
-                   {"id": "m", "context_length": 3000}]},
-         ModelContextLimit(3000, "context"), "authorization"),
-        ("qwen", "org/m", "/v1/models",
-         {"data": [{"id": "org/m", "max_model_len": 4000}]},
-         ModelContextLimit(4000, "context"), "authorization"),
+        (
+            "gemini",
+            "models/gemini-test",
+            "/v1/models/gemini-test",
+            {"name": "models/gemini-test", "inputTokenLimit": 1000, "outputTokenLimit": 100},
+            ModelContextLimit(1000, "input"),
+            "x-goog-api-key",
+        ),
+        (
+            "anthropic",
+            "claude-latest",
+            "/v1/models/claude-latest",
+            {"id": "claude-dated", "max_input_tokens": 2000, "max_tokens": 200},
+            ModelContextLimit(2000, "input"),
+            "x-api-key",
+        ),
+        (
+            "deepseek",
+            "m",
+            "/v1/models",
+            {
+                "data": [
+                    {"id": "other", "context_length": 9000},
+                    {"id": "m", "context_length": 3000},
+                ]
+            },
+            ModelContextLimit(3000, "context"),
+            "authorization",
+        ),
+        (
+            "qwen",
+            "org/m",
+            "/v1/models",
+            {"data": [{"id": "org/m", "max_model_len": 4000}]},
+            ModelContextLimit(4000, "context"),
+            "authorization",
+        ),
     ],
 )
 def test_provider_metadata_authentication_paths_and_cache(
@@ -52,24 +76,34 @@ def test_provider_metadata_authentication_paths_and_cache(
 
 @pytest.mark.parametrize("value", [None, True, False, 0, -1, 1.5, "8192", [], {}])
 def test_invalid_limit_is_unknown(value):
-    with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(
-        200, json={"data": [{"id": "m", "context_length": value, "max_tokens": 4000}]}
-    ))) as http:
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200, json={"data": [{"id": "m", "context_length": value, "max_tokens": 4000}]}
+            )
+        )
+    ) as http:
         client = LLMClient(LLMConfig("deepseek", "m", api_key="key"), http_client=http)
         assert client.get_context_limit() is None
 
 
-@pytest.mark.parametrize("payload", [
-    {}, [], {"data": None}, {"data": [None]},
-    {"data": [{"id": "other", "context_length": 1000}]},
-    {"data": [{"id": "m", "max_tokens": 1000}]},
-    {"data": [{"id": "m", "context_length": 1000}] * 2},
-    {"error": {"message": "private"}, "data": [{"id": "m", "context_length": 1000}]},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        [],
+        {"data": None},
+        {"data": [None]},
+        {"data": [{"id": "other", "context_length": 1000}]},
+        {"data": [{"id": "m", "max_tokens": 1000}]},
+        {"data": [{"id": "m", "context_length": 1000}] * 2},
+        {"error": {"message": "private"}, "data": [{"id": "m", "context_length": 1000}]},
+    ],
+)
 def test_missing_ambiguous_or_output_only_metadata_is_unknown(payload):
-    with httpx.Client(transport=httpx.MockTransport(
-        lambda _: httpx.Response(200, json=payload)
-    )) as http:
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+    ) as http:
         client = LLMClient(LLMConfig("deepseek", "m", api_key="key"), http_client=http)
         assert client.get_context_limit() is None
 
@@ -101,9 +135,9 @@ def test_optional_lookup_fails_closed_without_retry_or_redirect(failure):
 
 def test_unknown_cache_can_be_refreshed_and_clients_do_not_share_limits():
     results = iter([{}, {"data": [{"id": "m", "context_length": 2000}]}, {}])
-    with httpx.Client(transport=httpx.MockTransport(
-        lambda _: httpx.Response(200, json=next(results))
-    )) as http:
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=next(results)))
+    ) as http:
         config = LLMConfig("deepseek", "m", api_key="key")
         client = LLMClient(config, http_client=http)
         assert client.get_context_limit() is None

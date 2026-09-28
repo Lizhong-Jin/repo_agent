@@ -110,7 +110,9 @@ def test_cli_registers_configured_host_search_and_returns_results(tmp_path, monk
         ],
     )
     with httpx.Client(transport=httpx.MockTransport(model)) as http:
-        monkeypatch.setattr("cli.runtime_setup.LLMClient", lambda config: LLMClient(config, http_client=http))
+        monkeypatch.setattr(
+            "cli.runtime_setup.LLMClient", lambda config: LLMClient(config, http_client=http)
+        )
         cli.main()
     assert len(search_requests) == int(enabled)
     assert len(closed) == int(enabled)

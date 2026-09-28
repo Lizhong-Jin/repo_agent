@@ -17,19 +17,47 @@ from tools._internal.file_access import FileAccess
 windows = pytest.mark.skipif(os.name != "nt", reason="Requires Windows kernel APIs")
 
 
-@pytest.mark.parametrize("name", [
-    "", ".", "..", "a/b", "a\\b", "C:relative", "file:stream", "file.", "file ",
-    "NUL", "con.txt", "COM1.log", "LPT¹.txt", "CONOUT$", "foo\0bar", "a?", "a*",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        ".",
+        "..",
+        "a/b",
+        "a\\b",
+        "C:relative",
+        "file:stream",
+        "file.",
+        "file ",
+        "NUL",
+        "con.txt",
+        "COM1.log",
+        "LPT¹.txt",
+        "CONOUT$",
+        "foo\0bar",
+        "a?",
+        "a*",
+    ],
+)
 def test_windows_component_aliases_are_rejected(name):
     with pytest.raises(ValueError):
         win.validate_component(name)
 
 
-@pytest.mark.parametrize("names", [
-    ["a.txt", "A.txt"], ["Dir/a", "dir/b"], ["../outside"], ["/absolute"],
-    ["file:stream"], ["dir//file"], [".git./config"], ["dir/NUL.txt"], ["C:/file"],
-])
+@pytest.mark.parametrize(
+    "names",
+    [
+        ["a.txt", "A.txt"],
+        ["Dir/a", "dir/b"],
+        ["../outside"],
+        ["/absolute"],
+        ["file:stream"],
+        ["dir//file"],
+        [".git./config"],
+        ["dir/NUL.txt"],
+        ["C:/file"],
+    ],
+)
 def test_windows_snapshot_paths_have_one_interpretation(names):
     with pytest.raises(ValueError):
         win.validate_snapshot_names(names)
@@ -66,8 +94,11 @@ def junction(tmp_path):
     target.mkdir()
     (target / "sentinel").write_bytes(b"outside")
     # Junction creation does not require Developer Mode or symlink privilege.
-    subprocess.run([os.environ["COMSPEC"], "/d", "/c", "mklink", "/J", str(link), str(target)],
-                   check=True, capture_output=True)
+    subprocess.run(
+        [os.environ["COMSPEC"], "/d", "/c", "mklink", "/J", str(link), str(target)],
+        check=True,
+        capture_output=True,
+    )
     try:
         yield link, target
     finally:
@@ -150,8 +181,11 @@ def test_stage_parent_swap_does_not_write_through_junction(tmp_path):
                 staged.replace(parent / "file")
                 assert (parent / "file").read_bytes() == b"new"
             else:
-                subprocess.run([os.environ["COMSPEC"], "/d", "/c", "mklink", "/J",
-                                str(parent), str(outside)], check=True, capture_output=True)
+                subprocess.run(
+                    [os.environ["COMSPEC"], "/d", "/c", "mklink", "/J", str(parent), str(outside)],
+                    check=True,
+                    capture_output=True,
+                )
                 try:
                     with pytest.raises(OSError):
                         staged.replace(parent / "file")
@@ -168,6 +202,7 @@ def test_all_local_file_tools_use_windows_service(tmp_path):
     from tools.factory import create_file_tools
 
     tools = {tool.definition.name: tool for tool in create_file_tools(tmp_path)}
+
     def call(name, **arguments):
         result = tools[name].execute(arguments)
         assert result.success, result
@@ -177,9 +212,12 @@ def test_all_local_file_tools_use_windows_service(tmp_path):
     call("write_file", path="src/a.bat", content="hello\n")
     call("read_file", reads=[{"path": "src/a.bat"}])
     call("edit_file", path="src/a.bat", edits=[{"old_text": "hello", "new_text": "world"}])
-    call("apply_patch", patch=(
-        "*** Begin Patch\n*** Update File: src/a.bat\n@@\n-world\n+changed\n*** End Patch\n"
-    ))
+    call(
+        "apply_patch",
+        patch=(
+            "*** Begin Patch\n*** Update File: src/a.bat\n@@\n-world\n+changed\n*** End Patch\n"
+        ),
+    )
     call("list_files", path="src")
     call("find_files", pattern="**/*.bat")
     call("search_files", query="changed")
@@ -217,11 +255,23 @@ def test_writeback_junction_swap_fails_without_changing_outside(tmp_path, monkey
         (session.workspace / "nested").mkdir()
         (session.workspace / "nested/file").write_bytes(b"new")
         original = Backup.__init__
+
         def replace_parent(self, *args, **kwargs):
             original(self, *args, **kwargs)
-            subprocess.run([os.environ["COMSPEC"], "/d", "/c", "mklink", "/J",
-                            str(project / "nested"), str(outside)],
-                           check=True, capture_output=True)
+            subprocess.run(
+                [
+                    os.environ["COMSPEC"],
+                    "/d",
+                    "/c",
+                    "mklink",
+                    "/J",
+                    str(project / "nested"),
+                    str(outside),
+                ],
+                check=True,
+                capture_output=True,
+            )
+
         monkeypatch.setattr(Backup, "__init__", replace_parent)
         with pytest.raises(OSError):
             session.apply()
@@ -232,8 +282,10 @@ def test_writeback_junction_swap_fails_without_changing_outside(tmp_path, monkey
         shutil.rmtree(session.directory)
 
 
-@pytest.mark.skipif(os.name != "nt" or os.environ.get("RUN_WINDOWS_DOCKER_TESTS") != "1",
-                    reason="Requires Windows Docker Desktop Linux containers and local image")
+@pytest.mark.skipif(
+    os.name != "nt" or os.environ.get("RUN_WINDOWS_DOCKER_TESTS") != "1",
+    reason="Requires Windows Docker Desktop Linux containers and local image",
+)
 def test_real_windows_docker_roundtrip(tmp_path):
     from sandbox.session import SandboxSession
 
@@ -242,9 +294,15 @@ def test_real_windows_docker_roundtrip(tmp_path):
     (project / "hello.txt").write_bytes(b"before\r\n")
     session = SandboxSession(project)
     try:
-        result = session.backend.execute(session.workspace, "write_file", {
-            "path": "hello.txt", "content": "after\n", "overwrite": True,
-        })
+        result = session.backend.execute(
+            session.workspace,
+            "write_file",
+            {
+                "path": "hello.txt",
+                "content": "after\n",
+                "overwrite": True,
+            },
+        )
         assert result.success, result
         assert session.apply() == ["hello.txt"]
         backup_id = session.last_backup.name

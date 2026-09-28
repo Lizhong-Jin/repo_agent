@@ -8,10 +8,9 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
-from host_support.filesystem import list_directory, open_directory, open_file, stat_at
-
 import yaml
 
+from host_support.filesystem import list_directory, open_directory, open_file, stat_at
 from tools._internal.file_policy import is_credential_path
 
 MAX_SKILL_BYTES = 64 * 1024

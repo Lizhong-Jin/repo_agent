@@ -133,7 +133,8 @@ def bootstrap_files(root, target=None):
         ".env.example",
         *LOCK_FILES,
         *(
-            name for name in package_sources(root)
+            name
+            for name in package_sources(root)
             if name.startswith(("cli/", "host_support/", "installer/", "configuration/"))
         ),
     }
@@ -220,7 +221,8 @@ def check_configuration(root, *, write=False):
         path.write_text(text[:start] + expected + text[end:], encoding="utf-8")
     elif text[start:end] != expected:
         raise ValueError(
-            "pyproject.toml distribution settings are out of sync; run python3 build_manifest.py --write"
+            "pyproject.toml distribution settings are out of sync; "
+            "run python3 build_manifest.py --write"
         )
 
 
@@ -257,7 +259,9 @@ def verify_wheel(wheel, root):
         }
         if len(names) != len(set(names)) or payload != {*expected, CONTEXT_ARCHIVE}:
             raise ValueError(
-                f"Wheel file list mismatch; missing={sorted(({*expected, CONTEXT_ARCHIVE}) - payload)}, unexpected={sorted(payload - {*expected, CONTEXT_ARCHIVE})}"
+                "Wheel file list mismatch; "
+                f"missing={sorted(({*expected, CONTEXT_ARCHIVE}) - payload)}, "
+                f"unexpected={sorted(payload - {*expected, CONTEXT_ARCHIVE})}"
             )
         for name, source in expected.items():
             if archive.read(name) != source.read_bytes():

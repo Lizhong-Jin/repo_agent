@@ -49,8 +49,13 @@ class WSLDriverStore:
                 path = Path(value)
                 # dxcore returns immediate package directories, never arbitrary
                 # paths, nested paths or user-provided CUDA_HOME values.
-                if (not path.is_absolute() or ".." in path.parts or path.parent != self.root
-                        or is_protected_name(path.name) or path.resolve(strict=True) != path):
+                if (
+                    not path.is_absolute()
+                    or ".." in path.parts
+                    or path.parent != self.root
+                    or is_protected_name(path.name)
+                    or path.resolve(strict=True) != path
+                ):
                     raise ValueError("unexpected driver package path")
                 info = path.lstat()
                 if not stat.S_ISDIR(info.st_mode):
@@ -60,8 +65,9 @@ class WSLDriverStore:
             if not selected:
                 raise ValueError("no CUDA driver packages")
             packages = tuple(sorted(selected))
-            identities = tuple((info.st_dev, info.st_ino) for info in
-                               (path.lstat() for path in packages))
+            identities = tuple(
+                (info.st_dev, info.st_ino) for info in (path.lstat() for path in packages)
+            )
         except (OSError, ValueError, TypeError, KeyError) as error:
             raise ValueError("无法确认 WSL CUDA 驱动包；不会暴露整个驱动存储或回退 CPU") from error
         self.packages, self.package_identities = packages, identities
@@ -69,14 +75,22 @@ class WSLDriverStore:
     def verify(self, table):
         mount = table.mounts.get(str(self.root))
         info = self.root.lstat()
-        if (not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) != self.identity
-                or mount is None or mount.mount_id != self.mount_id
-                or mount.filesystem != "9p" or mount.source != "drivers"):
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or (info.st_dev, info.st_ino) != self.identity
+            or mount is None
+            or mount.mount_id != self.mount_id
+            or mount.filesystem != "9p"
+            or mount.source != "drivers"
+        ):
             raise ValueError("WSL 驱动挂载发生变化，请重启会话")
         for path, identity in zip(self.packages, self.package_identities, strict=True):
             info = path.lstat()
-            if (not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) != identity
-                    or path.resolve(strict=True) != path):
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or (info.st_dev, info.st_ino) != identity
+                or path.resolve(strict=True) != path
+            ):
                 raise ValueError("WSL 驱动包发生变化，请重启会话")
 
     def views(self, read_paths):

@@ -18,7 +18,9 @@ python3 build_manifest.py
 python3 scripts/lock_dependencies.py --check
 ```
 
-开发依赖安装可能联网；锁文件检查需要 uv。Ruff 命令表示建议覆盖范围，不表示当前仓库已经通过全部规则。默认测试使用模拟模型，不消耗在线推理额度；安装入口测试需要仓库 `.venv/bin/repo-agent` 可运行。构建清单测试使用已有的 setuptools/wheel，因此旧安装补齐时上方也安装锁定的构建依赖。独立发行版不安装开发依赖。
+开发依赖安装可能联网；锁文件检查需要 uv。CI 的 `lint` 作业使用 `requirements-dev.lock` 中锁定的 Ruff，执行上方相同范围的规则检查与格式检查；提交前应确保两项都通过。默认测试使用模拟模型，不消耗在线推理额度；安装入口测试需要仓库 `.venv/bin/repo-agent` 可运行。构建清单测试使用已有的 setuptools/wheel，因此旧安装补齐时上方也安装锁定的构建依赖。独立发行版不安装开发依赖。
+
+需要修复时，可在上方 `ruff check` 命令中添加 `--fix`，并去掉 `ruff format` 命令中的 `--check`。自动修复后仍需检查差异、处理剩余告警并运行测试；不要直接启用 `--unsafe-fixes`。
 
 ### 快速跑默认全量测试
 

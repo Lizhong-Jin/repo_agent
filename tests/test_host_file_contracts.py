@@ -96,9 +96,16 @@ else:
 finally:
     os.close(fd)
 """
+
     def child():
-        return subprocess.run([sys.executable, "-c", code, str(path)],
-                              capture_output=True, text=True, check=True, timeout=15).stdout.strip()
+        return subprocess.run(
+            [sys.executable, "-c", code, str(path)],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        ).stdout.strip()
+
     try:
         lock_descriptor(fd, blocking=False)
         assert child() == "busy"
@@ -112,7 +119,12 @@ def test_blocking_lock_waits_for_close(tmp_path):
     path = tmp_path / "lock"
     fd = fs.open_file(path, os.O_RDWR | os.O_CREAT)
     lock_descriptor(fd)
-    process = subprocess.Popen([sys.executable, "-u", "-c", """
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-u",
+            "-c",
+            """
 import os, sys
 from host_support.filesystem import open_file
 from host_support.locking import lock_descriptor
@@ -121,7 +133,13 @@ print('ready', flush=True)
 lock_descriptor(fd)
 print('acquired', flush=True)
 os.close(fd)
-""", str(path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+""",
+            str(path),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     try:
         assert process.stdout.readline().strip() == "ready"
         assert process.poll() is None
@@ -161,9 +179,16 @@ def test_session_log_history_and_diagnostics_share_host_storage(tmp_path):
     try:
         with pytest.raises(ValueError, match="已有"):
             SessionStore(project, directory=tmp_path / "state").open()
-        record = dict(history=[], model=dict(provider="test", model="test", endpoint="test"),
-                      status={}, transcript=[], mode="local", sandbox_healthy=True,
-                      pending_task=None, task_number=0)
+        record = dict(
+            history=[],
+            model=dict(provider="test", model="test", endpoint="test"),
+            status={},
+            transcript=[],
+            mode="local",
+            sandbox_healthy=True,
+            pending_task=None,
+            task_number=0,
+        )
         store.save(record)
         with open_log(store.directory / "events.log", write=True) as stream:
             stream.write("一\n")

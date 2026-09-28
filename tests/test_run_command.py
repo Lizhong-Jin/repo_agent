@@ -134,7 +134,9 @@ def test_escaped_descendant_cannot_keep_output_collection_open(tmp_path, launche
         "Path('escaped.pid').write_text(str(child.pid))\n"
     )
     try:
-        result = run_python(RunCommandTool(tmp_path, execution_allowed=True), parent, timeout_seconds=1)
+        result = run_python(
+            RunCommandTool(tmp_path, execution_allowed=True), parent, timeout_seconds=1
+        )
         assert result.success
         assert result.data["timed_out"]
         assert result.data["duration_ms"] < 4500
@@ -216,7 +218,9 @@ def test_group_signal_denial_is_reported_and_leader_is_reaped(
     with monkeypatch.context() as scoped:
         scoped.setattr(process_module.os, "killpg", deny_group_signal)
         result = run_python(
-            RunCommandTool(tmp_path, execution_allowed=True), "import time; time.sleep(8)", timeout_seconds=1
+            RunCommandTool(tmp_path, execution_allowed=True),
+            "import time; time.sleep(8)",
+            timeout_seconds=1,
         )
 
     assert result.success

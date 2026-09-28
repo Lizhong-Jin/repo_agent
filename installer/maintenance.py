@@ -38,7 +38,8 @@ def python_component_guidance():
     if (prefix / "conda-meta").is_dir():
         instructions += [
             "检测到 Conda/Anaconda；修复这个环境中的 Python（不要装到其他 Conda 环境）：",
-            f"  conda install --prefix {shlex.quote(str(prefix))} --force-reinstall python={version}",
+            f"  conda install --prefix {shlex.quote(str(prefix))} "
+            f"--force-reinstall python={version}",
         ]
     else:
         brew_python = re.search(r"/(?:Cellar|opt)/(python(?:@3\.\d+)?)/", str(prefix) + "/")
@@ -54,7 +55,8 @@ def python_component_guidance():
             instructions += [
                 "macOS：可安装完整 Homebrew Python（已有 Homebrew 时执行）：",
                 "  brew install python",
-                "没有 Homebrew 时，可从 https://www.python.org/downloads/macos/ 安装完整 Python 3.11+，",
+                "没有 Homebrew 时，可从 https://www.python.org/downloads/macos/ "
+                "安装完整 Python 3.11+，",
                 "然后通过 AGENT_PYTHON 指定新解释器的绝对路径。",
             ]
             retry_python = '"$(brew --prefix python)/libexec/bin/python3"'
@@ -69,13 +71,16 @@ def python_component_guidance():
                     "Debian/Ubuntu：安装与当前解释器次版本一致的 venv 包：",
                     "  sudo apt-get update",
                     f"  sudo apt-get install python{version}-venv",
-                    "若找不到该包，请检查提供此 Python 版本的软件源；不要安装其他版本的 venv 包替代。",
+                    "若找不到该包，请检查提供此 Python 版本的软件源；"
+                    "不要安装其他版本的 venv 包替代。",
                 ]
             elif family & {"fedora", "rhel", "centos"}:
                 instructions += [
                     "Fedora/RHEL：先查询当前 Python 标准库组件所属的软件包：",
-                    f"  dnf provides '*/python{version}/venv/__init__.py' '*/python{version}/ensurepip/__init__.py'",
-                    "再用 sudo dnf install 安装查询到的匹配包；已经安装但文件缺失时用 sudo dnf reinstall 修复。",
+                    f"  dnf provides '*/python{version}/venv/__init__.py' "
+                    f"'*/python{version}/ensurepip/__init__.py'",
+                    "再用 sudo dnf install 安装查询到的匹配包；"
+                    "已经安装但文件缺失时用 sudo dnf reinstall 修复。",
                 ]
             elif "arch" in family:
                 instructions += [
@@ -84,18 +89,21 @@ def python_component_guidance():
                 ]
             else:
                 instructions.append(
-                    "请用本发行版的软件包管理器安装或修复当前版本的 Python 标准库，包含 venv 和 ensurepip。"
+                    "请用本发行版的软件包管理器安装或修复当前版本的 Python 标准库，"
+                    "包含 venv 和 ensurepip。"
                 )
         else:
             instructions += [
                 "当前为自定义或未识别来源的 Python（例如 pyenv、源码构建）。",
                 "请用原安装方式修复或重装完整 Python 3.11+，保留 venv 和 ensurepip 标准库组件；",
-                "也可改用其他完整 Python：https://www.python.org/downloads/，并通过 AGENT_PYTHON 指定其绝对路径。",
+                "也可改用其他完整 Python：https://www.python.org/downloads/，"
+                "并通过 AGENT_PYTHON 指定其绝对路径。",
             ]
     instructions += [
         "修复后，在安装目录用同一个解释器重新检查（保留原先的 --mode 等选项）：",
         f"  AGENT_PYTHON={retry_python} ./install.sh --check",
-        "检查通过后去掉 --check 重新安装；若换用其他解释器，请将 AGENT_PYTHON 改为新解释器的绝对路径。",
+        "检查通过后去掉 --check 重新安装；"
+        "若换用其他解释器，请将 AGENT_PYTHON 改为新解释器的绝对路径。",
     ]
     return "\n".join(instructions)
 

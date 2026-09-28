@@ -30,8 +30,10 @@ from tools._internal.file_policy import (  # noqa: E402
 def is_protected_name(path):
     # Freeze the previous hot-path implementation as well as the traversal.
     return any(
-        part.lower() in PROTECTED_NAMES or part.lower() == ".env"
-        or part.lower().startswith(".env.") or part.lower().endswith(PROTECTED_SUFFIXES)
+        part.lower() in PROTECTED_NAMES
+        or part.lower() == ".env"
+        or part.lower().startswith(".env.")
+        or part.lower().endswith(PROTECTED_SUFFIXES)
         for part in PurePath(path).parts
     )
 
@@ -54,14 +56,19 @@ def reference_mount_policy(self, read_paths, *, git_read):
         # WSL's /lib/modules/.../lost+found). Lack of list permission does
         # NOT prevent opening known filenames in an execute-only directory.
         # Hide the entire unscanned subtree, never simply skip its contents.
-        if (not isinstance(error, PermissionError)
-                or error.errno not in {errno.EACCES, errno.EPERM}
-                or not error.filename):
+        if (
+            not isinstance(error, PermissionError)
+            or error.errno not in {errno.EACCES, errno.EPERM}
+            or not error.filename
+        ):
             raise error
         path = Path(error.filename)
-        if (not path.is_absolute() or not path.is_relative_to(root)
-                or path.is_relative_to(self.workspace)
-                or path.resolve(strict=True).is_relative_to(self.workspace)):
+        if (
+            not path.is_absolute()
+            or not path.is_relative_to(root)
+            or path.is_relative_to(self.workspace)
+            or path.resolve(strict=True).is_relative_to(self.workspace)
+        ):
             raise error
         masks.append(path)
 
@@ -87,8 +94,11 @@ def reference_mount_policy(self, read_paths, *, git_read):
                     # Read-only toolchains often contain cert.pem symlinks. Hide
                     # their containing directory instead of following a mount
                     # target into another subtree. Workspace aliases fail closed.
-                    masks.append(path.parent if path.is_symlink()
-                                 and not path.is_relative_to(self.workspace) else path)
+                    masks.append(
+                        path.parent
+                        if path.is_symlink() and not path.is_relative_to(self.workspace)
+                        else path
+                    )
                     if name in dirs:
                         dirs.remove(name)
     masks = _outermost(masks)
@@ -107,12 +117,15 @@ def policy_backend(workspace, read_paths, protected_paths=()):
 
 
 def summarize(samples):
-    return {"median_ms": round(statistics.median(samples), 3),
-            "p95_ms": round(sorted(samples)[math.ceil(len(samples) * 0.95) - 1], 3)}
+    return {
+        "median_ms": round(statistics.median(samples), 3),
+        "p95_ms": round(sorted(samples)[math.ceil(len(samples) * 0.95) - 1], 3),
+    }
 
 
 def benchmark(workspace, read_paths, *, repeats=7, git_read=False):
     backend = policy_backend(workspace, read_paths, runtime_protected_paths(workspace))
+
     def before():
         backend._check_workspace()
         return reference_mount_policy(backend, read_paths, git_read=git_read)
@@ -133,13 +146,16 @@ def benchmark(workspace, read_paths, *, repeats=7, git_read=False):
                 raise AssertionError("Protection changed or input tree mutated during benchmark")
     result = {
         "scope": "workspace validation + policy scan; filesystem caches warm; "
-                 "no cross-call scan cache",
-        "host": platform.system(), "python": platform.python_version(), "repeats": repeats,
+        "no cross-call scan cache",
+        "host": platform.system(),
+        "python": platform.python_version(),
+        "repeats": repeats,
         "results": {name: summarize(samples) for name, samples in timings.items()},
         "last_policy": backend.last_policy_metrics,
     }
-    result["speedup"] = round(statistics.median(timings["before"])
-                              / statistics.median(timings["after"]), 2)
+    result["speedup"] = round(
+        statistics.median(timings["before"]) / statistics.median(timings["after"]), 2
+    )
     return result
 
 
@@ -176,11 +192,18 @@ def end_to_end(workspace, profile, repeats):
                 raise RuntimeError(str(outcome))
             runs.append(backend.last_tool_metrics)
             samples.append(backend.last_tool_metrics["total_ms"])
-        return {"startup": backend.startup_metrics, "profile": profile,
-                "gpu_enabled": backend.gpu is not None, "commands": summarize(samples),
-                "wsl_driver_packages": ([str(path) for path in backend.wsl_drivers.packages]
-                                        if backend.wsl_drivers else None),
-                "runs": runs}
+        return {
+            "startup": backend.startup_metrics,
+            "profile": profile,
+            "gpu_enabled": backend.gpu is not None,
+            "commands": summarize(samples),
+            "wsl_driver_packages": (
+                [str(path) for path in backend.wsl_drivers.packages]
+                if backend.wsl_drivers
+                else None
+            ),
+            "runs": runs,
+        }
     finally:
         backend.close()
 

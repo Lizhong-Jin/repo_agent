@@ -7,7 +7,6 @@ import ctypes as C
 import json
 import uuid
 
-
 PTX = b"""
 .version 6.0
 .target sm_50
@@ -35,6 +34,7 @@ def probe():
             code = fn(*args)
             if code != 0:
                 raise RuntimeError(f"{name} failed (CUDA error {code})")
+
         return checked
 
     ptr, integer, uint = C.c_void_p, C.c_int, C.c_uint
@@ -50,8 +50,20 @@ def probe():
     load = function("cuModuleLoadData", C.POINTER(ptr), ptr)
     unload = function("cuModuleUnload", ptr)
     get_kernel = function("cuModuleGetFunction", C.POINTER(ptr), ptr, C.c_char_p)
-    launch = function("cuLaunchKernel", ptr, uint, uint, uint, uint, uint, uint,
-                      uint, ptr, C.POINTER(ptr), C.POINTER(ptr))
+    launch = function(
+        "cuLaunchKernel",
+        ptr,
+        uint,
+        uint,
+        uint,
+        uint,
+        uint,
+        uint,
+        uint,
+        ptr,
+        C.POINTER(ptr),
+        C.POINTER(ptr),
+    )
     synchronize = function("cuCtxSynchronize")
     copy = function("cuMemcpyDtoH_v2", ptr, deviceptr, C.c_size_t)
     init(0)

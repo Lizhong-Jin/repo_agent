@@ -30,8 +30,15 @@ class _GitFilterPolicy:
             return None
         result = self.runner.run(
             [
-                "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
-                "config", "--includes", "--null", "--get-regexp",
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "config",
+                "--includes",
+                "--null",
+                "--get-regexp",
                 r"^filter\..*\.(clean|process)$",
             ],
             cwd=repo_root,
@@ -40,7 +47,9 @@ class _GitFilterPolicy:
         if result.timed_out:
             return tool_error("GIT_TIMEOUT", "Git filter configuration check timed out.")
         if result.cleanup_error or result.stdout_truncated or result.stderr_truncated:
-            return tool_error("GIT_CONFIG_CHECK_FAILED", "Cannot fully verify Git filter configuration.")
+            return tool_error(
+                "GIT_CONFIG_CHECK_FAILED", "Cannot fully verify Git filter configuration."
+            )
         if result.exit_code == 1 and not result.stdout:
             return None  # git config reports no matching keys with exit status 1.
         if result.exit_code != 0:
@@ -48,7 +57,9 @@ class _GitFilterPolicy:
         # --null encodes each entry as key LF value NUL; never expose commands.
         entries = result.stdout.split("\0")
         if not result.stdout.endswith("\0") or any("\n" not in item for item in entries[:-1]):
-            return tool_error("GIT_CONFIG_CHECK_FAILED", "Invalid Git filter configuration response.")
+            return tool_error(
+                "GIT_CONFIG_CHECK_FAILED", "Invalid Git filter configuration response."
+            )
         # Do not strip: Unicode whitespace can still be a shell command name.
         if any(item.partition("\n")[2] for item in entries[:-1]):
             return tool_error(
@@ -96,11 +107,13 @@ class GitDiffTool(_GitFilterPolicy):
         # isolation before allowing repository-configured subprocesses.
         self.execution_allowed = execution_allowed
         self.git_env = self._git_environment()
-        self.git_env.update({
-            "GIT_CONFIG_COUNT": "1",
-            "GIT_CONFIG_KEY_0": "safe.directory",
-            "GIT_CONFIG_VALUE_0": str(self.workspace_root),
-        })
+        self.git_env.update(
+            {
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "safe.directory",
+                "GIT_CONFIG_VALUE_0": str(self.workspace_root),
+            }
+        )
         self.runner = ProcessRunner(max_output_bytes=max_output_bytes, base_env=self.git_env)
 
     @property
@@ -222,7 +235,11 @@ class GitDiffTool(_GitFilterPolicy):
         try:
             repo_result = self.runner.run(
                 [
-                    "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+                    "git",
+                    "-c",
+                    "core.fsmonitor=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
                     "rev-parse",
                     "--show-toplevel",
                 ],
@@ -293,7 +310,11 @@ class GitDiffTool(_GitFilterPolicy):
                 return tool_error("INVALID_PATH", f"Unable to resolve path {path!r}.")
 
         command = [
-            "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+            "git",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
             "--no-pager",
             "diff",
             "--no-ext-diff",
@@ -333,8 +354,9 @@ class GitDiffTool(_GitFilterPolicy):
                     requested = repo_root / name
                     try:
                         resolved = requested.resolve()
-                        if (not resolved.is_relative_to(repo_root)
-                                or is_credential_path(requested, resolved)):
+                        if not resolved.is_relative_to(repo_root) or is_credential_path(
+                            requested, resolved
+                        ):
                             continue
                     except (OSError, RuntimeError):
                         return tool_error("GIT_ERROR", "Unable to check changed paths.")
@@ -345,10 +367,11 @@ class GitDiffTool(_GitFilterPolicy):
                     if failure is not None:
                         return failure
                     # Replace directory selectors with the verified literal files.
-                    prefix = command[:command.index("--")] if "--" in command else command
+                    prefix = command[: command.index("--")] if "--" in command else command
                     result = self.runner.run(
                         [*prefix, "--no-renames", "--", *safe_paths],
-                        cwd=repo_root, timeout_seconds=self.timeout_seconds,
+                        cwd=repo_root,
+                        timeout_seconds=self.timeout_seconds,
                     )
                 else:
                     result = replace(result, stdout="")
@@ -406,6 +429,7 @@ class GitDiffTool(_GitFilterPolicy):
         # Avoid returning arbitrarily large infrastructure errors.
         return message[:2000]
 
+
 # GitStatusTool
 _STATUS_MAP = {
     ".": None,
@@ -417,6 +441,8 @@ _STATUS_MAP = {
     "C": "copied",
     "U": "unmerged",
 }
+
+
 class GitStatusTool(_GitFilterPolicy):
     """Return structured Git working-tree status."""
 
@@ -451,11 +477,13 @@ class GitStatusTool(_GitFilterPolicy):
             raise ValueError("execution_allowed must be a boolean")
         self.execution_allowed = execution_allowed
         self.git_env = self._git_environment()
-        self.git_env.update({
-            "GIT_CONFIG_COUNT": "1",
-            "GIT_CONFIG_KEY_0": "safe.directory",
-            "GIT_CONFIG_VALUE_0": str(self.workspace_root),
-        })
+        self.git_env.update(
+            {
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "safe.directory",
+                "GIT_CONFIG_VALUE_0": str(self.workspace_root),
+            }
+        )
         self.runner = ProcessRunner(max_output_bytes=max_output_bytes, base_env=self.git_env)
 
     @property
@@ -558,7 +586,11 @@ class GitStatusTool(_GitFilterPolicy):
         try:
             repo_result = self.runner.run(
                 [
-                    "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+                    "git",
+                    "-c",
+                    "core.fsmonitor=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
                     "-c",
                     "core.fsmonitor=false",
                     "rev-parse",
@@ -635,7 +667,11 @@ class GitStatusTool(_GitFilterPolicy):
                 return tool_error("INVALID_PATH", f"Unable to resolve path {path!r}.")
 
         command = [
-            "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+            "git",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
             "-c",
             "core.fsmonitor=false",
             "--no-pager",
@@ -762,22 +798,20 @@ class GitStatusTool(_GitFilterPolicy):
                 continue
             if record.startswith("# "):
                 if record.startswith("# branch.oid "):
-                    value = record[len("# branch.oid "):]
+                    value = record[len("# branch.oid ") :]
                     if value != "(initial)":
                         head = value
                 elif record.startswith("# branch.head "):
-                    value = record[len("# branch.head "):]
+                    value = record[len("# branch.head ") :]
                     if value == "(detached)":
                         detached = True
                         branch = None
                     else:
                         branch = value
                 elif record.startswith("# branch.upstream "):
-                    upstream = record[
-                        len("# branch.upstream "):
-                    ]
+                    upstream = record[len("# branch.upstream ") :]
                 elif record.startswith("# branch.ab "):
-                    value = record[len("# branch.ab "):]
+                    value = record[len("# branch.ab ") :]
                     parts = value.split()
                     for part in parts:
                         if part.startswith("+"):

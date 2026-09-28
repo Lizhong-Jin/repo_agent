@@ -124,9 +124,7 @@ def test_glob_uses_workspace_relative_path_for_files_and_directories(tmp_path, p
     write_file(tmp_path, "tests/notes.txt")
     write_file(tmp_path, "docs/notes.txt")
 
-    result = SearchFilesTool(tmp_path).execute(
-        {"query": "needle", "path": path, "glob": pattern}
-    )
+    result = SearchFilesTool(tmp_path).execute({"query": "needle", "path": path, "glob": pattern})
 
     assert result.success
     assert result.data["matches"] == [

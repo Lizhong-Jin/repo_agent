@@ -40,19 +40,21 @@ from .semantic import (
 
 def create_file_tools(workspace_root: str | Path) -> list[Tool]:
     """Only audited, built-in file implementations may run in the lightweight layer."""
-    return validate_tools([
-        ReadFileTool(workspace_root),
-        WriteFileTool(workspace_root),
-        EditFileTool(workspace_root),
-        ApplyPatchTool(workspace_root),
-        ListFileTool(workspace_root),
-        FindFileTool(workspace_root),
-        SearchFilesTool(workspace_root),
-        MakeDirectoryTool(workspace_root),
-        DeleteFileTool(workspace_root),
-        MoveFileTool(workspace_root),
-        GetPathInfoTool(workspace_root),
-    ])
+    return validate_tools(
+        [
+            ReadFileTool(workspace_root),
+            WriteFileTool(workspace_root),
+            EditFileTool(workspace_root),
+            ApplyPatchTool(workspace_root),
+            ListFileTool(workspace_root),
+            FindFileTool(workspace_root),
+            SearchFilesTool(workspace_root),
+            MakeDirectoryTool(workspace_root),
+            DeleteFileTool(workspace_root),
+            MoveFileTool(workspace_root),
+            GetPathInfoTool(workspace_root),
+        ]
+    )
 
 
 def create_default_tools(
@@ -71,77 +73,79 @@ def create_default_tools(
     """
     if type(isolated_execution) is not bool:
         raise ValueError("isolated_execution must be a boolean")
-    return validate_tools([
-        GetExecutionEnvironmentTool(
-            workspace_root,
-            execution_allowed=isolated_execution,
-            execution_context=execution_context,
-            command_timeout_seconds=command_timeout_seconds,
-            python_timeout_seconds=python_timeout_seconds,
-        ),
-        *create_file_tools(workspace_root),
-        # command and code_intelligence tools
-        *(
-            [
-                RunCommandTool(
-                    workspace_root,
-                    execution_allowed=True,
-                    default_timeout_seconds=min(60, command_timeout_seconds),
-                    max_timeout_seconds=command_timeout_seconds,
-                ),
-                RunPythonTool(
-                    workspace_root,
-                    execution_allowed=True,
-                    default_timeout_seconds=min(10, python_timeout_seconds),
-                    max_timeout_seconds=python_timeout_seconds,
-                ),
-                GetSymbolsTool(
-                    workspace_root,
-                    execution_allowed=True,
-                    lsp_registry=lsp_registry
-                    if lsp_registry is not None
-                    else default_lsp_registry(),
-                ),
-                GoToDefinitionsTool(
-                    workspace_root,
-                    execution_allowed=True,
-                    lsp_registry=lsp_registry
-                    if lsp_registry is not None
-                    else default_lsp_registry(),
-                ),
-                FindReferencesTool(
-                    workspace_root,
-                    execution_allowed=True,
-                    lsp_registry=lsp_registry
-                    if lsp_registry is not None
-                    else default_lsp_registry(),
-                ),
-                GetDiagnosticsTool(
-                    workspace_root,
-                    execution_allowed=True,
-                    lsp_registry=lsp_registry
-                    if lsp_registry is not None
-                    else default_lsp_registry(),
-                ),
-                GetHoverTool(
-                    workspace_root,
-                    execution_allowed=True,
-                    lsp_registry=lsp_registry
-                    if lsp_registry is not None
-                    else default_lsp_registry(),
-                ),
-                SearchWorkspaceSymbolsTool(
-                    workspace_root,
-                    execution_allowed=True,
-                    lsp_registry=lsp_registry
-                    if lsp_registry is not None
-                    else default_lsp_registry(),
-                ),
-            ]
-            if isolated_execution
-            else []
-        ),
-        # git tools
-        GitDiffTool(workspace_root, execution_allowed=isolated_execution),
-        GitStatusTool(workspace_root, execution_allowed=isolated_execution),
-    ])
+    return validate_tools(
+        [
+            GetExecutionEnvironmentTool(
+                workspace_root,
+                execution_allowed=isolated_execution,
+                execution_context=execution_context,
+                command_timeout_seconds=command_timeout_seconds,
+                python_timeout_seconds=python_timeout_seconds,
+            ),
+            *create_file_tools(workspace_root),
+            # command and code_intelligence tools
+            *(
+                [
+                    RunCommandTool(
+                        workspace_root,
+                        execution_allowed=True,
+                        default_timeout_seconds=min(60, command_timeout_seconds),
+                        max_timeout_seconds=command_timeout_seconds,
+                    ),
+                    RunPythonTool(
+                        workspace_root,
+                        execution_allowed=True,
+                        default_timeout_seconds=min(10, python_timeout_seconds),
+                        max_timeout_seconds=python_timeout_seconds,
+                    ),
+                    GetSymbolsTool(
+                        workspace_root,
+                        execution_allowed=True,
+                        lsp_registry=lsp_registry
+                        if lsp_registry is not None
+                        else default_lsp_registry(),
+                    ),
+                    GoToDefinitionsTool(
+                        workspace_root,
+                        execution_allowed=True,
+                        lsp_registry=lsp_registry
+                        if lsp_registry is not None
+                        else default_lsp_registry(),
+                    ),
+                    FindReferencesTool(
+                        workspace_root,
+                        execution_allowed=True,
+                        lsp_registry=lsp_registry
+                        if lsp_registry is not None
+                        else default_lsp_registry(),
+                    ),
+                    GetDiagnosticsTool(
+                        workspace_root,
+                        execution_allowed=True,
+                        lsp_registry=lsp_registry
+                        if lsp_registry is not None
+                        else default_lsp_registry(),
+                    ),
+                    GetHoverTool(
+                        workspace_root,
+                        execution_allowed=True,
+                        lsp_registry=lsp_registry
+                        if lsp_registry is not None
+                        else default_lsp_registry(),
+                    ),
+                    SearchWorkspaceSymbolsTool(
+                        workspace_root,
+                        execution_allowed=True,
+                        lsp_registry=lsp_registry
+                        if lsp_registry is not None
+                        else default_lsp_registry(),
+                    ),
+                ]
+                if isolated_execution
+                else []
+            ),
+            # git tools
+            GitDiffTool(workspace_root, execution_allowed=isolated_execution),
+            GitStatusTool(workspace_root, execution_allowed=isolated_execution),
+        ]
+    )

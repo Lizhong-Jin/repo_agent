@@ -307,10 +307,17 @@ def test_startup_defaults_and_partial_cli_overrides(
     monkeypatch.chdir(project)
     monkeypatch.setattr(sys, "argv", ["repo-agent", *flags])
     # Model defaults must also work with zero CLI arguments and the default sandbox.
-    sandbox = SimpleNamespace(healthy=True, tools=lambda: [], close=lambda: None,
-                              execution_context=lambda: {"gpu_access": {"enabled": False}})
+    sandbox = SimpleNamespace(
+        healthy=True,
+        tools=lambda: [],
+        close=lambda: None,
+        execution_context=lambda: {"gpu_access": {"enabled": False}},
+    )
     monkeypatch.setattr("cli.execution_environment.NativeBackend", lambda *args, **kwargs: sandbox)
-    monkeypatch.setattr("cli.execution_environment.detect_environment", lambda **kwargs: pytest.fail("Docker selected"))
+    monkeypatch.setattr(
+        "cli.execution_environment.detect_environment",
+        lambda **kwargs: pytest.fail("Docker selected"),
+    )
     seen_clients = []
     seen_runtime = []
 

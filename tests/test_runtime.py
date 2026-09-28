@@ -111,6 +111,7 @@ def test_file_error_then_model_corrects_path(tmp_path):
 def test_tool_exception_or_invalid_result_is_observation(invalid_result):
     class BrokenTool(RecordingTool):
         execution_kind = ExecutionKind.HOST_CONTROL
+
         def execute(self, arguments):
             if invalid_result:
                 return "not a ToolResult"
@@ -195,7 +196,10 @@ def test_real_client_and_read_file_with_mock_http(tmp_path):
                     {
                         "id": "a",
                         "type": "function",
-                        "function": {"name": "read_file", "arguments": '{"reads":[{"path":"main.py"}]}'},
+                        "function": {
+                            "name": "read_file",
+                            "arguments": '{"reads":[{"path":"main.py"}]}',
+                        },
                     }
                 ],
             }

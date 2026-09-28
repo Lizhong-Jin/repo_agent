@@ -47,12 +47,19 @@ def assert_reference(backend, *, git_read=False):
     return actual
 
 
-@pytest.mark.parametrize("name,expected", [
-    *((name, True) for name in PROTECTED_NAMES),
-    *(("test" + suffix, True) for suffix in PROTECTED_SUFFIXES),
-    (".env", True), (".env.local", True), ("normal.py", False),
-    ("env", False), ("token.pem.txt", False), (".environment", False),
-])
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        *((name, True) for name in PROTECTED_NAMES),
+        *(("test" + suffix, True) for suffix in PROTECTED_SUFFIXES),
+        (".env", True),
+        (".env.local", True),
+        ("normal.py", False),
+        ("env", False),
+        ("token.pem.txt", False),
+        (".environment", False),
+    ],
+)
 def test_leaf_matcher_keeps_case_and_suffix_semantics(name, expected):
     for variant in (name, name.upper(), name.title()):
         assert is_protected_leaf(variant) == expected
@@ -63,14 +70,23 @@ def test_leaf_matcher_keeps_case_and_suffix_semantics(name, expected):
 @pytest.mark.parametrize("fixed_view", ["canonical", "alias", "both"])
 def test_alias_mapping_matches_old_policy_with_view_specific_paths(tree, git_read, fixed_view):
     backend, system, library, alias = tree
-    for name in ("ok.py", ".ENV", "secret.PEM", ".git/config", ".git/logs/data",
-                 ".git/.env.local", "nested/private", "nested/private-tree/file"):
+    for name in (
+        "ok.py",
+        ".ENV",
+        "secret.PEM",
+        ".git/config",
+        ".git/logs/data",
+        ".git/.env.local",
+        "nested/private",
+        "nested/private-tree/file",
+    ):
         touch(library / name)
     touch(backend.workspace / ".env")
     touch(backend.workspace / "normal.py")
     prefixes = {"canonical": (library,), "alias": (alias,), "both": (library, alias)}
     backend.protected_paths = tuple(
-        prefix / leaf for prefix in prefixes[fixed_view]
+        prefix / leaf
+        for prefix in prefixes[fixed_view]
         for leaf in ("nested/private", "nested/private-tree")
     )
     assert_reference(backend, git_read=git_read)
@@ -118,8 +134,11 @@ def test_new_nested_secrets_are_found_on_each_call_in_all_views(tree):
     touch(library / "deep/package/.env.new")
     touch(backend.workspace / "src/.env.new")
     masks, _ = assert_reference(backend)
-    assert set(masks) == {library / "deep/package/.env.new", alias / "deep/package/.env.new",
-                          backend.workspace / "src/.env.new"}
+    assert set(masks) == {
+        library / "deep/package/.env.new",
+        alias / "deep/package/.env.new",
+        backend.workspace / "src/.env.new",
+    }
     assert backend._policy_plan() is plan  # Only pure configuration is reused.
     assert not hasattr(plan, "cache")
 
@@ -149,8 +168,9 @@ def test_static_plan_refreshes_for_changed_configuration_and_checks_new_guards(t
 
 
 @pytest.mark.parametrize("error_number", [errno.EACCES, errno.EPERM])
-def test_unreadable_subtree_masks_every_alias_and_permissions_are_fresh(tree, monkeypatch,
-                                                                      error_number):
+def test_unreadable_subtree_masks_every_alias_and_permissions_are_fresh(
+    tree, monkeypatch, error_number
+):
     backend, _, library, alias = tree
     restricted = touch(library / "modules/lost+found/.env").parent
     original = os.scandir
@@ -270,9 +290,9 @@ def test_real_unreadable_directory_is_masked_without_os_sandbox(tree, mode):
 
 def test_alias_replay_still_checks_directory_type(tree, monkeypatch):
     backend, system, library, alias = tree
-    child = library / 'child'
+    child = library / "child"
     child.mkdir()
-    outside = library.parent.parent / 'outside'
+    outside = library.parent.parent / "outside"
     outside.mkdir()
     original = PolicyScan._entries
 
@@ -283,19 +303,21 @@ def test_alias_replay_still_checks_directory_type(tree, monkeypatch):
             child.symlink_to(outside, target_is_directory=True)
         return original(self, directory, canonical, reuse)
 
-    monkeypatch.setattr(PolicyScan, '_entries', entries)
-    with pytest.raises(ValueError, match='变为符号链接'):
+    monkeypatch.setattr(PolicyScan, "_entries", entries)
+    with pytest.raises(ValueError, match="变为符号链接"):
         backend._mount_policy(backend.read_paths, git_read=False)
 
 
 def test_metadata_timing_and_alias_replay_counts_are_separate(tree):
     backend, _, library, _ = tree
-    touch(library / 'package/normal.py')
+    touch(library / "package/normal.py")
     backend._mount_policy(backend.read_paths, git_read=False)
     metrics = backend.last_policy_metrics
-    assert metrics['directory_opens'] == metrics['directories_scanned']
-    assert metrics['metadata_checks'] == metrics['directories_reused'] == 2
-    assert metrics['metadata_ms'] > 0
-    assert sum(group.get('metadata_checks', 0) for group in metrics['by_root_mount']) == 2
-    assert metrics['scan_ms'] >= sum(metrics[key] for key in (
-        'metadata_ms', 'rules_ms', 'enumeration_ms', 'workspace_validation_ms'))
+    assert metrics["directory_opens"] == metrics["directories_scanned"]
+    assert metrics["metadata_checks"] == metrics["directories_reused"] == 2
+    assert metrics["metadata_ms"] > 0
+    assert sum(group.get("metadata_checks", 0) for group in metrics["by_root_mount"]) == 2
+    assert metrics["scan_ms"] >= sum(
+        metrics[key]
+        for key in ("metadata_ms", "rules_ms", "enumeration_ms", "workspace_validation_ms")
+    )

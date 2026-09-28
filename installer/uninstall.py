@@ -53,9 +53,12 @@ def other_installations(data: dict) -> tuple[list[dict], bool]:
             command = public_command(directory, name)
             if os.name == "nt":
                 from host_support.windows_install import command_state
+
                 try:
                     target = command_state(command)
-                    uncertain |= target is not None and target != str(installed_command(Path(data["root"]), name))
+                    uncertain |= target is not None and target != str(
+                        installed_command(Path(data["root"]), name)
+                    )
                 except ValueError:
                     uncertain = True
                 continue
@@ -79,6 +82,7 @@ def unlink_owned_command(item: dict, root: Path, *, dry_run: bool) -> bool:
         raise ValueError("安装记录的命令路径无效")
     if os.name == "nt":
         from host_support.windows_install import command_receipt, command_state
+
         try:
             actual = command_state(path)
         except ValueError:
@@ -138,11 +142,17 @@ def remove_venv(data: dict, *, dry_run: bool) -> bool:
 def clean_shell(data: dict, others: list[dict], uncertain: bool, *, dry_run: bool) -> None:
     if os.name == "nt":
         from host_support.windows_install import apply_path_change
+
         for change in reversed(data.get("windows_path", [])):
             bin_dir = Path(change["bin_dir"])
-            shared = uncertain or bin_dir == user_bin_dir().resolve() or any(
-                Path(command["path"]).parent == bin_dir
-                for other in others for command in other["commands"]
+            shared = (
+                uncertain
+                or bin_dir == user_bin_dir().resolve()
+                or any(
+                    Path(command["path"]).parent == bin_dir
+                    for other in others
+                    for command in other["commands"]
+                )
             )
             if shared:
                 print(f"保留共享用户 PATH：{bin_dir}")
@@ -319,7 +329,13 @@ def uninstall(root: Path, *, dry_run=False, purge=False, remove_image=False):
             stack.enter_context(file_lock(registry_dir().parent / ".maintenance.lock"))
             stack.enter_context(file_lock(root / ".repo-agent-operation.lock"))
         if (root / TRANSACTION).exists():
-            entry = "install_release.ps1" if os.name == "nt" else "install-release.sh" if (root / "release.json").is_file() else "install.sh"
+            entry = (
+                "install_release.ps1"
+                if os.name == "nt"
+                else "install-release.sh"
+                if (root / "release.json").is_file()
+                else "install.sh"
+            )
             raise ValueError(f"有未完成的安装恢复；请先运行 ./{entry} --recover")
         return _uninstall(root, dry_run=dry_run, purge=purge, remove_image=remove_image)
 

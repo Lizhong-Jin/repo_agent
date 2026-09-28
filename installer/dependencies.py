@@ -320,8 +320,7 @@ def service_report(root, *, mode, languages=None, image="repo-agent-sandbox:v1")
 
 
 LANGUAGE_LABELS = {
-    item.name: (item.label, item.toolchain_label, item.service_label)
-    for item in LANGUAGE_SPECS
+    item.name: (item.label, item.toolchain_label, item.service_label) for item in LANGUAGE_SPECS
 }
 
 
@@ -383,12 +382,14 @@ def print_language_status(root):
         chain_state = "已安装" if row["toolchain"] else "缺失或不可用"
         service_state = "已安装" if row["service"] else "缺失或不可用"
         print(
-            f"{label} | {chain}: {chain_state} | {service}: {service_state} | repo-agent toolchains install {name}"
+            f"{label} | {chain}: {chain_state} | {service}: {service_state} | "
+            f"repo-agent toolchains install {name}"
         )
     print("查看列表：repo-agent toolchains list；补齐全部：repo-agent toolchains install all")
     print("CUDA 文件复用 clangd；完整 CUDA 编译环境使用 CUDA 镜像。")
     if available_mode(root) != "native":
         print(
-            "当前安装并非 native 模式；此表不代表 Docker 镜像状态。镜像用 repo-agent doctor --mode docker 检查。"
+            "当前安装并非 native 模式；此表不代表 Docker 镜像状态。"
+            "镜像用 repo-agent doctor --mode docker 检查。"
         )
     return rows

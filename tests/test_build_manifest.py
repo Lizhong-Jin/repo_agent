@@ -184,7 +184,12 @@ def test_real_wheel_and_sdist_keep_new_resource_and_drop_removed_module(source, 
     with zipfile.ZipFile(rebuilt_wheel) as archive:
         archive.extractall(installed)
     result = subprocess.run(
-        [sys.executable, "-I", "-B", "-c", """
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-c",
+            """
 import pathlib, sys
 root = pathlib.Path(sys.argv[1]).resolve()
 sys.path.insert(0, str(root))
@@ -201,7 +206,9 @@ with installer.paths.docker_build_context() as context:
     assert (context / 'installer/setup.py').is_file()
     assert (context / 'configuration/storage.py').is_file()
 print('shipped-layout-ok')
-""", str(installed)],
+""",
+            str(installed),
+        ],
         cwd=tmp_path,
         capture_output=True,
         text=True,

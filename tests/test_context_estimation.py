@@ -18,9 +18,14 @@ class OfflineModel:
 
 class Tool:
     execution_kind = ExecutionKind.HOST_CONTROL
-    definition = ToolDefinition("read_file", "Read a file", {
-        "type": "object", "properties": {"path": {"type": "string"}},
-    })
+    definition = ToolDefinition(
+        "read_file",
+        "Read a file",
+        {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+        },
+    )
 
 
 def test_startup_counts_system_tools_and_skills_without_requests(tmp_path):
@@ -50,15 +55,23 @@ def test_history_counts_tool_arguments_results_without_duplicating_native_state(
     call = ToolCall("one", "read_file", {"path": "example.txt"})
     assistant = Message("assistant", "查看文件", tool_calls=(call,))
     history = (
-        Message("system", "system"), Message("user", "read"), assistant,
+        Message("system", "system"),
+        Message("user", "read"),
+        assistant,
         Message.tool_result(call, "文件内容" * 500),
     )
     runtime = AgentRuntime(OfflineModel(), tools=[Tool()])
     before = [message.to_dict() for message in history]
     assert runtime.estimate_context_tokens(history) > runtime.estimate_context_tokens(history[:-1])
-    native = replace(assistant, provider_state=ProviderState(
-        "openai", "m", {"encrypted_content": "opaque" * 1000}, assistant.fingerprint(),
-    ))
+    native = replace(
+        assistant,
+        provider_state=ProviderState(
+            "openai",
+            "m",
+            {"encrypted_content": "opaque" * 1000},
+            assistant.fingerprint(),
+        ),
+    )
     assert estimate_context_tokens(history) == estimate_context_tokens(
         (*history[:2], native, history[3])
     )

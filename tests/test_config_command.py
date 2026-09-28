@@ -67,8 +67,10 @@ def test_web_search_configuration_and_secret_masking(tmp_path, capsys):
     with pytest.raises(ValueError):
         config_command.validate_value("AGENT_WEB_SEARCH_PROVIDER", "unknown")
     save_user_config({"BRAVE_SEARCH_API_KEY": ""})
-    assert any("BRAVE_SEARCH_API_KEY" in warning for warning in
-               config_command.validate_configuration(tmp_path))
+    assert any(
+        "BRAVE_SEARCH_API_KEY" in warning
+        for warning in config_command.validate_configuration(tmp_path)
+    )
 
 
 def test_show_uses_root_and_explicit_project_file(tmp_path, monkeypatch, capsys):
@@ -187,9 +189,12 @@ def test_config_entry_bypasses_agent_and_broken_runtime_values(tmp_path, monkeyp
 
     monkeypatch.setattr(sys, "argv", ["repo-agent", "config", "show"])
     monkeypatch.setenv("LLM_STREAM", "invalid")
-    monkeypatch.setattr("cli.runtime_setup.LLMClient", lambda *a, **kw: pytest.fail("must not start model"))
     monkeypatch.setattr(
-        "cli.execution_environment.detect_environment", lambda **kw: pytest.fail("must not start Docker")
+        "cli.runtime_setup.LLMClient", lambda *a, **kw: pytest.fail("must not start model")
+    )
+    monkeypatch.setattr(
+        "cli.execution_environment.detect_environment",
+        lambda **kw: pytest.fail("must not start Docker"),
     )
     cli.main()
     assert 'LLM_STREAM = "invalid"' in capsys.readouterr().out

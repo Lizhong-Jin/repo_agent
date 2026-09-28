@@ -13,11 +13,16 @@ from dataclasses import replace
 from pathlib import Path
 
 from host_support.filesystem import (
-    mkdir_at, open_directory, open_file, rename_at, set_file_mode, stat_at,
-    unlink_at, walk_descriptors,
+    mkdir_at,
+    open_directory,
+    open_file,
+    rename_at,
+    set_file_mode,
+    stat_at,
+    unlink_at,
+    walk_descriptors,
 )
 from host_support.paths import find_windows_executable
-
 from tools._internal.base import ExecutionKind, ToolResult, execution_kind_of
 from tools._internal.file_policy import runtime_protected_paths
 from tools.factory import create_default_tools
@@ -72,6 +77,7 @@ def files(
             result[relative] = (data, stat.S_IMODE(current.st_mode))
     if os.name == "nt":
         from host_support.windows_files import validate_snapshot_names
+
         validate_snapshot_names(result)
     return result
 
@@ -80,19 +86,29 @@ class SandboxedTool:
     def __init__(self, definition, session, *, execution_kind, writeback_mode=None):
         self.execution_kind = execution_kind
         if execution_kind_of(self) not in {
-            ExecutionKind.TRUSTED_FILE, ExecutionKind.SANDBOXED_PROCESS,
+            ExecutionKind.TRUSTED_FILE,
+            ExecutionKind.SANDBOXED_PROCESS,
         }:
             raise ValueError("Docker proxies only accept file/process tools")
         if definition.name in {"run_command", "run_python"}:
             parameters = deepcopy(definition.parameters)
             parameters["properties"]["check_id"] = {
-                "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$",
-                "description": "Stable ID for one validation. Reuse on corrected retries of the same check; never reuse for unrelated checks.",
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9_-]{1,64}$",
+                "description": (
+                    "Stable ID for one validation. Reuse on corrected retries of the same check; "
+                    "never reuse for unrelated checks."
+                ),
             }
-            definition = replace(definition, parameters=parameters, description=definition.description +
-                " For validation, supply a stable check_id from the first attempt. A successful retry "
-                "with the same tool, cwd and check_id resolves its earlier failure even if code changes. "
-                "Retain the original assertions; unrelated checks must use different IDs.")
+            definition = replace(
+                definition,
+                parameters=parameters,
+                description=definition.description
+                + " For validation, supply a stable check_id from the first attempt. "
+                "A successful retry with the same tool, cwd and check_id resolves its earlier "
+                "failure even if code changes. "
+                "Retain the original assertions; unrelated checks must use different IDs.",
+            )
         self.definition = definition
         self.session = session
         self.writeback_mode = writeback_mode
@@ -102,8 +118,14 @@ class SandboxedTool:
             execution_arguments = dict(arguments)
             if self.definition.name in {"run_command", "run_python"} and "check_id" in arguments:
                 check_id = execution_arguments.pop("check_id")
-                if not isinstance(check_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", check_id):
-                    result = ToolResult(False, error_code="INVALID_ARGUMENTS", error="check_id must use 1-64 letters, digits, '_' or '-'.")
+                if not isinstance(check_id, str) or not re.fullmatch(
+                    r"[a-zA-Z0-9_-]{1,64}", check_id
+                ):
+                    result = ToolResult(
+                        False,
+                        error_code="INVALID_ARGUMENTS",
+                        error="check_id must use 1-64 letters, digits, '_' or '-'.",
+                    )
                     self.session.guard.record(self.definition.name, arguments, result)
                     return result
             result = self.session.backend.execute(
@@ -179,8 +201,13 @@ class SandboxSession:
                 raise ValueError("Git 不可用；请安装 Git for Windows 并加入 PATH。")
             system = Path(os.environ.get("SystemRoot", r"C:\Windows"))
             env["PATH"] = os.pathsep.join((str(Path(git).parent), str(system / "System32")))
-            env.update({key: os.environ[key] for key in ("SystemRoot", "WINDIR", "TEMP", "TMP")
-                        if key in os.environ})
+            env.update(
+                {
+                    key: os.environ[key]
+                    for key in ("SystemRoot", "WINDIR", "TEMP", "TMP")
+                    if key in os.environ
+                }
+            )
             env["GIT_CONFIG_COUNT"] = "2"
             env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"] = "core.autocrlf", "false"
             env["GIT_CONFIG_KEY_1"], env["GIT_CONFIG_VALUE_1"] = "core.filemode", "false"
@@ -261,14 +288,25 @@ class SandboxSession:
         if not self.verify_command:
             return None
         try:
-            result = self.backend.execute(self.workspace, "run_command", {
-                "command": self.verify_command, "cwd": ".",
-                "timeout_seconds": self.policy.command_timeout_seconds,
-            })
-            atomic_json(self.directory / "verification.json", {
-                "command": self.verify_command, "success": result.success,
-                "data": result.data, "error_code": result.error_code, "error": result.error,
-            })
+            result = self.backend.execute(
+                self.workspace,
+                "run_command",
+                {
+                    "command": self.verify_command,
+                    "cwd": ".",
+                    "timeout_seconds": self.policy.command_timeout_seconds,
+                },
+            )
+            atomic_json(
+                self.directory / "verification.json",
+                {
+                    "command": self.verify_command,
+                    "success": result.success,
+                    "data": result.data,
+                    "error_code": result.error_code,
+                    "error": result.error,
+                },
+            )
             guard = WritebackGuard()
             guard.record("run_command", {"command": self.verify_command}, result)
             if guard.needs_review or not getattr(self.backend, "healthy", True):
@@ -284,10 +322,15 @@ class SandboxSession:
         if writeback_mode not in {None, "manual", "on-success"}:
             raise ValueError("writeback_mode must be manual or on-success")
         return [
-            SandboxedTool(tool.definition, self, execution_kind=execution_kind_of(tool),
-                          writeback_mode=writeback_mode)
+            SandboxedTool(
+                tool.definition,
+                self,
+                execution_kind=execution_kind_of(tool),
+                writeback_mode=writeback_mode,
+            )
             for tool in create_default_tools(
-                self.workspace, isolated_execution=True,
+                self.workspace,
+                isolated_execution=True,
                 command_timeout_seconds=self.policy.command_timeout_seconds,
                 python_timeout_seconds=self.policy.python_timeout_seconds,
             )
@@ -340,6 +383,7 @@ class SandboxSession:
     def _apply_snapshot(self, current, changed, expected, *, preserve_mode=False):
         if os.name == "nt":
             from host_support.windows_files import validate_snapshot_names
+
             validate_snapshot_names(set(current) | set(changed) | set(expected))
         host = files(self.root, self.policy, protected=self.protected)
         for name in changed:
@@ -349,8 +393,11 @@ class SandboxSession:
             target = self.root
             for part in parts:
                 target = target / part
-                if target.is_symlink() or (os.name == "nt" and target.exists()
-                                           and target.lstat().st_file_attributes & 0x400):
+                if target.is_symlink() or (
+                    os.name == "nt"
+                    and target.exists()
+                    and target.lstat().st_file_attributes & 0x400
+                ):
                     raise ValueError(f"目标包含符号链接：{name}")
             if target.exists():
                 info = target.lstat()
@@ -400,7 +447,9 @@ class SandboxSession:
 
                     temporary = ".sandbox-" + uuid.uuid4().hex
                     data, mode = current[name]
-                    out = open_file(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=fd)
+                    out = open_file(
+                        temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=fd
+                    )
                     try:
                         with os.fdopen(out, "wb") as stream:
                             stream.write(data)
@@ -439,6 +488,7 @@ class SandboxSession:
         record = json.loads((directory / "manifest.json").read_text())
         if os.name == "nt":
             from host_support.windows_files import validate_snapshot_names
+
             validate_snapshot_names(record["files"])
         if record["root"] != str(self.root):
             raise ValueError("备份与当前项目不匹配。")
@@ -462,8 +512,11 @@ class SandboxSession:
             target = self.root
             for part in Path(name).parts:
                 target = target / part
-                if target.is_symlink() or (os.name == "nt" and target.exists()
-                                           and target.lstat().st_file_attributes & 0x400):
+                if target.is_symlink() or (
+                    os.name == "nt"
+                    and target.exists()
+                    and target.lstat().st_file_attributes & 0x400
+                ):
                     raise ValueError(f"恢复路径包含符号链接：{name}")
             actual = fingerprint(*host[name]) if name in host else None
             if actual == entry["before"]:

@@ -9,7 +9,6 @@ import errno
 import os
 import sys
 
-
 # Deny network sockets, including pathname Unix sockets reachable via the workspace.
 # Anonymous socketpair is allowed for Node/libuv child-process pipes: it creates
 # an already-connected private pair, without access to an external endpoint.
@@ -17,12 +16,37 @@ import sys
 # of the socket/connect syscalls. Namespace changes and hard links are not needed
 # by project tools and would weaken the filesystem boundary.
 DENIED_SYSCALLS = (
-    "socket", "socketcall", "connect", "bind", "listen",
-    "accept", "accept4", "io_uring_setup", "io_uring_enter", "io_uring_register",
-    "link", "linkat", "mount", "umount", "umount2", "pivot_root", "chroot",
-    "setns", "unshare", "ptrace", "process_vm_readv", "process_vm_writev",
-    "open_by_handle_at", "name_to_handle_at", "bpf", "userfaultfd",
-    "mknod", "mknodat", "keyctl", "add_key", "request_key",
+    "socket",
+    "socketcall",
+    "connect",
+    "bind",
+    "listen",
+    "accept",
+    "accept4",
+    "io_uring_setup",
+    "io_uring_enter",
+    "io_uring_register",
+    "link",
+    "linkat",
+    "mount",
+    "umount",
+    "umount2",
+    "pivot_root",
+    "chroot",
+    "setns",
+    "unshare",
+    "ptrace",
+    "process_vm_readv",
+    "process_vm_writev",
+    "open_by_handle_at",
+    "name_to_handle_at",
+    "bpf",
+    "userfaultfd",
+    "mknod",
+    "mknodat",
+    "keyctl",
+    "add_key",
+    "request_key",
 )
 
 

@@ -21,7 +21,12 @@ def test_interactive_file_tasks_with_default_tools(tmp_path, monkeypatch, capsys
                 ("write_file", {"path": "demo/scratch.txt", "content": "temporary"}),
             ],
             [("read_file", {"reads": [{"path": "demo/math.py"}]})],
-            [("edit_file", {"path": "demo/math.py", "edits": [{"old_text": "a - b", "new_text": "a + b"}]})],
+            [
+                (
+                    "edit_file",
+                    {"path": "demo/math.py", "edits": [{"old_text": "a - b", "new_text": "a + b"}]},
+                )
+            ],
             [
                 ("read_file", {"reads": [{"path": "demo/math.py"}]}),
                 ("search_files", {"path": "demo", "query": "return a + b"}),
@@ -78,7 +83,9 @@ def test_interactive_file_tasks_with_default_tools(tmp_path, monkeypatch, capsys
     monkeypatch.setattr(
         "sys.argv",
         [
-            "repo-agent", "--sandbox", "local",
+            "repo-agent",
+            "--sandbox",
+            "local",
             "--root",
             str(tmp_path),
             "--provider",

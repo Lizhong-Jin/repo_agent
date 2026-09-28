@@ -39,8 +39,13 @@ class Transcript:
 
     def to_records(self):
         return [
-            {"kind": b.kind, "text": b.text(), "step": b.step,
-             "started": b.started, "ended": b.ended}
+            {
+                "kind": b.kind,
+                "text": b.text(),
+                "step": b.step,
+                "started": b.started,
+                "ended": b.ended,
+            }
             for b in self.blocks
         ]
 
@@ -57,13 +62,19 @@ class Transcript:
                 or not {"kind", "text", "step", "started", "ended"}.issubset(row)
                 or row.get("kind") not in {"user", "text", "agent", "thinking"}
                 or not isinstance(row.get("text"), str)
-                or type(row.get("step")) is not int or row["step"] < 0
+                or type(row.get("step")) is not int
+                or row["step"] < 0
                 or type(row.get("started")) not in {int, float}
-                or not math.isfinite(row["started"]) or row["started"] < 0
-                or (row.get("ended") is not None and (
-                    type(row["ended"]) not in {int, float}
-                    or not math.isfinite(row["ended"]) or row["ended"] < row["started"]
-                ))
+                or not math.isfinite(row["started"])
+                or row["started"] < 0
+                or (
+                    row.get("ended") is not None
+                    and (
+                        type(row["ended"]) not in {int, float}
+                        or not math.isfinite(row["ended"])
+                        or row["ended"] < row["started"]
+                    )
+                )
             ):
                 raise ValueError("会话显示记录无效；可使用 --new-session")
             block = Block(row["kind"], step=row["step"], started=row["started"], ended=row["ended"])

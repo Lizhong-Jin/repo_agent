@@ -37,7 +37,12 @@ def test_protected_files_unavailable_to_local_tools_and_snapshot(tmp_path, name)
     path = tmp_path / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("SYNTHETIC_SECRET")
-    assert ReadFileTool(tmp_path).execute({"reads": [{"path": name}]}).data["results"][0]["error"]["code"] == "PROTECTED_FILE"
+    assert (
+        ReadFileTool(tmp_path)
+        .execute({"reads": [{"path": name}]})
+        .data["results"][0]["error"]["code"]
+        == "PROTECTED_FILE"
+    )
     assert (
         WriteFileTool(tmp_path)
         .execute(
@@ -65,7 +70,12 @@ def test_aliases_and_custom_directories_are_protected(tmp_path, monkeypatch):
     (tmp_path / "symlink.txt").symlink_to(secret)
     os.link(secret, tmp_path / "hardlink.txt")
     for name in ("symlink.txt", "hardlink.txt"):
-        assert ReadFileTool(tmp_path).execute({"reads": [{"path": name}]}).data["results"][0]["error"]["code"] == "PROTECTED_FILE"
+        assert (
+            ReadFileTool(tmp_path)
+            .execute({"reads": [{"path": name}]})
+            .data["results"][0]["error"]["code"]
+            == "PROTECTED_FILE"
+        )
     custom = tmp_path / "audit"
     monkeypatch.setenv("AGENT_LOG_DIR", str(custom))
     # A configured directory is protected even before it exists.

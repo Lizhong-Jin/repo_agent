@@ -107,7 +107,12 @@ def validate_value(key, value):
             if value.lower() not in {"off", "brave"}:
                 raise ValueError
             return value.lower()
-        if key in {"LLM_STREAM", "LLM_THINKING_RECALL", "AGENT_WEB_FETCH_ENABLED", "AGENT_AUTO_COMPACT"}:
+        if key in {
+            "LLM_STREAM",
+            "LLM_THINKING_RECALL",
+            "AGENT_WEB_FETCH_ENABLED",
+            "AGENT_AUTO_COMPACT",
+        }:
             return "true" if stream_value(value) else "false"
         if key == "AGENT_SANDBOX_WRITEBACK":
             return writeback_mode(value)
@@ -208,8 +213,10 @@ def validate_values(values):
     from agent.compaction import CompactionSettings
 
     CompactionSettings(
-        auto=options["auto_compact"], threshold=options["compact_threshold"],
-        target=options["compact_target"], keep_tokens=options["compact_keep_tokens"],
+        auto=options["auto_compact"],
+        threshold=options["compact_threshold"],
+        target=options["compact_target"],
+        keep_tokens=options["compact_keep_tokens"],
         max_refinements=options["compact_max_refinements"],
     )
     ceiling = options["recovery_max_output_tokens"]
@@ -261,8 +268,10 @@ def validate_configuration(root, *, user_only=False):
         warnings.append("未设置 LLM_MODEL；可运行 repo-agent config model")
     if not values.get(provider.api_key_env, "").strip():
         warnings.append(f"未设置 {provider.api_key_env}；可运行 repo-agent config model")
-    if (values.get("AGENT_WEB_SEARCH_PROVIDER", "").lower() == "brave"
-            and not values.get("BRAVE_SEARCH_API_KEY", "").strip()):
+    if (
+        values.get("AGENT_WEB_SEARCH_PROVIDER", "").lower() == "brave"
+        and not values.get("BRAVE_SEARCH_API_KEY", "").strip()
+    ):
         warnings.append("已启用 Brave 搜索但未设置 BRAVE_SEARCH_API_KEY")
     return warnings
 

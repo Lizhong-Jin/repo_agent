@@ -66,6 +66,7 @@ def read_record(path: Path, root: Path | None = None) -> dict:
         raise ValueError("Windows PATH 记录列表无效")
     for item in data.get("windows_path", []):
         from host_support.windows_install import validate_path_change
+
         validate_path_change(item)
     for item in data["commands"]:
         if not isinstance(item, dict) or not all(
@@ -77,7 +78,8 @@ def read_record(path: Path, root: Path | None = None) -> dict:
             not path.is_absolute()
             or path != public_command(path.parent, path.stem if os.name == "nt" else path.name)
             or (path.stem if os.name == "nt" else path.name) not in COMMANDS
-            or Path(item["target"]) != installed_command(Path(data["root"]), path.stem if os.name == "nt" else path.name)
+            or Path(item["target"])
+            != installed_command(Path(data["root"]), path.stem if os.name == "nt" else path.name)
         ):
             raise ValueError("安装记录的命令路径无效")
     for item in data["shell"]:

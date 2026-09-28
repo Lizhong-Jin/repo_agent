@@ -21,9 +21,9 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 from host_support.processes import kill_process_group, start_process
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -199,8 +199,10 @@ class LspClient:
     def request(self, method: str, params: Any = None, *, timeout: float | None = None) -> Any:
         """Escape hatch for additional LSP requests; returns unmodified JSON data."""
         if timeout is not None and (
-            isinstance(timeout, bool) or not isinstance(timeout, (int, float))
-            or not math.isfinite(timeout) or timeout <= 0
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
         ):
             raise ValueError("timeout must be finite and positive")
         with self._lock:
@@ -208,7 +210,11 @@ class LspClient:
             return self._request(method, params, timeout=timeout)
 
     def sync_document(
-        self, path: str | Path, *, text: str | None = None, language_id: str | None = None,
+        self,
+        path: str | Path,
+        *,
+        text: str | None = None,
+        language_id: str | None = None,
     ) -> str:
         """Open/update a UTF-8 file or supplied buffer; return its file URI.
 
@@ -317,10 +323,10 @@ class LspClient:
             return self._request("textDocument/references", params) or []
 
     def get_diagnostics(
-        self, 
+        self,
         path: str | Path,
         *,
-        text: str | None=None,
+        text: str | None = None,
     ) -> dict[str, Any]:
         """Return diagnostics plus freshness metadata; absence is never success.
 

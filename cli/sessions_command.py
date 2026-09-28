@@ -18,12 +18,16 @@ class CommandParser(argparse.ArgumentParser):
 
 
 def log_arguments(parser):
-    parser.add_argument("session", nargs="?", default="latest", help="会话序号、完整 ID、名称或 latest")
+    parser.add_argument(
+        "session", nargs="?", default="latest", help="会话序号、完整 ID、名称或 latest"
+    )
     parser.add_argument("--kind", choices=["chat", "trace", "jsonl"], default="chat")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--tail", type=int, metavar="N", help="只显示最后 N 行")
     group.add_argument("--cat", action="store_true", help="显示全部内容（默认）")
-    parser.add_argument("-f", "--follow", action="store_true", help="持续跟随此会话，Ctrl+C 退出查看")
+    parser.add_argument(
+        "-f", "--follow", action="store_true", help="持续跟随此会话，Ctrl+C 退出查看"
+    )
     parser.add_argument("--path", action="store_true", help="只打印日志绝对路径")
 
 
@@ -165,8 +169,11 @@ def main(argv=None):
     # Accept --root before or after the subcommand, without loading model config.
     root_parser = CommandParser(add_help=False, allow_abbrev=False)
     root_parser.add_argument("--root", default=".")
-    parser = CommandParser(prog="repo-agent sessions", allow_abbrev=False,
-                           description="查看和管理当前项目会话；支持 --root 指定项目")
+    parser = CommandParser(
+        prog="repo-agent sessions",
+        allow_abbrev=False,
+        description="查看和管理当前项目会话；支持 --root 指定项目",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("list", help="列出会话")
     rename = commands.add_parser("rename", help="更改会话名称")

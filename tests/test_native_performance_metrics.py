@@ -96,8 +96,11 @@ def test_startup_retains_separate_isolation_and_gpu_probe_timings(tmp_path, monk
         calls.append(command)
         from test_linux_native_gpu import startup_report
 
-        report = startup_report(gpu={"cuda_kernel_verified": True, "devices": ["GPU-test"]}
-                                if "--gpu" in command else None)
+        report = startup_report(
+            gpu={"cuda_kernel_verified": True, "devices": ["GPU-test"]}
+            if "--gpu" in command
+            else None
+        )
         return outcome(json.dumps(report))
 
     monkeypatch.setattr(ProcessRunner, "run", run)

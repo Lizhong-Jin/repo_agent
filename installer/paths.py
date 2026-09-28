@@ -94,9 +94,13 @@ def _extract_zip(archive, destination):
             name = item.filename.rstrip("/") if item.is_dir() else item.filename
             path = archive_path(name)
             mode = item.external_attr >> 16
-            if (str(path) != name or name in seen or item.flag_bits & 1
-                    or stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR)
-                    or not (destination / path).resolve().is_relative_to(destination)):
+            if (
+                str(path) != name
+                or name in seen
+                or item.flag_bits & 1
+                or stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR)
+                or not (destination / path).resolve().is_relative_to(destination)
+            ):
                 raise ValueError("ZIP 含不安全或重复的路径")
             seen.add(name)
             if not item.is_dir():

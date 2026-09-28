@@ -397,8 +397,7 @@ def test_multichunk_unicode_and_escaped_sources_fit_final_requests(conversation,
 
     conv = conversation(window=window)
     messages = [
-        Message("user" if i % 2 == 0 else "assistant", '中文"\\\n' * 250)
-        for i in range(16)
+        Message("user" if i % 2 == 0 else "assistant", '中文"\\\n' * 250) for i in range(16)
     ]
     _, ids = conv.archive.archive(messages)
     records = [

@@ -25,7 +25,9 @@ class ModelPicker:
         self.models = supported_models(provider)
         self.query = ""
         self.matches = self.models
-        self.index = next((i for i, m in enumerate(self.matches) if m.id.casefold() == current.casefold()), 0)
+        self.index = next(
+            (i for i, m in enumerate(self.matches) if m.id.casefold() == current.casefold()), 0
+        )
         self.window = Window(FormattedTextControl(self.fragments), height=12, wrap_lines=False)
 
     @property

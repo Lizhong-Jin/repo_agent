@@ -23,6 +23,7 @@ import os
 import re
 from dataclasses import dataclass
 from functools import wraps
+from itertools import pairwise
 from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from tempfile import NamedTemporaryFile
@@ -35,11 +36,12 @@ from ._internal._file_io import FileSnapshot, StagedWrites, read_snapshot
 from ._internal._workspace import WorkspaceTool
 from ._internal._workspace import serialized_file_write as _serialized_file_write
 from ._internal.base import ExecutionKind, ToolResult
-from ._internal.file_access import FileAccess, current_file_access
 from ._internal.errors import ToolErrorCode, tool_error
+from ._internal.file_access import FileAccess, current_file_access
 from ._internal.file_policy import is_credential_path
 
 logger = logging.getLogger(__name__)
+
 
 class FileTool(WorkspaceTool):
     execution_kind = ExecutionKind.TRUSTED_FILE
@@ -73,9 +75,13 @@ class FileTool(WorkspaceTool):
             return access.mkdir(path, **options)
         return path.mkdir(**options)
 
+
 # ReadFileTool
 class ReadFileTool(FileTool):
-    """Read one or multiple UTF-8 source files with 1-based inclusive line ranges and bounded output."""
+    """Read one or multiple UTF-8 source files.
+
+    Use 1-based inclusive line ranges and bounded output.
+    """
 
     execution_kind = ExecutionKind.TRUSTED_FILE
 
@@ -99,16 +105,23 @@ class ReadFileTool(FileTool):
         return ToolDefinition(
             name="read_file",
             description=(
-                "Read one or multiple UTF-8 text files inside the workspace. Prefer workspace-relative paths. "
-                "Pass reads as an array, even for one file. Each read has its own path and optional "
-                "1-based inclusive start_line/end_line. Results preserve request order, including duplicates. "
-                "Each result has its own success, data and optional error; a file error does not stop other reads. "
-                "Overall success is false if any read fails; successful results are still returned. "
-                f"Returns at most {self.max_output_chars} numbered-content characters across all files, "
+                "Read one or multiple UTF-8 text files inside the workspace. "
+                "Prefer workspace-relative paths. Pass reads as an array, even for one file. "
+                "Each read has its own path and optional 1-based inclusive start_line/end_line. "
+                "Results preserve request order, including duplicates. "
+                "Each result has its own success, data and optional error; "
+                "a file error does not stop other reads. "
+                "Overall success is false if any read fails; "
+                "successful results are still returned. "
+                f"Returns at most {self.max_output_chars} numbered-content characters "
+                "across all files, "
                 "allocated in request order. Metadata is not included in this limit. "
-                "Only complete lines are returned; use each result's next_start_line to continue truncated reads. "
-                "OUTPUT_TOO_LARGE means no requested line fits; retry that file separately or request fewer lines. "
-                "A line exceeding the entire budget requires increasing the host's max_output_chars setting."
+                "Only complete lines are returned; "
+                "use each result's next_start_line to continue truncated reads. "
+                "OUTPUT_TOO_LARGE means no requested line fits; "
+                "retry that file separately or request fewer lines. "
+                "A line exceeding the entire budget requires increasing "
+                "the host's max_output_chars setting."
             ),
             parameters={
                 "type": "object",
@@ -198,7 +211,8 @@ class ReadFileTool(FileTool):
             error=(
                 f"{failures} of {len(reads)} reads failed; "
                 "inspect results for per-file errors and successful content."
-                if failures else None
+                if failures
+                else None
             ),
         )
 
@@ -217,7 +231,10 @@ class ReadFileTool(FileTool):
             if not S_ISREG(info.st_mode):
                 return tool_error(ToolErrorCode.NOT_A_FILE)
             snapshot = read_snapshot(
-                target, target, info, self.max_file_bytes,
+                target,
+                target,
+                info,
+                self.max_file_bytes,
                 size_message=f"File exceeds {self.max_file_bytes} bytes.",
             )
             if isinstance(snapshot, ToolResult):
@@ -261,7 +278,8 @@ class ReadFileTool(FileTool):
         if total and not numbered_lines:
             return tool_error(
                 ToolErrorCode.OUTPUT_TOO_LARGE,
-                f"The first requested numbered line does not fit the remaining {output_budget} characters. "
+                "The first requested numbered line does not fit the remaining "
+                f"{output_budget} characters. "
                 "Retry this file separately; a line exceeding the full budget requires increasing "
                 "the host's max_output_chars setting.",
             )
@@ -325,7 +343,10 @@ class WriteFileTool(FileTool):
                     "overwrite": {
                         "type": "boolean",
                         "default": False,
-                        "description": "Whether to overwrite an existing file. If false and the file exists, the tool returns an error.",
+                        "description": (
+                            "Whether to overwrite an existing file. "
+                            "If false and the file exists, the tool returns an error."
+                        ),
                     },
                     "create_parents": {
                         "type": "boolean",
@@ -351,14 +372,16 @@ class WriteFileTool(FileTool):
         path = arguments.get("path")
         if not isinstance(path, str) or not path.strip() or "\x00" in path:
             return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS, "path must be a non-empty string without NUL.",
+                ToolErrorCode.INVALID_ARGUMENTS,
+                "path must be a non-empty string without NUL.",
             )
         content = arguments.get("content")
         if not isinstance(content, str):
             return tool_error(ToolErrorCode.INVALID_ARGUMENTS, "content must be a string.")
         if "\x00" in content:
             return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS, "content must not contain NUL bytes.",
+                ToolErrorCode.INVALID_ARGUMENTS,
+                "content must not contain NUL bytes.",
             )
         overwrite = arguments.get("overwrite", False)
         create_parents = arguments.get("create_parents", False)
@@ -373,7 +396,8 @@ class WriteFileTool(FileTool):
             return tool_error(ToolErrorCode.UNSUPPORTED_ENCODING)
         if len(encoded) > self.max_content_bytes:
             return tool_error(
-                ToolErrorCode.CONTENT_TOO_LARGE, f"Content exceeds {self.max_content_bytes} UTF-8 bytes.",
+                ToolErrorCode.CONTENT_TOO_LARGE,
+                f"Content exceeds {self.max_content_bytes} UTF-8 bytes.",
             )
 
         try:
@@ -437,6 +461,7 @@ class _PreparedEdit:
     new_text: str
     start_line: int
 
+
 # EditFileTool
 class EditFileTool(FileTool):
     """replace one or multiple text fragments in an existing UTF-8 workspace file."""
@@ -482,8 +507,7 @@ class EditFileTool(FileTool):
                         "type": "string",
                         "minLength": 1,
                         "description": (
-                            "Path to an existing UTF-8 regular file "
-                            "inside the workspace."
+                            "Path to an existing UTF-8 regular file inside the workspace."
                         ),
                     },
                     "edits": {
@@ -497,17 +521,19 @@ class EditFileTool(FileTool):
                                     "type": "string",
                                     "minLength": 1,
                                     "description": (
-                                        "Exact text that must occur exactly once in the original file."
+                                        "Exact text that must occur exactly once "
+                                        "in the original file."
                                     ),
                                 },
                                 "new_text": {
                                     "type": "string",
-                                    "description": (
-                                        "Replacement text. May be empty."
-                                    ),
+                                    "description": ("Replacement text. May be empty."),
                                 },
                             },
-                            "required": ["old_text", "new_text",],
+                            "required": [
+                                "old_text",
+                                "new_text",
+                            ],
                             "additionalProperties": False,
                         },
                     },
@@ -515,12 +541,14 @@ class EditFileTool(FileTool):
                         "type": "string",
                         "pattern": "^[0-9a-fA-F]{64}$",
                         "description": (
-                            "Optional SHA-256 of the file bytes that "
-                            "must match before editing."
+                            "Optional SHA-256 of the file bytes that must match before editing."
                         ),
                     },
                 },
-                "required": ["path", "edits",],
+                "required": [
+                    "path",
+                    "edits",
+                ],
                 "additionalProperties": False,
             },
         )
@@ -545,14 +573,17 @@ class EditFileTool(FileTool):
         if not isinstance(edits, list) or not edits or len(edits) > self.max_edits:
             return tool_error(
                 ToolErrorCode.INVALID_ARGUMENTS,
-                f"edits must be a non-empty list and contains less than {self.max_edits} items"
+                f"edits must be a non-empty list and contains less than {self.max_edits} items",
             )
         expected_sha256 = arguments.get("expected_sha256")
         if expected_sha256 is not None:
-            if not isinstance(expected_sha256, str) or re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256) is None:
+            if (
+                not isinstance(expected_sha256, str)
+                or re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256) is None
+            ):
                 return tool_error(
                     ToolErrorCode.INVALID_ARGUMENTS,
-                    "expected_sha256 must be a 64-character hexadecimal SHA-256 digest."
+                    "expected_sha256 must be a 64-character hexadecimal SHA-256 digest.",
                 )
 
         validated_edits: list[tuple[str, str]] = []
@@ -565,12 +596,13 @@ class EditFileTool(FileTool):
             if set(edit) - {"old_text", "new_text"}:
                 return tool_error(
                     ToolErrorCode.INVALID_ARGUMENTS,
-                    f"edit {index} allows only old_text and new_text."
+                    f"edit {index} allows only old_text and new_text.",
                 )
             old_text = edit.get("old_text")
             if not isinstance(old_text, str) or not old_text:
                 return tool_error(
-                    ToolErrorCode.INVALID_ARGUMENTS, f"old_text in edit {index} must be a non-empty string."
+                    ToolErrorCode.INVALID_ARGUMENTS,
+                    f"old_text in edit {index} must be a non-empty string.",
                 )
             new_text = edit.get("new_text")
             if not isinstance(new_text, str):
@@ -583,17 +615,21 @@ class EditFileTool(FileTool):
                     f"old_text and new_text in edit {index} must not contain NUL bytes.",
                 )
             if old_text == new_text:
-                return tool_error("NO_CHANGES", f"old_text and new_text in edit {index} are identical.")
+                return tool_error(
+                    "NO_CHANGES", f"old_text and new_text in edit {index} are identical."
+                )
             try:
                 total_edit_bytes += len(old_text.encode("utf-8"))
                 total_edit_bytes += len(new_text.encode("utf-8"))
             except UnicodeEncodeError:
                 return tool_error(
-                    ToolErrorCode.UNSUPPORTED_ENCODING, f"Text in edit {index} must use valid UTF-8 encoding."
+                    ToolErrorCode.UNSUPPORTED_ENCODING,
+                    f"Text in edit {index} must use valid UTF-8 encoding.",
                 )
             if total_edit_bytes > self.max_total_edit_bytes:
                 return tool_error(
-                    "EDITS_TOO_LARGE", f"Combined edit text exceeds {self.max_total_edit_bytes} UTF-8 bytes."
+                    "EDITS_TOO_LARGE",
+                    f"Combined edit text exceeds {self.max_total_edit_bytes} UTF-8 bytes.",
                 )
             validated_edits.append((old_text, new_text))
 
@@ -610,7 +646,10 @@ class EditFileTool(FileTool):
             if not S_ISREG(info.st_mode):
                 return tool_error(ToolErrorCode.NOT_A_FILE)
             snapshot = read_snapshot(
-                target, target, info, self.max_content_bytes,
+                target,
+                target,
+                info,
+                self.max_content_bytes,
                 size_message=f"File exceeds {self.max_content_bytes} bytes.",
             )
             if isinstance(snapshot, ToolResult):
@@ -642,7 +681,8 @@ class EditFileTool(FileTool):
             new_text = raw_new_text.replace("\r\n", "\n").replace("\r", "\n")
             if old_text in seen_old_text:
                 return tool_error(
-                    "DUPLICATE_EDIT", f"edit {index} repeats an old_text already used by another edit."
+                    "DUPLICATE_EDIT",
+                    f"edit {index} repeats an old_text already used by another edit.",
                 )
             seen_old_text.add(old_text)
             start = normalized.find(old_text)
@@ -668,28 +708,31 @@ class EditFileTool(FileTool):
                 )
             )
         prepared_edits.sort(key=lambda edit: edit.start)
-        for previous, current in zip(prepared_edits, prepared_edits[1:]):
+        for previous, current in pairwise(prepared_edits):
             if current.start < previous.end:
                 return tool_error(
-                    "OVERLAPPING_EDITS", f"edit {previous.index} and edit {current.index} overlap in the original file."
+                    "OVERLAPPING_EDITS",
+                    f"edit {previous.index} and edit {current.index} overlap in the original file.",
                 )
 
-        normalized_offset = [(current_edit.start, current_edit.end) for current_edit in prepared_edits]
+        normalized_offset = [
+            (current_edit.start, current_edit.end) for current_edit in prepared_edits
+        ]
         original_text_offset = self._get_original_text_offset(text, normalized_offset)
         slice_start, slice_end = 0, 0
         updated_text_fragments: list[str] = []
         for index, current_edit in enumerate(prepared_edits):
             original_start, original_end = original_text_offset[index]
-            if "\r\n" in text[original_start: original_end]:
+            if "\r\n" in text[original_start:original_end]:
                 newline = "\r\n"
-            elif "\r" in text[original_start: original_end]:
+            elif "\r" in text[original_start:original_end]:
                 newline = "\r"
             else:
                 newline = "\n"
             slice_end = original_start
             new_normalized = current_edit.new_text.replace("\r\n", "\n").replace("\r", "\n")
             replacement = new_normalized.replace("\n", newline)
-            updated_text_fragments.append(text[slice_start: slice_end])
+            updated_text_fragments.append(text[slice_start:slice_end])
             updated_text_fragments.append(replacement)
             slice_start = original_end
         if slice_start < len(text):
@@ -718,12 +761,8 @@ class EditFileTool(FileTool):
             {
                 "edit_index": edit.index,
                 "start_line": edit.start_line,
-                "old_line_count": (
-                    self._count_fragment_lines(edit.old_text)
-                ),
-                "new_line_count": (
-                    self._count_fragment_lines(edit.new_text)
-                ),
+                "old_line_count": (self._count_fragment_lines(edit.old_text)),
+                "new_line_count": (self._count_fragment_lines(edit.new_text)),
             }
             for edit in prepared_edits
         ]
@@ -741,7 +780,9 @@ class EditFileTool(FileTool):
         )
 
     @staticmethod
-    def _get_original_text_offset(text: str, normalized_offset: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    def _get_original_text_offset(
+        text: str, normalized_offset: list[tuple[int, int]]
+    ) -> list[tuple[int, int]]:
         """Map an LF-normalized boundary back to the original text boundary."""
         item_num = len(normalized_offset)
         unfolded_original_offset: list[int] = []
@@ -768,11 +809,15 @@ class EditFileTool(FileTool):
             for i in range(index, len(unfolded_original_offset)):
                 unfolded_original_offset[i] += accumulate_offset
         for i in range(item_num):
-            original_offset.append((unfolded_original_offset[i * 2], unfolded_original_offset[i * 2 + 1]))
+            original_offset.append(
+                (unfolded_original_offset[i * 2], unfolded_original_offset[i * 2 + 1])
+            )
         return original_offset
 
     @staticmethod
-    def _count_fragment_lines(text: str,) -> int:
+    def _count_fragment_lines(
+        text: str,
+    ) -> int:
         if not text:
             return 0
         normalized = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -1148,7 +1193,11 @@ class ApplyPatchTool(FileTool):
                     failure = self._check_unchanged(loaded)
                     if failure is not None:
                         return self._commit_failure(
-                            prepared_files, committed, failure.error_code, failure.error, failed_path
+                            prepared_files,
+                            committed,
+                            failure.error_code,
+                            failure.error,
+                            failed_path,
                         )
                     temp_paths[loaded.target].replace(loaded.target)
                     committed.append(prepared)
@@ -1166,7 +1215,8 @@ class ApplyPatchTool(FileTool):
                     prepared_files,
                     committed,
                     code,
-                    f"Patch {phase} failed ({type(error).__name__}); inspect committed files before retrying.",
+                    f"Patch {phase} failed ({type(error).__name__}); "
+                    "inspect committed files before retrying.",
                     failed_path,
                 )
         return None
@@ -1204,7 +1254,8 @@ class ApplyPatchTool(FileTool):
             if not isinstance(sha256, str) or re.fullmatch(r"[0-9a-fA-F]{64}", sha256) is None:
                 return tool_error(
                     ToolErrorCode.INVALID_ARGUMENTS,
-                    f"expected_files[{index}].sha256 must be a 64-character hexadecimal SHA-256 digest.",
+                    f"expected_files[{index}].sha256 must be a "
+                    "64-character hexadecimal SHA-256 digest.",
                 )
             if path in result:
                 return tool_error(
@@ -1286,7 +1337,7 @@ class ApplyPatchTool(FileTool):
                     else:
                         raise _PatchParseError(
                             "INVALID_HUNK_LINE",
-                            f"Patch line {index + 1} must start with " "' ', '+' or '-'.",
+                            f"Patch line {index + 1} must start with ' ', '+' or '-'.",
                         )
                     patch_lines.append(_PatchLine(kind=kind, text=content))
                     index += 1
@@ -1345,7 +1396,10 @@ class ApplyPatchTool(FileTool):
             if not S_ISREG(info.st_mode):
                 return tool_error(ToolErrorCode.NOT_A_FILE)
             return read_snapshot(
-                candidate, target, info, self.max_content_bytes,
+                candidate,
+                target,
+                info,
+                self.max_content_bytes,
                 verify_identity=True,
                 size_message=f"{path} exceeds {self.max_content_bytes} bytes.",
             )
@@ -1485,7 +1539,7 @@ class ApplyPatchTool(FileTool):
             )
 
         ordered = sorted(prepared_hunks, key=lambda item: (item.start, item.end))
-        for previous, current in zip(ordered, ordered[1:]):
+        for previous, current in pairwise(ordered):
             # v1 deliberately rejects overlap of the whole matched hunk,
             # including overlapping context, because this is simpler and safer.
             if current.start < previous.end:
@@ -1562,6 +1616,7 @@ class ApplyPatchTool(FileTool):
                 matched = prefix[matched - 1]
         return matches
 
+
 # ListFileTool
 class ListFileTool(FileTool):
     """List files in a directory with optional filtering and recursion."""
@@ -1595,12 +1650,15 @@ class ListFileTool(FileTool):
                     "path": {
                         "type": "string",
                         "minLength": 1,
-                        "description": "Path to a directory inside the workspace. Use '.' for the workspace root.",
+                        "description": (
+                            "Path to a directory inside the workspace. "
+                            "Use '.' for the workspace root."
+                        ),
                     },
                     "include_hidden": {
                         "type": "boolean",
                         "default": True,
-                        "description": "Whether to include entries whose names start with '.'."
+                        "description": "Whether to include entries whose names start with '.'.",
                     },
                 },
                 "required": ["path"],
@@ -1620,7 +1678,8 @@ class ListFileTool(FileTool):
         path = arguments.get("path")
         if not isinstance(path, str) or not path.strip() or "\x00" in path:
             return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS, "path must be a non-empty string without NUL.",
+                ToolErrorCode.INVALID_ARGUMENTS,
+                "path must be a non-empty string without NUL.",
             )
         include_hidden = arguments.get("include_hidden", True)
         if not isinstance(include_hidden, bool):
@@ -1637,7 +1696,7 @@ class ListFileTool(FileTool):
                 return tool_error(ToolErrorCode.NOT_A_DIRECTORY)
             entries: list[dict[str, Any]] = []
             access = current_file_access()
-            for entry in (access.iterdir(target) if access else target.iterdir()):
+            for entry in access.iterdir(target) if access else target.iterdir():
                 if not include_hidden and entry.name.startswith("."):
                     continue
                 try:
@@ -1654,7 +1713,7 @@ class ListFileTool(FileTool):
                     "name": entry.name,
                     "path": relative,
                     "type": entry_type,
-                    }
+                }
                 if size is not None:
                     item["size"] = size
                 entries.append(item)
@@ -1666,7 +1725,7 @@ class ListFileTool(FileTool):
             return tool_error(ToolErrorCode.PERMISSION_DENIED)
         except (OSError, RuntimeError):
             return tool_error(ToolErrorCode.READ_ERROR)
-        
+
         type_order = {
             "directory": 0,
             "file": 1,
@@ -1689,6 +1748,7 @@ class ListFileTool(FileTool):
                 "truncated": truncated,
             },
         )
+
 
 # FindFileTool
 class FindFileTool(FileTool):
@@ -1713,7 +1773,8 @@ class FindFileTool(FileTool):
             name="find_files",
             description=(
                 "Find files or directories recursively inside the workspace using a glob pattern. "
-                "Use this when you know a file or directory name/pattern but do not know its location. "
+                "Use this when you know a file or directory name/pattern "
+                "but do not know its location. "
                 "The pattern is matched relative to the given search path. "
                 "Absolute patterns and '..' path segments are rejected. "
                 "Credential paths are excluded from results and counts, even with "
@@ -1774,7 +1835,8 @@ class FindFileTool(FileTool):
         pattern = arguments.get("pattern")
         if not isinstance(pattern, str) or not pattern.strip() or "\x00" in pattern:
             return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS, "pattern must be a non-empty string without NUL.",
+                ToolErrorCode.INVALID_ARGUMENTS,
+                "pattern must be a non-empty string without NUL.",
             )
         pattern_path = Path(pattern)
         if pattern_path.anchor or ".." in pattern_path.parts:
@@ -1785,12 +1847,14 @@ class FindFileTool(FileTool):
         path = arguments.get("path", ".")
         if not isinstance(path, str) or not path.strip() or "\x00" in path:
             return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS, "path must be a non-empty string without NUL.",
+                ToolErrorCode.INVALID_ARGUMENTS,
+                "path must be a non-empty string without NUL.",
             )
         entry_type = arguments.get("type", "any")
         if not isinstance(entry_type, str) or entry_type not in {"file", "directory", "any"}:
             return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS, "type must be one of: file, directory, any.",
+                ToolErrorCode.INVALID_ARGUMENTS,
+                "type must be one of: file, directory, any.",
             )
         include_hidden = arguments.get("include_hidden", True)
         if not isinstance(include_hidden, bool):
@@ -1809,7 +1873,7 @@ class FindFileTool(FileTool):
             matches: list[dict[str, Any]] = []
             total_matches = 0
             access = current_file_access()
-            for candidate in (access.glob(target, pattern) if access else target.glob(pattern)):
+            for candidate in access.glob(target, pattern) if access else target.glob(pattern):
                 try:
                     metadata = inspect_entry(candidate, policy)
                     if metadata is None:
@@ -1847,7 +1911,7 @@ class FindFileTool(FileTool):
             return tool_error(ToolErrorCode.PERMISSION_DENIED)
         except (OSError, RuntimeError, ValueError):
             return tool_error(ToolErrorCode.READ_ERROR)
-        
+
         type_order = {
             "directory": 0,
             "file": 1,
@@ -1869,6 +1933,7 @@ class FindFileTool(FileTool):
                 "truncated": truncated,
             },
         )
+
 
 # SearchFilesTool
 class SearchFilesTool(FileTool):
@@ -1903,7 +1968,8 @@ class SearchFilesTool(FileTool):
                 "Search UTF-8 text files inside the workspace for a literal text substring. "
                 "Directories are searched recursively. Binary, oversized, unreadable, "
                 "and unsupported-encoding files are skipped. "
-                "Credential files and directories are always excluded, even with include_hidden=true. "
+                "Credential files and directories are always excluded, "
+                "even with include_hidden=true. "
                 "Returns workspace-relative paths, line numbers, and matching lines. "
                 f"Returns at most {self.max_results} matching lines."
             ),
@@ -2002,7 +2068,7 @@ class SearchFilesTool(FileTool):
             return tool_error(ToolErrorCode.PERMISSION_DENIED)
         except (OSError, RuntimeError):
             return tool_error("SEARCH_ERROR", "Unable to resolve the search path.")
-        
+
         matches = list[dict[str, Any]]()
         files_scanned = 0
         skipped_files = 0
@@ -2011,16 +2077,21 @@ class SearchFilesTool(FileTool):
         truncated = False
         truncation_reason = None
         if case_sensitive:
+
             def find_match_index(line: str) -> int:
                 return line.find(query)
         else:
             query_lower = query.casefold()
+
             def find_match_index(line: str) -> int:
                 return line.casefold().find(query_lower)
 
         try:
             files = self._iter_files(
-                target, include_hidden=include_hidden, glob=glob, policy=policy,
+                target,
+                include_hidden=include_hidden,
+                glob=glob,
+                policy=policy,
             )
             for file, info in files:
                 if files_scanned >= self.max_files_scanned:
@@ -2030,7 +2101,9 @@ class SearchFilesTool(FileTool):
                 files_scanned += 1
                 try:
                     metadata = inspect_entry(file, policy, info=info)
-                    if metadata is None or not metadata.resolved.is_relative_to(self.workspace_root):
+                    if metadata is None or not metadata.resolved.is_relative_to(
+                        self.workspace_root
+                    ):
                         skipped_files += 1
                         continue
                     info = metadata.info
@@ -2103,8 +2176,11 @@ class SearchFilesTool(FileTool):
 
     def _iter_files(self, target: Path, *, include_hidden: bool, glob: str | None, policy):
         return iter_search_candidates(
-            self.workspace_root, target,
-            include_hidden=include_hidden, glob=glob, policy=policy,
+            self.workspace_root,
+            target,
+            include_hidden=include_hidden,
+            glob=glob,
+            policy=policy,
         )
 
     def _truncate_matching_line(
@@ -2117,7 +2193,7 @@ class SearchFilesTool(FileTool):
             return line
         available = self.max_line_chars - match_length
         if available <= 0:
-            return line[match_index: match_index + self.max_line_chars]
+            return line[match_index : match_index + self.max_line_chars]
         before = available // 2
         after = available - before
         start = max(0, match_index - before)
@@ -2161,12 +2237,15 @@ class MakeDirectoryTool(FileTool):
                     "path": {
                         "type": "string",
                         "minLength": 1,
-                        "description": "Path to a directory inside the workspace. Use '.' for the workspace root.",
+                        "description": (
+                            "Path to a directory inside the workspace. "
+                            "Use '.' for the workspace root."
+                        ),
                     },
                     "parents": {
                         "type": "boolean",
                         "default": False,
-                        "description": "Whether to create missing parent directories."
+                        "description": "Whether to create missing parent directories.",
                     },
                 },
                 "required": ["path"],
@@ -2234,7 +2313,7 @@ class MakeDirectoryTool(FileTool):
             return tool_error(ToolErrorCode.PERMISSION_DENIED)
         except (OSError, RuntimeError):
             return tool_error("CREATE_DIRECTORY_ERROR", "Unable to create the directory.")
-    
+
         return ToolResult(
             success=True,
             data={
@@ -2330,6 +2409,7 @@ class DeleteFileTool(FileTool):
             },
         )
 
+
 # MoveFileTool
 class MoveFileTool(FileTool):
     """Move or rename one regular file inside a bounded workspace."""
@@ -2360,16 +2440,12 @@ class MoveFileTool(FileTool):
                     "source": {
                         "type": "string",
                         "minLength": 1,
-                        "description": (
-                            "Workspace-relative path of the existing file."
-                        ),
+                        "description": ("Workspace-relative path of the existing file."),
                     },
                     "destination": {
                         "type": "string",
                         "minLength": 1,
-                        "description": (
-                            "Workspace-relative destination path."
-                        ),
+                        "description": ("Workspace-relative destination path."),
                     },
                     "create_parents": {
                         "type": "boolean",
@@ -2388,34 +2464,47 @@ class MoveFileTool(FileTool):
             return tool_error(ToolErrorCode.INVALID_ARGUMENTS)
         if set(arguments) - {"source", "destination", "create_parents"}:
             return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS, 
-                "Allowed arguments: source, destination, create_parents"
+                ToolErrorCode.INVALID_ARGUMENTS,
+                "Allowed arguments: source, destination, create_parents",
             )
         source = arguments.get("source")
         if not isinstance(source, str) or not source.strip() or "\x00" in source:
-            return tool_error(ToolErrorCode.INVALID_ARGUMENTS, "source must be a non-empty string without NUL.")
+            return tool_error(
+                ToolErrorCode.INVALID_ARGUMENTS, "source must be a non-empty string without NUL."
+            )
         destination = arguments.get("destination")
         if not isinstance(destination, str) or not destination.strip() or "\x00" in destination:
-            return tool_error(ToolErrorCode.INVALID_ARGUMENTS, "destination must be a non-empty string without NUL.")
+            return tool_error(
+                ToolErrorCode.INVALID_ARGUMENTS,
+                "destination must be a non-empty string without NUL.",
+            )
         create_parents = arguments.get("create_parents", False)
         if not isinstance(create_parents, bool):
-            return tool_error(ToolErrorCode.INVALID_ARGUMENTS, "create_parents must be a boolean.") 
+            return tool_error(ToolErrorCode.INVALID_ARGUMENTS, "create_parents must be a boolean.")
 
         try:
             source_candidate = self.workspace_root / source
             destination_candidate = self.workspace_root / destination
             source_target = source_candidate.resolve()
             destination_target = destination_candidate.resolve()
-            if (is_credential_path(source_candidate, source_target) 
-                or is_credential_path(destination_candidate, destination_target)):
+            if is_credential_path(source_candidate, source_target) or is_credential_path(
+                destination_candidate, destination_target
+            ):
                 return tool_error(ToolErrorCode.PROTECTED_FILE)
             if not source_target.is_relative_to(self.workspace_root):
-                return tool_error(ToolErrorCode.PATH_OUTSIDE_WORKSPACE, "source must stay inside the workspace.")
+                return tool_error(
+                    ToolErrorCode.PATH_OUTSIDE_WORKSPACE, "source must stay inside the workspace."
+                )
             if not destination_target.is_relative_to(self.workspace_root):
-                return tool_error(ToolErrorCode.PATH_OUTSIDE_WORKSPACE, "denstination must stay inside the workspace.")
+                return tool_error(
+                    ToolErrorCode.PATH_OUTSIDE_WORKSPACE,
+                    "denstination must stay inside the workspace.",
+                )
             source_info = source_candidate.lstat()
             if S_ISLNK(source_info.st_mode):
-                return tool_error(ToolErrorCode.PATH_IS_SYMLINK, "Moving symbolic links is not supported.")
+                return tool_error(
+                    ToolErrorCode.PATH_IS_SYMLINK, "Moving symbolic links is not supported."
+                )
             if not S_ISREG(source_info.st_mode):
                 return tool_error(ToolErrorCode.NOT_A_FILE, "source must refer to a regular file.")
             try:
@@ -2423,16 +2512,26 @@ class MoveFileTool(FileTool):
             except FileNotFoundError:
                 pass
             else:
-                return tool_error("DESTINATION_ALREADY_EXISTS", "The destination path already exists.")
+                return tool_error(
+                    "DESTINATION_ALREADY_EXISTS", "The destination path already exists."
+                )
             destination_parent = destination_candidate.parent.resolve()
             if not destination_parent.is_relative_to(self.workspace_root):
-                return tool_error(ToolErrorCode.PATH_OUTSIDE_WORKSPACE, "The destination parent must stay inside the workspace.")
+                return tool_error(
+                    ToolErrorCode.PATH_OUTSIDE_WORKSPACE,
+                    "The destination parent must stay inside the workspace.",
+                )
             if not destination_parent.exists():
                 if not create_parents:
-                    return tool_error(ToolErrorCode.PARENT_NOT_FOUND, "The destination parent directory does not exist.")
+                    return tool_error(
+                        ToolErrorCode.PARENT_NOT_FOUND,
+                        "The destination parent directory does not exist.",
+                    )
                 self._mkdir(destination_parent, parents=True, exist_ok=True)
             if not destination_parent.is_dir():
-                return tool_error(ToolErrorCode.NOT_A_DIRECTORY, "The destination parent must be a directory.")
+                return tool_error(
+                    ToolErrorCode.NOT_A_DIRECTORY, "The destination parent must be a directory."
+                )
             source_relative = source_target.relative_to(self.workspace_root).as_posix()
             destination_relative = destination_target.relative_to(self.workspace_root).as_posix()
             bytes_moved = source_info.st_size
@@ -2446,16 +2545,25 @@ class MoveFileTool(FileTool):
         except NotADirectoryError:
             return tool_error(ToolErrorCode.NOT_A_DIRECTORY)
         except PermissionError:
-            return tool_error(ToolErrorCode.PERMISSION_DENIED, "The file cannot be moved with current permissions.")
+            return tool_error(
+                ToolErrorCode.PERMISSION_DENIED,
+                "The file cannot be moved with current permissions.",
+            )
         except RuntimeError:
-            return tool_error("MOVE_ERROR", "Unable to move the file.",)
+            return tool_error(
+                "MOVE_ERROR",
+                "Unable to move the file.",
+            )
         except OSError as exc:
             if exc.errno == errno.EXDEV:
                 return tool_error(
                     "CROSS_DEVICE_MOVE_NOT_SUPPORTED",
                     "Moving files across filesystems is not supported.",
                 )
-            return tool_error("MOVE_ERROR", "Unable to move the file.",)
+            return tool_error(
+                "MOVE_ERROR",
+                "Unable to move the file.",
+            )
 
         return ToolResult(
             success=True,
@@ -2466,6 +2574,7 @@ class MoveFileTool(FileTool):
                 "bytes_moved": bytes_moved,
             },
         )
+
 
 # GetPathInfoTool
 class GetPathInfoTool(FileTool):
@@ -2500,9 +2609,7 @@ class GetPathInfoTool(FileTool):
                     "path": {
                         "type": "string",
                         "minLength": 1,
-                        "description": (
-                            "Path inside the workspace to inspect."
-                        ),
+                        "description": ("Path inside the workspace to inspect."),
                     },
                 },
                 "required": ["path"],
@@ -2551,12 +2658,12 @@ class GetPathInfoTool(FileTool):
             return tool_error(ToolErrorCode.NOT_A_DIRECTORY)
         except PermissionError:
             return tool_error(
-                ToolErrorCode.PERMISSION_DENIED, 
-                "The path cannot be inspected with current permissions."
+                ToolErrorCode.PERMISSION_DENIED,
+                "The path cannot be inspected with current permissions.",
             )
         except (OSError, RuntimeError):
             return tool_error("STAT_ERROR", "Unable to inspect the path.")
-        
+
         data: dict[str, Any] = {
             "path": inspected_path.relative_to(self.workspace_root).as_posix(),
             "type": path_type,
@@ -2564,10 +2671,10 @@ class GetPathInfoTool(FileTool):
         if path_type == "file":
             data["size"] = info.st_size
             try:
-                data["executable"] = os.access(candidate, os.X_OK,)
+                data["executable"] = os.access(
+                    candidate,
+                    os.X_OK,
+                )
             except OSError:
                 data["executable"] = False
-        return ToolResult(
-            success=True,
-            data=data
-        )
+        return ToolResult(success=True, data=data)

@@ -2,8 +2,8 @@ import sys
 
 import pytest
 
-from tools import ProcessResult, ProcessRunner, ProcessStartError, RunCommandTool
 from host_support import processes as process_module
+from tools import ProcessResult, ProcessRunner, ProcessStartError, RunCommandTool
 
 
 def test_runner_reuses_configuration_with_independent_cwd_and_output(tmp_path):

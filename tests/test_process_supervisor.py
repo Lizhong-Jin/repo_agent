@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from tools._internal.process_runner import ProcessRunner
 from host_support.supervision import ProcessIdentity, ProcessSupervisor
+from tools._internal.process_runner import ProcessRunner
 
 
 def fake_supervisor(monkeypatch, snapshot):
@@ -117,7 +117,10 @@ def test_supervised_cancellation_reaps_child_before_propagating(tmp_path, monkey
 )
 def test_supervised_timeout_retains_output_and_kills_detached_child(tmp_path):
     # Child is observable for long enough to be adopted before changing parent.
-    child = "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('child ready', flush=True); time.sleep(20)"
+    child = (
+        "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "print('child ready', flush=True); time.sleep(20)"
+    )
     code = (
         "import subprocess,sys,time; "
         f"p=subprocess.Popen([sys.executable,'-u','-c',{child!r}], start_new_session=True); "

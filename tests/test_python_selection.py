@@ -23,10 +23,13 @@ def checkout(tmp_path):
     (root / "installer").mkdir()
     for name in ("__init__.py", "maintenance.py", "_bootstrap.py"):
         shutil.copy2(SOURCE / "installer" / name, root / "installer" / name)
-    shutil.copytree(SOURCE / "host_support", root / "host_support",
-                    ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(
+        SOURCE / "host_support", root / "host_support", ignore=shutil.ignore_patterns("__pycache__")
+    )
     (root / "installer/setup.py").write_text(
-        "import os,sys,json; print('SETUP:' + json.dumps(sys.argv[1:])); open(os.environ['SELECTION_RESULT'], 'w').write(os.environ.get('SELECTED_PYTHON', ''))"
+        "import os,sys,json; print('SETUP:' + json.dumps(sys.argv[1:])); "
+        "open(os.environ['SELECTION_RESULT'], 'w')"
+        ".write(os.environ.get('SELECTED_PYTHON', ''))"
     )
     return root
 

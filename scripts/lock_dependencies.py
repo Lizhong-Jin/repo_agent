@@ -8,8 +8,11 @@ from pathlib import Path
 
 
 def export_locks(root, uv, *, check=False, offline=False):
-    subprocess.run([uv, "lock", "--check" if check else "--upgrade",
-                    *(["--offline"] if offline else [])], cwd=root, check=True)
+    subprocess.run(
+        [uv, "lock", "--check" if check else "--upgrade", *(["--offline"] if offline else [])],
+        cwd=root,
+        check=True,
+    )
     for kind, options in (
         ("core", ["--no-default-groups"]),
         ("lsp", ["--no-default-groups", "--extra", "lsp"]),

@@ -281,7 +281,8 @@ def test_real_release_survives_download_removal(tmp_path, monkeypatch, install_f
             root / ".venv/bin/python",
             "-I",
             "-c",
-            "import importlib.util; assert importlib.util.find_spec('pytest') is None; assert importlib.util.find_spec('ruff') is None",
+            "import importlib.util; assert importlib.util.find_spec('pytest') is None; "
+            "assert importlib.util.find_spec('ruff') is None",
         ]
     )
     run([command, "config", "show"])
@@ -302,10 +303,13 @@ def test_real_release_survives_download_removal(tmp_path, monkeypatch, install_f
     docker.write_text(
         f"#!{sys.executable}\n"
         + "import json, sys\nfrom pathlib import Path\n"
-        + "if sys.argv[1] == 'info':\n print(json.dumps({'OSType':'linux','Architecture':'arm64','Runtimes':{'runc':{}}}))\n"
+        + "if sys.argv[1] == 'info':\n "
+        "print(json.dumps({'OSType':'linux','Architecture':'arm64','Runtimes':{'runc':{}}}))\n"
         + "elif sys.argv[1] == 'build':\n"
         + " root = Path(sys.argv[-1])\n"
-        + " for name in ['pyproject.toml','build_support.py','.env.example','.dockerignore','requirements-lsp.lock','dependencies/node/package-lock.json','sandbox/Dockerfile','sandbox/worker.py','tools/factory.py']: assert (root/name).is_file(), name\n"
+        + " for name in ['pyproject.toml','build_support.py','.env.example','.dockerignore',"
+        "'requirements-lsp.lock','dependencies/node/package-lock.json','sandbox/Dockerfile',"
+        "'sandbox/worker.py','tools/factory.py']: assert (root/name).is_file(), name\n"
         + " assert not (root/'.env').exists()\n"
         + "else: sys.exit(99)\n"
     )

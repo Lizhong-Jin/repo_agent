@@ -111,7 +111,9 @@ def test_cli_fetch_and_cached_read_without_search_key(tmp_path, monkeypatch, mod
         ],
     )
     with httpx.Client(transport=httpx.MockTransport(model)) as http:
-        monkeypatch.setattr("cli.runtime_setup.LLMClient", lambda config: LLMClient(config, http_client=http))
+        monkeypatch.setattr(
+            "cli.runtime_setup.LLMClient", lambda config: LLMClient(config, http_client=http)
+        )
         cli.main()
     assert requested == ["https://docs.example.org"]
     assert native.healthy and len(native_closed) == int(mode == "native")

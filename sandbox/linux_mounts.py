@@ -26,8 +26,13 @@ class MountTable:
         for line in text.splitlines():
             before, after = line.split(" - ", 1)
             fields, fs = before.split(), after.split()
-            mount = Mount(fields[0], _unescape(fields[4]), fs[0], _unescape(fs[1]),
-                          tuple(fields[5].split(",")))
+            mount = Mount(
+                fields[0],
+                _unescape(fields[4]),
+                fs[0],
+                _unescape(fs[1]),
+                tuple(fields[5].split(",")),
+            )
             self.mounts[mount.path] = mount
         self.ordered = sorted(self.mounts.values(), key=lambda mount: len(mount.path), reverse=True)
 
@@ -37,8 +42,14 @@ class MountTable:
 
     def containing(self, path):
         path = str(path)
-        return next((mount for mount in self.ordered if mount.path == "/"
-                     or path == mount.path or path.startswith(mount.path + "/")), None)
+        return next(
+            (
+                mount
+                for mount in self.ordered
+                if mount.path == "/" or path == mount.path or path.startswith(mount.path + "/")
+            ),
+            None,
+        )
 
     def verify(self):
         if type(self).read().text != self.text:

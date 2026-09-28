@@ -2,7 +2,7 @@
 
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from host_support.locking import file_lock
@@ -44,7 +44,7 @@ def create_backup(path, content):
     directory = backup_directory(path)
     directory.mkdir(mode=0o700, exist_ok=True)
     os.chmod(directory, 0o700)
-    name = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid4().hex + ".env"
+    name = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid4().hex + ".env"
     target = directory / name
     fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     with os.fdopen(fd, "wb") as output:
@@ -57,6 +57,7 @@ def replace_config(path, content, before):
     if read_bytes(path) != before:
         raise ValueError("用户配置已被其他操作修改，请重试")
     backup = create_backup(path, before) if before is not None and before != content else None
+
     def unchanged():
         if read_bytes(path) != before:
             raise ValueError("用户配置已被其他操作修改，请重试")

@@ -43,8 +43,12 @@ def runtime_archives(targets, source, *, offline):
     source = Path(source).expanduser().resolve(strict=True)
     if source.is_file() and len(targets) != 1:
         raise ValueError("运行时归档为单个文件时必须指定 --target；全平台构建请提供归档目录")
-    paths = {target: source / f"{target}{release_target(target).runtime_archive_suffix}" if source.is_dir() else source
-             for target in targets}
+    paths = {
+        target: source / f"{target}{release_target(target).runtime_archive_suffix}"
+        if source.is_dir()
+        else source
+        for target in targets
+    }
     for path in paths.values():
         if not path.is_file():
             raise ValueError(f"缺少平台 Python 归档：{path}")
@@ -65,9 +69,7 @@ def write_release(bundle, output, version, target, wheel_name):
         "wheel": "wheels/" + wheel_name,
         "files": files,
     }
-    (bundle / "release.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
-    )
+    (bundle / "release.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     # Fail before replacing an existing artifact if bootstrap files are incomplete.
     read_release(bundle)
     directory = output / version / target
@@ -78,10 +80,14 @@ def write_release(bundle, output, version, target, wheel_name):
     os.close(fd)
     try:
         if release_target(target).archive_suffix == ".zip":
-            with zipfile.ZipFile(temporary_archive, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            with zipfile.ZipFile(
+                temporary_archive, "w", compression=zipfile.ZIP_DEFLATED
+            ) as archive:
                 for path in sorted(bundle.rglob("*")):
                     if path.is_file():
-                        archive.write(path, f"{release_directory}/{path.relative_to(bundle).as_posix()}")
+                        archive.write(
+                            path, f"{release_directory}/{path.relative_to(bundle).as_posix()}"
+                        )
         else:
             with tarfile.open(temporary_archive, "w:gz") as archive:
                 for path in sorted(bundle.rglob("*")):
@@ -142,7 +148,7 @@ def build(root, output, uv, *, target=None, runtime_archive=None, wheelhouse=Non
         environment = work / "build-env"
         subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
         python = str(environment_python(environment))
-        package_flags = (["--no-index", "--no-cache-dir"] if offline else [])
+        package_flags = ["--no-index", "--no-cache-dir"] if offline else []
         if wheelhouse:
             package_flags += ["--find-links", str(Path(wheelhouse).resolve(strict=True))]
         subprocess.run(
@@ -184,10 +190,16 @@ def build(root, output, uv, *, target=None, runtime_archive=None, wheelhouse=Non
         results = []
         for selected in targets:
             print(f"准备平台完整包：{selected}", flush=True)
-            kit = work / f'python-kit-{selected}'
-            prepare(root, kit, selected, archive=archives[selected],
-                    wheelhouse=wheelhouse, offline=offline)
-            platform_bundle = work / f'bundle-{selected}'
+            kit = work / f"python-kit-{selected}"
+            prepare(
+                root,
+                kit,
+                selected,
+                archive=archives[selected],
+                wheelhouse=wheelhouse,
+                offline=offline,
+            )
+            platform_bundle = work / f"bundle-{selected}"
             shutil.copytree(bundle, platform_bundle)
             copy_files(root, platform_bundle, bootstrap_files(root, target=selected))
             shutil.copytree(kit, platform_bundle, dirs_exist_ok=True)
@@ -199,23 +211,38 @@ def main():
     parser = argparse.ArgumentParser(
         description="构建平台完整发行包；默认构建所有支持的平台，包含 Python 和运行依赖"
     )
-    parser.add_argument("--output", type=Path, default=Path(__file__).resolve().parents[1] / "dist",
-                        help="输出根目录，产物放入 <目录>/<版本>/<平台>/")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path(__file__).resolve().parents[1] / "dist",
+        help="输出根目录，产物放入 <目录>/<版本>/<平台>/",
+    )
     parser.add_argument("--uv", default=os.environ.get("UV") or shutil.which("uv"))
-    parser.add_argument('--target', choices=tuple(runtime_records()),
-                        help='仅构建指定平台；省略则构建 runtime/python.lock 中的全部平台')
-    parser.add_argument('--runtime-archive', type=Path,
-                        help='单平台 Python 归档，或包含 <平台>.tar.gz 的目录')
-    parser.add_argument('--wheelhouse', type=Path,
-                        help='本地 wheel 目录；全平台离线构建需包含所有目标及构建依赖')
-    parser.add_argument('--offline', action='store_true')
+    parser.add_argument(
+        "--target",
+        choices=tuple(runtime_records()),
+        help="仅构建指定平台；省略则构建 runtime/python.lock 中的全部平台",
+    )
+    parser.add_argument(
+        "--runtime-archive", type=Path, help="单平台 Python 归档，或包含 <平台>.tar.gz 的目录"
+    )
+    parser.add_argument(
+        "--wheelhouse", type=Path, help="本地 wheel 目录；全平台离线构建需包含所有目标及构建依赖"
+    )
+    parser.add_argument("--offline", action="store_true")
     args = parser.parse_args()
     if not args.uv:
         parser.error("构建需要 uv；使用 --uv 指定路径，普通用户安装不需要 uv")
     try:
-        build(Path(__file__).resolve().parents[1], args.output.expanduser().resolve(), args.uv,
-              target=args.target, runtime_archive=args.runtime_archive,
-              wheelhouse=args.wheelhouse, offline=args.offline)
+        build(
+            Path(__file__).resolve().parents[1],
+            args.output.expanduser().resolve(),
+            args.uv,
+            target=args.target,
+            runtime_archive=args.runtime_archive,
+            wheelhouse=args.wheelhouse,
+            offline=args.offline,
+        )
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"构建未完成：{error}\n")
 

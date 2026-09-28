@@ -213,7 +213,9 @@ def test_native_install_adds_lsp_and_rolls_back_failures(installation, monkeypat
         assert load_record(root)["languages"] == (
             ["python", "typescript", "cpp"]
             if failure == "middle-language"
-            else ["python"] if failure else ["python", "typescript"]
+            else ["python"]
+            if failure
+            else ["python", "typescript"]
         )
         assert load_record(root)["pending_languages"] == (
             ["go"] if failure == "middle-language" else ["typescript"] if failure else []
@@ -369,7 +371,5 @@ def test_diagnostic_malformed_output_does_not_leak_output(tmp_path, monkeypatch)
 
 def test_versions_match_dockerfile():
     text = (Path(__file__).resolve().parents[1] / "sandbox/Dockerfile").read_text()
-    for version in (
-        dependencies.GOPLS,
-    ):
+    for version in (dependencies.GOPLS,):
         assert version in text

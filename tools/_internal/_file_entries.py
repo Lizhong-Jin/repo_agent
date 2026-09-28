@@ -28,7 +28,10 @@ class FileEntry:
 
 
 def inspect_entry(
-    path: Path, policy: PathPolicy, *, info: os.stat_result | None = None,
+    path: Path,
+    policy: PathPolicy,
+    *,
+    info: os.stat_result | None = None,
 ) -> FileEntry | None:
     """Resolve once and reuse lstat for type, size and hard-link protection.
 
@@ -53,8 +56,12 @@ def inspect_entry(
 
 
 def iter_search_candidates(
-    workspace_root: Path, target: Path, *, include_hidden: bool,
-    glob: str | None, policy: PathPolicy,
+    workspace_root: Path,
+    target: Path,
+    *,
+    include_hidden: bool,
+    glob: str | None,
+    policy: PathPolicy,
 ):
     relative = target.relative_to(workspace_root)
     if not include_hidden and any(part.startswith(".") for part in relative.parts):
@@ -76,7 +83,8 @@ def iter_search_candidates(
             dirnames[:] = [name for name in dirnames if not name.startswith(".")]
             filenames = [name for name in filenames if not name.startswith(".")]
         dirnames[:] = [
-            name for name in dirnames
+            name
+            for name in dirnames
             if not policy.is_protected(root_path / name, (root_path / name).resolve())
         ]
         for name in filenames:

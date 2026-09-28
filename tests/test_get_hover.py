@@ -79,9 +79,7 @@ def test_oversized_responses_keep_a_bounded_prefix(query, contents):
         assert original[index]["value"].startswith(part["value"])
         if part["value"] != original[index]["value"]:
             assert part["truncated"] and index == len(hover["contents"]) - 1
-    assert hover["range"] == {
-        "start": {"line": 1, "column": 1}, "end": {"line": 1, "column": 2}
-    }
+    assert hover["range"] == {"start": {"line": 1, "column": 1}, "end": {"line": 1, "column": 2}}
     assert result.data["sha256"] == hashlib.sha256(b"x = 1\n").hexdigest()
 
 

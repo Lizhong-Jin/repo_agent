@@ -220,7 +220,7 @@ def test_staged_service_replacement_preserves_original_on_failure(
     monkeypatch.setattr(
         toolchains,
         "service_report",
-        lambda *a, **kw: ([("ERROR", "service", "failed")] if failure == "verification" else []),
+        lambda *a, **kw: [("ERROR", "service", "failed")] if failure == "verification" else [],
     )
     if failure:
         with pytest.raises((ValueError, subprocess.CalledProcessError)):

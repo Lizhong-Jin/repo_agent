@@ -32,7 +32,10 @@ def repository(tmp_path, monkeypatch):
     def git(*args, check=True):
         return subprocess.run(
             ["git", "-c", "core.hooksPath=/dev/null", *args],
-            cwd=repo, env=env, check=check, capture_output=True,
+            cwd=repo,
+            env=env,
+            check=check,
+            capture_output=True,
         )
 
     git("init", "-q", "-b", "main")
@@ -75,7 +78,9 @@ def test_scope_clean_does_not_claim_repository_is_clean(repository):
         assert "clean" not in result.data
         assert result.data["scope_clean"] is True
         assert result.data["scope"] == {
-            "paths": [path], "include_untracked": False, "protected_paths_excluded": True,
+            "paths": [path],
+            "include_untracked": False,
+            "protected_paths_excluded": True,
         }
 
 
@@ -89,7 +94,9 @@ def test_untracked_files_are_individual_and_can_be_excluded(repository):
     result = tool.execute({})
     assert result.success
     assert {entry["path"] for entry in result.data["entries"]} == {
-        "newdir/one.txt", "newdir/two.txt", "newdir/.hidden",
+        "newdir/one.txt",
+        "newdir/two.txt",
+        "newdir/.hidden",
     }
     assert all(entry["untracked"] for entry in result.data["entries"])
     assert result.data["total_entries"] == 3
@@ -139,10 +146,15 @@ def test_credentials_filtered_before_counts_and_entry_limit(repository, monkeypa
         assert GitStatusTool(repo).execute({"paths": [path]}).error_code == "PROTECTED_FILE"
 
 
-@pytest.mark.parametrize("old,new", [
-    (".env", "public.txt"), ("public.txt", ".env"),
-    ("custom.cfg", "public.txt"), ("public.txt", "custom.cfg"),
-])
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        (".env", "public.txt"),
+        ("public.txt", ".env"),
+        ("custom.cfg", "public.txt"),
+        ("public.txt", "custom.cfg"),
+    ],
+)
 def test_rename_hides_both_sides_when_either_is_protected(repository, monkeypatch, old, new):
     repo, git = repository
     monkeypatch.setenv("AGENT_ENV_FILE", str(repo / "custom.cfg"))
@@ -210,17 +222,28 @@ def test_detached_head(repository):
 
 def process_result(**kwargs):
     defaults = dict(
-        exit_code=0, stdout="", stderr="", timed_out=False, cleanup_error=None,
-        duration_ms=1, stdout_truncated=False, stderr_truncated=False,
+        exit_code=0,
+        stdout="",
+        stderr="",
+        timed_out=False,
+        cleanup_error=None,
+        duration_ms=1,
+        stdout_truncated=False,
+        stderr_truncated=False,
     )
     return ProcessResult(**(defaults | kwargs))
 
 
 @pytest.mark.parametrize("stage", ["detection", "status"])
-@pytest.mark.parametrize("cause,expected_code", [
-    (FileNotFoundError(), "GIT_NOT_FOUND"), (PermissionError(), "PERMISSION_DENIED"),
-    (OSError(), "GIT_ERROR"), (RuntimeError(), "GIT_ERROR"),
-])
+@pytest.mark.parametrize(
+    "cause,expected_code",
+    [
+        (FileNotFoundError(), "GIT_NOT_FOUND"),
+        (PermissionError(), "PERMISSION_DENIED"),
+        (OSError(), "GIT_ERROR"),
+        (RuntimeError(), "GIT_ERROR"),
+    ],
+)
 def test_process_start_failures(tmp_path, monkeypatch, stage, cause, expected_code):
     tool = GitStatusTool(tmp_path)
 

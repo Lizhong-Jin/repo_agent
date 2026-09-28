@@ -16,26 +16,35 @@ repository = git_fixtures.repository
 process_result = git_fixtures.process_result
 
 
-CALLS = [
-    (GitDiffTool, {"mode": mode}) for mode in ("working", "head", "staged")
-] + [(GitStatusTool, {})]
+CALLS = [(GitDiffTool, {"mode": mode}) for mode in ("working", "head", "staged")] + [
+    (GitStatusTool, {})
+]
 
 
 def filter_command(marker):
     # Synthetic marker only; a process filter need not complete its handshake to
     # demonstrate that its executable was started (and must instead be blocked).
-    return shlex.join([
-        sys.executable, "-c",
-        f"import sys; from pathlib import Path; Path({str(marker)!r}).write_text('ran'); "
-        "sys.stdout.buffer.write(sys.stdin.buffer.read())",
-    ])
+    return shlex.join(
+        [
+            sys.executable,
+            "-c",
+            f"import sys; from pathlib import Path; Path({str(marker)!r}).write_text('ran'); "
+            "sys.stdout.buffer.write(sys.stdin.buffer.read())",
+        ]
+    )
 
 
 @pytest.mark.parametrize("tool_type,arguments", CALLS)
 @pytest.mark.parametrize("driver", ["clean", "process"])
 @pytest.mark.parametrize("source", ["local", "include", "conditional", "worktree"])
 def test_local_rejects_external_filters_before_any_diff_or_status(
-    repository, tmp_path, monkeypatch, tool_type, arguments, driver, source,
+    repository,
+    tmp_path,
+    monkeypatch,
+    tool_type,
+    arguments,
+    driver,
+    source,
 ):
     repo, git = repository
     marker = tmp_path / "outside-workspace-marker"
@@ -107,7 +116,7 @@ def test_configuration_check_fails_closed(tmp_path, monkeypatch, tool_type):
         replace(process_result(exit_code=1), cleanup_error="unknown"),
     ]
     for failure in failures:
-        monkeypatch.setattr(tool.runner, "run", lambda *a, **kw: failure)
+        monkeypatch.setattr(tool.runner, "run", lambda *a, failure=failure, **kw: failure)
         result = tool._check_external_filters(tmp_path)
         assert result.error_code == "GIT_CONFIG_CHECK_FAILED"
         assert "private-config-details" not in str(result)
@@ -170,16 +179,27 @@ def test_submodule_worktree_filters_are_not_entered(repository, tmp_path, tool_t
 
 
 @pytest.mark.skipif(
-    not ((sys.platform == "darwin" and os.getenv("RUN_SANDBOX_NATIVE_TESTS") == "1")
-         or (sys.platform == "linux" and os.getenv("RUN_SANDBOX_LINUX_TESTS") == "1")),
+    not (
+        (sys.platform == "darwin" and os.getenv("RUN_SANDBOX_NATIVE_TESTS") == "1")
+        or (sys.platform == "linux" and os.getenv("RUN_SANDBOX_LINUX_TESTS") == "1")
+    ),
     reason="Opt-in real native sandbox enforcement",
 )
-@pytest.mark.parametrize("name,arguments", [
-    ("git_diff", {"mode": "working"}), ("git_diff", {"mode": "head"}), ("git_status", {}),
-])
+@pytest.mark.parametrize(
+    "name,arguments",
+    [
+        ("git_diff", {"mode": "working"}),
+        ("git_diff", {"mode": "head"}),
+        ("git_status", {}),
+    ],
+)
 @pytest.mark.parametrize("driver", ["clean", "process"])
 def test_native_filters_cannot_write_outside_workspace(
-    repository, tmp_path, name, arguments, driver,
+    repository,
+    tmp_path,
+    name,
+    arguments,
+    driver,
 ):
     from sandbox.native import NativeBackend
 

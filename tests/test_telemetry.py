@@ -134,6 +134,7 @@ def test_stopped_tasks_emit_final_statistics(finish, status):
 def test_tool_interrupt_and_broken_logger_do_not_lose_file_operation(tmp_path):
     class InterruptedReader(ReadFileTool):
         execution_kind = ExecutionKind.TRUSTED_FILE
+
         def execute(self, arguments):
             raise KeyboardInterrupt
 

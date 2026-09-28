@@ -6,7 +6,11 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from host_support.filesystem import (
-    mkdir_at, open_directory, open_file, set_file_mode, unlink_at,
+    mkdir_at,
+    open_directory,
+    open_file,
+    set_file_mode,
+    unlink_at,
 )
 
 from .session import SESSION_ID

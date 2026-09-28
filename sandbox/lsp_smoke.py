@@ -88,7 +88,11 @@ def check_services(*, mode="direct", languages=("python", "typescript", "go", "c
             # and flatten diagnostics so exception text cannot emit terminal controls.
             detail = "".join(c if c.isprintable() else " " for c in str(error))[:1600]
             if not detail:
-                detail = "缺少 get_symbols 工具" if isinstance(error, StopIteration) else "未提供异常详情"
+                detail = (
+                    "缺少 get_symbols 工具"
+                    if isinstance(error, StopIteration)
+                    else "未提供异常详情"
+                )
             rows.append(
                 (
                     "ERROR",

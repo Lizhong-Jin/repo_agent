@@ -188,7 +188,12 @@ def test_stopped_reply_does_not_poison_next_task(monkeypatch, finish):
 
 def test_continue_after_step_limit_has_a_fresh_budget(tmp_path, monkeypatch, capsys):
     (tmp_path / "a").write_text("a")
-    model = Model([reply(calls=[ToolCall("read", "read_file", {"reads": [{"path": "a"}]})]), reply("finished")])
+    model = Model(
+        [
+            reply(calls=[ToolCall("read", "read_file", {"reads": [{"path": "a"}]})]),
+            reply("finished"),
+        ]
+    )
     inputs(monkeypatch, ["read", "continue", "/exit"])
     run_interactive(AgentRuntime(model, [ReadFileTool(tmp_path)], max_steps=1))
     assert model.requests[1].messages[-2].role == "tool"

@@ -226,14 +226,14 @@ class GetExecutionEnvironmentTool:
                 "executable": sys.executable,
             },
         }
-        environments = self.execution_context.get('python_environments', {})
+        environments = self.execution_context.get("python_environments", {})
         if environments:
-            report['agent_python'] = dict(report['python'])
-            report['python'] = {
-                **environments.get('project_info', {}),
-                'executable': environments['project'],
-                'source': environments.get('source'),
-                'status': 'available' if environments.get('project_info') else 'unknown',
+            report["agent_python"] = dict(report["python"])
+            report["python"] = {
+                **environments.get("project_info", {}),
+                "executable": environments["project"],
+                "source": environments.get("source"),
+                "status": "available" if environments.get("project_info") else "unknown",
             }
         for name, argv in self.RUNTIME_COMMANDS.items():
             if not self.execution_allowed:
@@ -260,7 +260,8 @@ class GetExecutionEnvironmentTool:
         # The installed probe script is shared with the existing GPU smoke tools.
         script = Path(__file__).resolve().parents[1] / "sandbox" / "compute_probe.py"
         python = self.execution_context.get("python_environments", {}).get(
-            "project", sys.executable)
+            "project", sys.executable
+        )
         result = self._probe([python, "-I", str(script)], deadline, timeout=30)
         if result["status"] != "available":
             return result
@@ -279,7 +280,9 @@ class GetExecutionEnvironmentTool:
         report["status"] = (
             "unknown"
             if not report.get("torch") or "torch" in report["errors"]
-            else "available" if report["cuda_available"] and report["devices"] else "unavailable"
+            else "available"
+            if report["cuda_available"] and report["devices"]
+            else "unavailable"
         )
         executable = shutil.which("nvidia-smi", path=self.runner.base_env.get("PATH", ""))
         report["driver"] = (
@@ -479,6 +482,7 @@ class RunCommandTool:
             },
         )
 
+
 # RunPythonTool
 class RunPythonTool:
     """Run bounded Python snippets in a separate subprocess."""
@@ -493,7 +497,7 @@ class RunPythonTool:
         python_executable: str | Path | None = None,
         default_timeout_seconds: int = 10,
         max_timeout_seconds: int = 30,
-        max_output_bytes: int = 32 * 1024, 
+        max_output_bytes: int = 32 * 1024,
         max_code_bytes: int = 128 * 1024,
         base_env: Mapping[str, str] | None = None,
     ) -> None:
@@ -514,7 +518,9 @@ class RunPythonTool:
                 raise ValueError(f"{name} must be a positive integer")
         if default_timeout_seconds > max_timeout_seconds:
             raise ValueError("default_timeout_seconds must not exceed max_timeout_seconds")
-        self.python_executable = str(python_executable if python_executable is not None else sys.executable)
+        self.python_executable = str(
+            python_executable if python_executable is not None else sys.executable
+        )
         self.default_timeout_seconds = default_timeout_seconds
         self.max_timeout_seconds = max_timeout_seconds
         self.max_code_bytes = max_code_bytes
@@ -542,17 +548,13 @@ class RunPythonTool:
                     "code": {
                         "type": "string",
                         "minLength": 1,
-                        "description": (
-                            "Python source code to execute."
-                        ),
+                        "description": ("Python source code to execute."),
                     },
                     "cwd": {
                         "type": "string",
                         "minLength": 1,
                         "default": ".",
-                        "description": (
-                            "Workspace-relative working directory."
-                        ),
+                        "description": ("Workspace-relative working directory."),
                     },
                     "timeout_seconds": {
                         "type": "integer",
@@ -581,14 +583,23 @@ class RunPythonTool:
             )
         code = arguments.get("code")
         if not isinstance(code, str) or not code:
-            return tool_error(ToolErrorCode.INVALID_ARGUMENTS, "code must be a non-empty strings.",)
+            return tool_error(
+                ToolErrorCode.INVALID_ARGUMENTS,
+                "code must be a non-empty strings.",
+            )
         try:
             if len(code.encode("utf-8")) > self.max_code_bytes:
-                return tool_error( "CODE_TOO_LARGE", f"Python code exceeds {self.max_code_bytes} UTF-8 bytes.",)
+                return tool_error(
+                    "CODE_TOO_LARGE",
+                    f"Python code exceeds {self.max_code_bytes} UTF-8 bytes.",
+                )
         except UnicodeEncodeError:
             return tool_error(ToolErrorCode.UNSUPPORTED_ENCODING)
         if "\x00" in code:
-            return tool_error(ToolErrorCode.INVALID_ARGUMENTS, "code must not contain NUL characters.",) 
+            return tool_error(
+                ToolErrorCode.INVALID_ARGUMENTS,
+                "code must not contain NUL characters.",
+            )
         cwd = arguments.get("cwd", ".")
         if not isinstance(cwd, str) or not cwd.strip() or "\x00" in cwd:
             return tool_error(

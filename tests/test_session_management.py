@@ -14,17 +14,18 @@ from types import SimpleNamespace
 import pytest
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from session_helpers import perform
 
 from agent.session import SessionStore
 from agent.Tracing import Tracer
 from cli.sessions_command import main, show_log, ui_command
 from cli.terminal.application import ConversationUI
-from test_sessions import open_conversation, perform  # noqa: F401 (shared fixture)
 
 
 def options(session="latest", **kwargs):
-    return SimpleNamespace(session=session, kind="chat", tail=None, cat=False,
-                           follow=False, path=False, **kwargs)
+    return SimpleNamespace(
+        session=session, kind="chat", tail=None, cat=False, follow=False, path=False, **kwargs
+    )
 
 
 def content(conversation, kind="chat"):
@@ -57,7 +58,9 @@ def test_invalid_name_leaves_current_conversation(open_conversation, name):
     assert c.store.id == sid and c.label == "会话 1 · #1"
 
 
-def test_external_rename_while_running_survives_checkpoint_and_keeps_latest(open_conversation, capsys):
+def test_external_rename_while_running_survives_checkpoint_and_keeps_latest(
+    open_conversation, capsys
+):
     c = open_conversation()
     old_sid = c.store.id
     c.new_session()
@@ -85,13 +88,17 @@ def test_duplicate_names_require_sequence(open_conversation):
 
 def test_catalog_queries_require_no_model_or_sandbox(tmp_path, monkeypatch, capsys):
     from cli import main as cli
+
     def forbidden(*args, **kwargs):
         pytest.fail("read-only command attempted to initialize runtime/config")
+
     monkeypatch.setattr("cli.runtime_setup.LLMClient", forbidden)
     monkeypatch.setattr("cli.startup.configured_environment", forbidden)
     monkeypatch.setattr("cli.execution_environment.SandboxSession", forbidden)
-    for argv in (["sessions", "list", "--root", str(tmp_path)],
-                 ["--root", str(tmp_path), "sessions", "list"]):
+    for argv in (
+        ["sessions", "list", "--root", str(tmp_path)],
+        ["--root", str(tmp_path), "sessions", "list"],
+    ):
         monkeypatch.setattr(sys, "argv", ["repo-agent", *argv])
         cli.main()
     assert "暂无" in capsys.readouterr().out
@@ -135,6 +142,7 @@ def test_missing_chat_is_reported_instead_of_silently_rebuilt(open_conversation)
 
 def test_old_snapshots_migrate_once_with_no_invented_trace_association(open_conversation):
     import shutil
+
     c = open_conversation()
     perform(c, "old text")
     sid, catalog, directory = c.store.id, c.store.catalog, c.store.directory
@@ -196,10 +204,26 @@ def test_follow_in_separate_process_stays_on_selected_session(open_conversation,
     env = {**os.environ, "PYTHONPATH": str(source), "PYTHONUNBUFFERED": "1"}
     with destination.open("w") as output:
         proc = subprocess.Popen(
-            [sys.executable, "-m", "cli.main", "sessions", "logs", "1", "--tail", "100", "-f",
-             "--root", str(c.store.project)], stdout=output, stderr=subprocess.PIPE, env=env,
-            cwd=tmp_path, text=True,
+            [
+                sys.executable,
+                "-m",
+                "cli.main",
+                "sessions",
+                "logs",
+                "1",
+                "--tail",
+                "100",
+                "-f",
+                "--root",
+                str(c.store.project),
+            ],
+            stdout=output,
+            stderr=subprocess.PIPE,
+            env=env,
+            cwd=tmp_path,
+            text=True,
         )
+
         def wait_for(text):
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
@@ -209,6 +233,7 @@ def test_follow_in_separate_process_stays_on_selected_session(open_conversation,
                     pytest.fail(proc.stderr.read())
                 time.sleep(0.03)
             pytest.fail("follow output timed out")
+
         try:
             wait_for("开始会话")
             perform(c, "follow marker 中文")
@@ -266,14 +291,22 @@ def test_tui_names_rename_edit_and_new_command(open_conversation):
     async def run():
         c = open_conversation()
         with create_pipe_input() as pipe:
-            ui = ConversationUI(c.runtime, conversation=c, status=c.status,
-                                terminal_input=pipe, terminal_output=DummyOutput())
+            ui = ConversationUI(
+                c.runtime,
+                conversation=c,
+                status=c.status,
+                terminal_input=pipe,
+                terminal_output=DummyOutput(),
+            )
             running = asyncio.create_task(ui.run_async())
+
             async def until(predicate):
                 async def wait():
                     while not predicate():
                         await asyncio.sleep(0.01)
+
                 await asyncio.wait_for(wait(), 3)
+
             await until(lambda: ui.app.is_running)
             assert "会话 1" in ui.header_text()
             pipe.send_text('/rename "new title"\r')
@@ -288,18 +321,21 @@ def test_tui_names_rename_edit_and_new_command(open_conversation):
             ui.editor.text = ""
             pipe.send_text('/new "second name"\r')
             await until(lambda: "second name" in ui.session_title)
-            pipe.send_text('/sessions\r/logs --tail 10\r')
+            pipe.send_text("/sessions\r/logs --tail 10\r")
             await until(lambda: "默认恢复" in ui.transcript)
-            pipe.send_text('/exit\r')
+            pipe.send_text("/exit\r")
             await asyncio.wait_for(running, 3)
             assert c.label == "second name · #2" and not c.runtime.llm.requests
+
     asyncio.run(run())
 
 
 def test_named_cli_start_resume_and_live_commands(tmp_path, monkeypatch, capsys):
     from contextlib import nullcontext
+
+    from session_helpers import Model
+
     from cli import main as cli
-    from test_sessions import Model
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "synthetic-key")
     monkeypatch.setattr("cli.runtime_setup.LLMClient", lambda config: nullcontext(Model(config)))
@@ -310,7 +346,7 @@ def test_named_cli_start_resume_and_live_commands(tmp_path, monkeypatch, capsys)
     ]:
         monkeypatch.setattr(sys, "argv", [*base, *flags])
         inputs = iter(commands)
-        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+        monkeypatch.setattr("builtins.input", lambda _, inputs=inputs: next(inputs))
         cli.main()
     catalog = SessionStore(tmp_path).catalog
     assert catalog.resolve("1")["name"] == "renamed"
@@ -342,15 +378,18 @@ def test_broken_latest_does_not_block_reading_other_sessions(open_conversation):
 
 def test_log_append_failure_does_not_retry_task_or_lose_snapshot(open_conversation, monkeypatch):
     c = open_conversation()
-    monkeypatch.setattr(c.store.catalog, "append_chat",
-                        lambda *args: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(
+        c.store.catalog, "append_chat", lambda *args: (_ for _ in ()).throw(OSError("disk full"))
+    )
     perform(c, "only once")
     assert len(c.runtime.llm.requests) == 1
     assert any(m.content == "only once" for m in c.history)
     assert c.log_error and c.store.data["pending_task"] is None
 
 
-def test_failed_new_trace_open_keeps_new_context_consistent(open_conversation, tmp_path, monkeypatch):
+def test_failed_new_trace_open_keeps_new_context_consistent(
+    open_conversation, tmp_path, monkeypatch
+):
     c = open_conversation()
     with Tracer(tmp_path / "traces", session_store=c.store) as tracer:
         c.tracer = tracer
@@ -358,10 +397,12 @@ def test_failed_new_trace_open_keeps_new_context_consistent(open_conversation, t
         perform(c, "old")
         sid = c.store.id
         original = c.store.catalog.log_directory
+
         def unavailable(new_sid, **kwargs):
             if new_sid != sid:
                 raise OSError("cannot create new logs")
             return original(new_sid, **kwargs)
+
         monkeypatch.setattr(c.store.catalog, "log_directory", unavailable)
         c.new_session(name="fresh")
         assert c.store.id != sid and not c.history and tracer.error

@@ -16,8 +16,8 @@ from agent.transcript import Transcript
 from cli.config_command import validate_value
 from cli.output import LiveOutput
 from cli.settings import add_runtime_arguments
-from cli.thinking_display import ThinkingDisplay
 from cli.terminal.application import ConversationUI
+from cli.thinking_display import ThinkingDisplay
 from configuration.environment import read_config, user_config_path
 from llm import (
     AsyncLLMClient,

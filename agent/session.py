@@ -51,13 +51,17 @@ def validate_compaction(state, history):
         if not isinstance(state, dict) or set(state) not in (required, required | extra):
             raise ValueError
         if "target" in state:
-            if any(type(state[k]) is not int or state[k] <= 0
-                   for k in ("target", "safety_limit", "auto_retry_at")):
+            if any(
+                type(state[k]) is not int or state[k] <= 0
+                for k in ("target", "safety_limit", "auto_retry_at")
+            ):
                 raise ValueError
-            if (type(state["target_met"]) is not bool
-                    or state["target_met"] != (state["after"] <= state["target"])
-                    or state["after"] > state["safety_limit"]
-                    or state["auto_retry_at"] <= state["after"]):
+            if (
+                type(state["target_met"]) is not bool
+                or state["target_met"] != (state["after"] <= state["target"])
+                or state["after"] > state["safety_limit"]
+                or state["auto_retry_at"] <= state["after"]
+            ):
                 raise ValueError
         if not isinstance(state["snapshot"], str) or not SESSION_ID.fullmatch(state["snapshot"]):
             raise ValueError
@@ -69,14 +73,17 @@ def validate_compaction(state, history):
         for pin in state["pins"]:
             # Older snapshots without occurrence IDs remain readable.
             if not isinstance(pin, dict) or set(pin) not in (
-                {"ref", "text"}, {"ref", "text", "occurrence"}
+                {"ref", "text"},
+                {"ref", "text", "occurrence"},
             ):
                 raise ValueError
             if "occurrence" in pin:
                 occurrence = pin["occurrence"]
-                if (not isinstance(occurrence, str)
-                        or not re.fullmatch(r"[0-9a-f]{32}:(0|[1-9][0-9]*)", occurrence)
-                        or occurrence in occurrences):
+                if (
+                    not isinstance(occurrence, str)
+                    or not re.fullmatch(r"[0-9a-f]{32}:(0|[1-9][0-9]*)", occurrence)
+                    or occurrence in occurrences
+                ):
                     raise ValueError
                 occurrences.add(occurrence)
             if not isinstance(pin["text"], str) or not isinstance(pin["ref"], str):
@@ -95,10 +102,15 @@ def validate_compaction(state, history):
 
 def validate_loaded_tool_groups(names):
     # Optional v1 field. Store names only; permissions and membership are rebuilt.
-    if (not isinstance(names, list) or len(names) > 1024
-            or any(not isinstance(name, str)
-                   or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", name) for name in names)
-            or len(set(names)) != len(names)):
+    if (
+        not isinstance(names, list)
+        or len(names) > 1024
+        or any(
+            not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", name)
+            for name in names
+        )
+        or len(set(names)) != len(names)
+    ):
         raise ValueError("无效的已加载工具组列表")
 
 
@@ -268,24 +280,30 @@ class SessionCatalog:
         if self.directory.is_symlink():
             raise ValueError("会话目录不能是符号链接")
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        fd = open_file(self.directory / ".metadata.lock",
-                       os.O_RDWR | os.O_CREAT, nonblocking=False)
+        fd = open_file(self.directory / ".metadata.lock", os.O_RDWR | os.O_CREAT, nonblocking=False)
         try:
             lock_descriptor(fd)
             path = self.directory / "index"
             if path.exists() or path.is_symlink():
                 index = _read(path)
-                if (not isinstance(index, dict) or index.get("version") != 1
-                        or type(index.get("next_sequence")) is not int
-                        or not isinstance(index.get("sessions"), dict)):
+                if (
+                    not isinstance(index, dict)
+                    or index.get("version") != 1
+                    or type(index.get("next_sequence")) is not int
+                    or not isinstance(index.get("sessions"), dict)
+                ):
                     raise ValueError("会话索引损坏，请保留记录并修复 index")
                 numbers = set()
                 for sid, row in index["sessions"].items():
-                    if (not SESSION_ID.fullmatch(sid) or not isinstance(row, dict)
-                            or type(row.get("sequence")) is not int or row["sequence"] < 1
-                            or row["sequence"] in numbers
-                            or not isinstance(row.get("created_at"), str)
-                            or not isinstance(row.get("updated_at"), str)):
+                    if (
+                        not SESSION_ID.fullmatch(sid)
+                        or not isinstance(row, dict)
+                        or type(row.get("sequence")) is not int
+                        or row["sequence"] < 1
+                        or row["sequence"] in numbers
+                        or not isinstance(row.get("created_at"), str)
+                        or not isinstance(row.get("updated_at"), str)
+                    ):
                         raise ValueError("会话索引损坏")
                     validate_name(row.get("name"))
                     numbers.add(row["sequence"])
@@ -296,12 +314,18 @@ class SessionCatalog:
             changed = False
             self.warnings = []
             # Old snapshots receive numbers once, oldest recorded activity first.
-            candidates = [p for p in self.directory.glob("*.json")
-                          if SESSION_ID.fullmatch(p.stem) and p.stem not in index["sessions"]]
+            candidates = [
+                p
+                for p in self.directory.glob("*.json")
+                if SESSION_ID.fullmatch(p.stem) and p.stem not in index["sessions"]
+            ]
             for path in sorted(candidates, key=lambda p: (p.lstat().st_mtime, p.name)):
                 try:
                     data = _read(path)
-                    if data.get("project") != str(self.project) or data.get("session_id") != path.stem:
+                    if (
+                        data.get("project") != str(self.project)
+                        or data.get("session_id") != path.stem
+                    ):
                         raise ValueError("项目或 ID 不匹配")
                     when = data.get("updated_at")
                     if not isinstance(when, str):
@@ -320,8 +344,10 @@ class SessionCatalog:
         number = index["next_sequence"]
         now = when or datetime.now(UTC).isoformat()
         index["sessions"][sid] = {
-            "sequence": number, "name": name or f"会话 {number}",
-            "created_at": now, "updated_at": now,
+            "sequence": number,
+            "name": name or f"会话 {number}",
+            "created_at": now,
+            "updated_at": now,
         }
         index["next_sequence"] += 1
 
@@ -371,9 +397,11 @@ class SessionCatalog:
             except (OSError, ValueError) as error:
                 latest = None
                 self.warnings.append(f"默认恢复标记不可读：{error}")
-            rows = [dict(row, session_id=sid, active=sid == active, latest=sid == latest)
-                    for sid, row in index["sessions"].items()
-                    if (self.directory / f"{sid}.json").exists()]
+            rows = [
+                dict(row, session_id=sid, active=sid == active, latest=sid == latest)
+                for sid, row in index["sessions"].items()
+                if (self.directory / f"{sid}.json").exists()
+            ]
         return sorted(rows, key=lambda row: row["sequence"], reverse=True)
 
     def resolve(self, selector):
@@ -381,15 +409,15 @@ class SessionCatalog:
         if selector == "latest":
             matches = [row for row in rows if row["latest"]]
         else:
-            matches = [row for row in rows if selector in
-                       {str(row["sequence"]), row["session_id"]}]
+            matches = [row for row in rows if selector in {str(row["sequence"]), row["session_id"]}]
             if not matches:
                 matches = [row for row in rows if row["name"] == selector]
         if not matches:
             raise ValueError(f"找不到会话：{selector}；使用 sessions list 查看")
         if len(matches) != 1:
-            raise ValueError("存在同名会话，请使用序号：" +
-                             ", ".join(str(row["sequence"]) for row in matches))
+            raise ValueError(
+                "存在同名会话，请使用序号：" + ", ".join(str(row["sequence"]) for row in matches)
+            )
         return matches[0]
 
     def rename(self, sid, name):
@@ -412,8 +440,10 @@ class SessionCatalog:
     def log_path(self, sid, kind="chat"):
         if kind not in {"chat", "trace", "jsonl"}:
             raise ValueError("日志类型须为 chat、trace 或 jsonl")
-        return self.log_directory(sid) / {"chat": "chat.log", "trace": "trace.log",
-                                         "jsonl": "trace.jsonl"}[kind]
+        return (
+            self.log_directory(sid)
+            / {"chat": "chat.log", "trace": "trace.log", "jsonl": "trace.jsonl"}[kind]
+        )
 
     def ensure_chat(self, sid):
         # Bootstrap old visible transcripts once; never append a rendered snapshot
@@ -435,6 +465,7 @@ class SessionCatalog:
             if snapshot.exists():
                 data = _read(snapshot)
                 from agent.transcript import Transcript
+
                 transcript = Transcript.from_records(data["transcript"])
                 text = "".join(b.text() for b in transcript.blocks if b.kind != "thinking")
                 if text:
@@ -447,6 +478,7 @@ class SessionCatalog:
 
     def append_chat(self, sid, text):
         from agent.transcript import display_text
+
         path = self.ensure_chat(sid)
         with open_log(path, write=True) as stream:
             stream.write(display_text(text))

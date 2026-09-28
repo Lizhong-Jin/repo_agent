@@ -7,9 +7,9 @@ import httpx
 import pytest
 
 from agent import AgentRuntime
-from cli.thinking_control import ThinkingControl
 from cli.models import ModelControl, ModelSelection
 from cli.settings import add_runtime_arguments, request_options
+from cli.thinking_control import ThinkingControl
 from cli.thinking_store import (
     load_preference,
     preference_path,
@@ -370,18 +370,24 @@ def test_catalog_extension_and_explicit_snapshot_precedence(monkeypatch):
     from llm.model_catalog import MODEL_CATALOG, ModelInfo
 
     monkeypatch.setitem(
-        MODEL_CATALOG, "openai", {
+        MODEL_CATALOG,
+        "openai",
+        {
             "private-reasoner": ModelInfo(
-                "openai", "private-reasoner",
+                "openai",
+                "private-reasoner",
                 thinking={"modes": ("auto", "enabled"), "efforts": ("low", "high")},
                 dated_snapshots=True,
             ),
             "private-reasoner-2026-09-19": ModelInfo(
-                "openai", "private-reasoner-2026-09-19",
+                "openai",
+                "private-reasoner-2026-09-19",
                 thinking={"modes": ("auto", "enabled"), "efforts": ("high",)},
             ),
             "exact-only": ModelInfo(
-                "openai", "exact-only", thinking={"modes": ("auto", "disabled", "enabled")},
+                "openai",
+                "exact-only",
+                thinking={"modes": ("auto", "disabled", "enabled")},
             ),
         },
     )

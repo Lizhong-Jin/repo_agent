@@ -62,8 +62,15 @@ def test_policy_masks_secrets_and_readonly_git(linux_policy, tmp_path):
     scratch = control / "scratch"
     scratch.mkdir()
     argv = backend._sandbox_command(["echo", "ok"], control, scratch, backend.read_paths)
-    for flag in ("--unshare-user", "--unshare-pid", "--unshare-net", "--disable-userns",
-                 "--assert-userns-disabled", "--die-with-parent", "--new-session"):
+    for flag in (
+        "--unshare-user",
+        "--unshare-pid",
+        "--unshare-net",
+        "--disable-userns",
+        "--assert-userns-disabled",
+        "--die-with-parent",
+        "--new-session",
+    ):
         assert flag in argv
     assert argv[argv.index("--cap-drop") + 1] == "ALL"
     assert str(backend.runtime / "sandbox/linux_exec.py") in argv
@@ -97,8 +104,9 @@ def test_configured_paths_and_toolchain_aliases_are_hidden(linux_policy):
 
 @pytest.mark.parametrize("error_number", [errno.EACCES, errno.EPERM])
 @pytest.mark.parametrize("unreadable_root", [False, True])
-def test_unreadable_readonly_tree_is_masked(linux_policy, tmp_path, monkeypatch,
-                                          error_number, unreadable_root):
+def test_unreadable_readonly_tree_is_masked(
+    linux_policy, tmp_path, monkeypatch, error_number, unreadable_root
+):
     system = tmp_path / "system"
     restricted = system if unreadable_root else system / "modules/kernel/lost+found"
     restricted.mkdir(parents=True)
@@ -128,8 +136,10 @@ def test_unreadable_readonly_tree_is_masked(linux_policy, tmp_path, monkeypatch,
         scratch = control / "scratch"
         scratch.mkdir()
         argv = linux_policy._sandbox_command(["true"], control, scratch, (system,))
-        assert any(argv[i:i + 3] == ["--ro-bind", str(control / "hidden-dir"), str(restricted)]
-                   for i in range(len(argv)))
+        assert any(
+            argv[i : i + 3] == ["--ro-bind", str(control / "hidden-dir"), str(restricted)]
+            for i in range(len(argv))
+        )
         (control / "hidden-dir").chmod(0o700)
 
 
@@ -161,7 +171,9 @@ def test_unreadable_workspace_still_fails_closed(linux_policy, monkeypatch, read
             linux_policy._check_workspace()
 
 
-def test_unreadable_workspace_alias_is_not_treated_as_system_tree(linux_policy, tmp_path, monkeypatch):
+def test_unreadable_workspace_alias_is_not_treated_as_system_tree(
+    linux_policy, tmp_path, monkeypatch
+):
     alias = tmp_path / "runtime-alias"
     alias.symlink_to(linux_policy.workspace, target_is_directory=True)
     original = os.scandir
@@ -258,17 +270,21 @@ def test_real_unreadable_system_directory_is_hidden_on_all_mount_paths(tmp_path,
     alias = tmp_path / "lib"
     alias.symlink_to(lib, target_is_directory=True)
     original = LinuxNativeBackend._read_paths
-    monkeypatch.setattr(LinuxNativeBackend, "_read_paths", lambda self: (*original(self), system, alias))
+    monkeypatch.setattr(
+        LinuxNativeBackend, "_read_paths", lambda self: (*original(self), system, alias)
+    )
     backend = None
     restricted.chmod(mode)
     try:
         if mode == 0o111:
-            assert (restricted / ".env").read_text() == "secret"  # Can't list, but CAN read known files.
+            assert (
+                restricted / ".env"
+            ).read_text() == "secret"  # Can't list, but CAN read known files.
         backend = NativeBackend(root, profile="standard")  # Startup itself must now succeed.
         paths = [restricted, alias / restricted.relative_to(lib)]
-        code = f'''
+        code = f"""
 import pathlib
-assert pathlib.Path({str(lib / 'ordinary.txt')!r}).read_text() == 'readable'
+assert pathlib.Path({str(lib / "ordinary.txt")!r}).read_text() == 'readable'
 for directory in {list(map(str, paths))!r}:
     path = pathlib.Path(directory)
     for operation in (lambda: list(path.iterdir()), lambda: (path / '.env').read_text(),
@@ -277,7 +293,7 @@ for directory in {list(map(str, paths))!r}:
         except OSError: pass
         else: raise AssertionError('unscanned directory accessible: ' + directory)
 print('masked')
-'''
+"""
         outcome = backend.execute(root, "run_python", {"code": code})
         assert outcome.success and outcome.data["exit_code"] == 0, outcome
         assert outcome.data["stdout"] == "masked\n"
@@ -294,7 +310,11 @@ def test_real_linux_tools_and_environment(linux_project):
     assert isinstance(backend, LinuxNativeBackend)
     assert backend.execute(root, "write_file", {"path": "a.py", "content": "x = 1\n"}).success
     assert (root / "a.py").read_text() == "x = 1\n"
-    result = backend.execute(root, "run_python", {"code": "from pathlib import Path; Path('a.py').write_text('x = 2\\n')"})
+    result = backend.execute(
+        root,
+        "run_python",
+        {"code": "from pathlib import Path; Path('a.py').write_text('x = 2\\n')"},
+    )
     assert result.success and result.data["exit_code"] == 0, result
     assert (root / "a.py").read_text() == "x = 2\n"
     report = backend.execute(root, "get_execution_environment", {})
@@ -320,7 +340,7 @@ def test_real_linux_files_network_processes_and_inheritance(linux_project, tmp_p
     (root / ".git").mkdir()
     (root / ".git/config").write_text("metadata")
     monkeypatch.setenv("OPENAI_API_KEY", "should-not-inherit")
-    code = f'''
+    code = f"""
 import errno, os, pathlib, socket, subprocess, sys
 def denied(action):
     try: action()
@@ -331,7 +351,7 @@ for path in ({str(outside)!r}, 'alias', 'secret-alias', '.ENV', '.git/config'):
     p = pathlib.Path(path)
     denied(p.read_text)
     denied(lambda: p.write_text('changed'))
-denied(lambda: pathlib.Path({str(backend.runtime / 'tools/factory.py')!r}).write_text('changed'))
+denied(lambda: pathlib.Path({str(backend.runtime / "tools/factory.py")!r}).write_text('changed'))
 denied(lambda: pathlib.Path('/usr/bin/native-test').write_text('changed'))
 denied(lambda: os.link('ordinary', 'hardlink'))
 denied(lambda: socket.socket())
@@ -340,10 +360,12 @@ left, right = socket.socketpair()
 left.send(b'private'); assert right.recv(7) == b'private'
 left.close(); right.close()
 assert 'OPENAI_API_KEY' not in os.environ
-child = subprocess.run([sys.executable, '-I', '-c', 'import socket; socket.socket()'], capture_output=True)
+child = subprocess.run(
+    [sys.executable, '-I', '-c', 'import socket; socket.socket()'], capture_output=True
+)
 assert child.returncode != 0
 assert 'NoNewPrivs:\\t1' in pathlib.Path('/proc/self/status').read_text()
-'''
+"""
     result = backend.execute(root, "run_python", {"code": code})
     assert result.success and result.data["exit_code"] == 0, result
     assert outside.read_text() == "host secret"
@@ -371,7 +393,9 @@ def test_real_linux_git_readonly_and_new_secret_boundary(linux_project):
         assert result.success, result
     # Kernel mount policy is a snapshot; application file tools still reject names.
     assert not backend.execute(root, "write_file", {"path": "new.key", "content": "x"}).success
-    result = backend.execute(root, "run_python", {"code": "from pathlib import Path; Path('new.key').write_text('x')"})
+    result = backend.execute(
+        root, "run_python", {"code": "from pathlib import Path; Path('new.key').write_text('x')"}
+    )
     assert result.data["exit_code"] == 0, result
     result = backend.execute(root, "run_python", {"code": "open('new.key').read()"})
     assert result.data["exit_code"] != 0, result
@@ -388,7 +412,11 @@ while True:
     Path('heartbeat').write_text(str(time.monotonic_ns()))
     time.sleep(0.02)
 """
-    code = f"import subprocess,sys,time; subprocess.Popen([sys.executable,'-u','-c',{child!r}], start_new_session=True); print('started',flush=True); time.sleep(30)"
+    code = (
+        "import subprocess,sys,time; "
+        f"subprocess.Popen([sys.executable,'-u','-c',{child!r}], start_new_session=True); "
+        "print('started',flush=True); time.sleep(30)"
+    )
     result = backend.execute(root, "run_python", {"code": code, "timeout_seconds": 2})
     assert result.data["timed_out"] and "started" in result.data["stdout"], result
     assert result.data["cleanup_status"] == "confirmed", result
@@ -398,7 +426,10 @@ while True:
     time.sleep(0.15)
     assert (root / "heartbeat").read_bytes() == heartbeat
     assert backend.healthy
-    assert backend.execute(root, "run_command", {"command": ["/bin/echo", "after"]}).data["stdout"] == "after\n"
+    assert (
+        backend.execute(root, "run_command", {"command": ["/bin/echo", "after"]}).data["stdout"]
+        == "after\n"
+    )
 
 
 @REAL_LINUX
@@ -473,7 +504,10 @@ def test_real_linux_cancellation_preserves_backend_health(linux_project, monkeyp
         with pytest.raises(KeyboardInterrupt):
             backend.execute(root, "run_python", {"code": "import time; time.sleep(30)"})
     assert backend.healthy
-    assert backend.execute(root, "run_python", {"code": "print('recovered')"}).data["stdout"] == "recovered\n"
+    assert (
+        backend.execute(root, "run_python", {"code": "print('recovered')"}).data["stdout"]
+        == "recovered\n"
+    )
 
 
 @REAL_LINUX
@@ -511,7 +545,7 @@ def test_real_linux_protected_ancestors_cannot_be_moved(linux_project):
     (runtime / "module.py").write_text("trusted")
     backend.protected_paths = (*backend.protected_paths, private)
     backend.read_paths = (*backend.read_paths, runtime)
-    code = '''
+    code = """
 import errno
 from pathlib import Path
 for name in ('parent', 'toolchain'):
@@ -519,7 +553,7 @@ for name in ('parent', 'toolchain'):
     except OSError as e:
         assert e.errno in (errno.EBUSY, errno.EPERM, errno.EACCES, errno.EROFS), repr(e)
     else: raise AssertionError('protected ancestor moved')
-'''
+"""
     result = backend.execute(root, "run_python", {"code": code})
     assert result.data["exit_code"] == 0, result
 

@@ -235,9 +235,13 @@ def test_sandbox_snapshot_resources_and_local_permissions(tmp_path):
         skill = registry.get("sample")
         assert skill.base_path == "skills/sample"
         result = ReadFileTool(session.workspace).execute(
-            {"reads": [{
-                "path": skill.base_path + "/references/case.txt",
-            }]}
+            {
+                "reads": [
+                    {
+                        "path": skill.base_path + "/references/case.txt",
+                    }
+                ]
+            }
         )
         assert "snapshot reference" in result.data["results"][0]["data"]["content"]
         assert session.changes()[1] == []

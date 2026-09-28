@@ -18,8 +18,13 @@ def file_signature(info: os.stat_result) -> tuple[int, ...]:
     # stat does not. They describe the same file and must compare consistently.
     mode = info.st_mode & ~0o111 if os.name == "nt" else info.st_mode
     return (
-        info.st_dev, info.st_ino, mode, info.st_nlink, info.st_size,
-        info.st_mtime_ns, info.st_ctime_ns,
+        info.st_dev,
+        info.st_ino,
+        mode,
+        info.st_nlink,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
     )
 
 
@@ -80,10 +85,9 @@ def read_snapshot(
                 return tool_error(ToolErrorCode.FILE_CHANGED)
             raw = source.read(max_bytes + 1)
             after = os.fstat(source.fileno())
-        if (
-            file_signature(before) != file_signature(after)
-            or file_signature(candidate.lstat()) != file_signature(after)
-        ):
+        if file_signature(before) != file_signature(after) or file_signature(
+            candidate.lstat()
+        ) != file_signature(after):
             return tool_error(ToolErrorCode.FILE_CHANGED)
         info = after
     else:

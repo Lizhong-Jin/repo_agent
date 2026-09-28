@@ -144,7 +144,9 @@ def test_probe_reports_devices_and_toolchain(monkeypatch):
 
 def test_probe_distinguishes_missing_package_from_broken_dependency(monkeypatch):
     def missing(name):
-        raise ModuleNotFoundError("missing dependency", name="torch" if name == "torch" else "dependency")
+        raise ModuleNotFoundError(
+            "missing dependency", name="torch" if name == "torch" else "dependency"
+        )
 
     monkeypatch.setattr(compute_probe.importlib, "import_module", missing)
     monkeypatch.setattr(compute_probe.shutil, "which", lambda _: None)

@@ -42,17 +42,24 @@ def is_protected_name(path: str | PurePath) -> bool:
 def is_protected_leaf(name: str) -> bool:
     """Match one directory entry, without constructing or parsing a path."""
     name = name.lower()
-    return (name in PROTECTED_NAMES or name == ".env"
-            or name.startswith(".env.") or name.endswith(PROTECTED_SUFFIXES))
+    return (
+        name in PROTECTED_NAMES
+        or name == ".env"
+        or name.startswith(".env.")
+        or name.endswith(PROTECTED_SUFFIXES)
+    )
 
 
 def runtime_protected_paths(root=None):
     base = Path.cwd() if root is None else Path(root)
-    return [session_state_root(), *(
-        (base / value).resolve()
-        for key in ("AGENT_ENV_FILE", "AGENT_LOG_DIR")
-        if (value := os.environ.get(key))
-    )]
+    return [
+        session_state_root(),
+        *(
+            (base / value).resolve()
+            for key in ("AGENT_ENV_FILE", "AGENT_LOG_DIR")
+            if (value := os.environ.get(key))
+        ),
+    ]
 
 
 _UNSET = object()
@@ -69,14 +76,11 @@ def _operation_protected_paths():
 class PathPolicy:
     """An operation-scoped policy snapshot; file metadata is never cached here."""
 
-    protected_paths: tuple[Path, ...] = field(
-        default_factory=_operation_protected_paths
-    )
+    protected_paths: tuple[Path, ...] = field(default_factory=_operation_protected_paths)
 
     def protects_path(self, requested: Path, resolved: Path) -> bool:
         return any(is_protected_name(path) for path in (requested, resolved)) or any(
-            resolved == target or resolved.is_relative_to(target)
-            for target in self.protected_paths
+            resolved == target or resolved.is_relative_to(target) for target in self.protected_paths
         )
 
     def is_protected(self, requested: Path, resolved: Path, *, info=_UNSET) -> bool:

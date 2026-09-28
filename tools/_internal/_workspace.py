@@ -15,6 +15,7 @@ def serialized_file_write(method):
     def execute(self, arguments):
         with _file_write_lock:
             return method(self, arguments)
+
     return execute
 
 

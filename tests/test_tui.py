@@ -1,9 +1,9 @@
 import asyncio
 import time
 
+from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
-from prompt_toolkit.data_structures import Size
 from test_live import control
 
 from agent import AgentRuntime
@@ -168,7 +168,8 @@ def test_mouse_scroll_stays_on_history_during_output_and_keeps_editor_focus():
     async def run():
         with create_pipe_input() as pipe:
             ui = ConversationUI(
-                AgentRuntime(StreamingModel()), terminal_input=pipe,
+                AgentRuntime(StreamingModel()),
+                terminal_input=pipe,
                 terminal_output=SmallTerminal(),
             )
             ui.append("".join(f"history {i}\n" for i in range(100)))
@@ -209,7 +210,8 @@ def test_mouse_can_scroll_inside_single_wrapped_paragraph_and_resume_at_bottom()
     async def run():
         with create_pipe_input() as pipe:
             ui = ConversationUI(
-                AgentRuntime(StreamingModel()), terminal_input=pipe,
+                AgentRuntime(StreamingModel()),
+                terminal_input=pipe,
                 terminal_output=SmallTerminal(),
             )
             ui.append("中文长段落 mixed text " * 300)

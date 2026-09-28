@@ -43,7 +43,8 @@ def check_isolation(workspace, denied):
         file.flush()
         blocked(lambda: os.link(file.name, str(path)))
     child = subprocess.run(
-        [sys.executable, "-I", "-c", "import socket; socket.socket()"], capture_output=True,
+        [sys.executable, "-I", "-c", "import socket; socket.socket()"],
+        capture_output=True,
     )
     assert child.returncode != 0
 
@@ -52,27 +53,55 @@ def run_check(command, timeout):
     started = perf_counter()
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
-        return {"exit_code": result.returncode, "stdout": result.stdout,
-                "stderr": result.stderr[-2000:], "timed_out": False,
-                "duration_ms": (perf_counter() - started) * 1000}
+        return {
+            "exit_code": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr[-2000:],
+            "timed_out": False,
+            "duration_ms": (perf_counter() - started) * 1000,
+        }
     except subprocess.TimeoutExpired:
-        return {"exit_code": None, "stdout": "", "stderr": "startup check timed out",
-                "timed_out": True, "duration_ms": (perf_counter() - started) * 1000}
+        return {
+            "exit_code": None,
+            "stdout": "",
+            "stderr": "startup check timed out",
+            "timed_out": True,
+            "duration_ms": (perf_counter() - started) * 1000,
+        }
     except OSError as error:
-        return {"exit_code": None, "stdout": "", "stderr": str(error),
-                "timed_out": False, "duration_ms": (perf_counter() - started) * 1000}
+        return {
+            "exit_code": None,
+            "stdout": "",
+            "stderr": str(error),
+            "timed_out": False,
+            "duration_ms": (perf_counter() - started) * 1000,
+        }
 
 
 def probe(workspace, denied, *, gpu):
-    isolation = run_check([
-        sys.executable, "-I", str(Path(__file__).resolve()), "--isolation-only",
-        "--workspace", str(workspace), "--denied", str(denied),
-    ], 30)
+    isolation = run_check(
+        [
+            sys.executable,
+            "-I",
+            str(Path(__file__).resolve()),
+            "--isolation-only",
+            "--workspace",
+            str(workspace),
+            "--denied",
+            str(denied),
+        ],
+        30,
+    )
     report = {"isolation": isolation}
     if isolation["exit_code"] == 0 and isolation["stdout"].strip() == "native-ok" and gpu:
-        report["gpu"] = run_check([
-            sys.executable, "-I", str(Path(__file__).with_name("native_gpu_probe.py")),
-        ], 90)
+        report["gpu"] = run_check(
+            [
+                sys.executable,
+                "-I",
+                str(Path(__file__).with_name("native_gpu_probe.py")),
+            ],
+            90,
+        )
     return report
 
 

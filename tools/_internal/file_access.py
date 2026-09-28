@@ -9,5 +9,9 @@ from .file_policy import PathPolicy
 class FileAccess(DescriptorFileAccess):
     def __init__(self, root, *, protected_paths=(), read_only_paths=()):
         protected_paths = tuple(protected_paths)
-        super().__init__(root, policy=PathPolicy(protected_paths=protected_paths),
-                         protected_paths=protected_paths, read_only_paths=read_only_paths)
+        super().__init__(
+            root,
+            policy=PathPolicy(protected_paths=protected_paths),
+            protected_paths=protected_paths,
+            read_only_paths=read_only_paths,
+        )

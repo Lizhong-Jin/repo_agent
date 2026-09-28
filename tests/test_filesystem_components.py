@@ -18,7 +18,11 @@ DIRECTORY_TOOLS = [
 
 @pytest.mark.parametrize("tool_type,arguments,result_key", DIRECTORY_TOOLS)
 def test_directory_queries_reuse_metadata_and_refresh_policy(
-    tmp_path, monkeypatch, tool_type, arguments, result_key,
+    tmp_path,
+    monkeypatch,
+    tool_type,
+    arguments,
+    result_key,
 ):
     paths = {tmp_path / f"file_{i}.txt" for i in range(12)}
     for path in paths:
@@ -89,12 +93,14 @@ def test_patch_parses_each_file_once_but_verifies_it_twice(tmp_path, monkeypatch
 
     monkeypatch.setattr(tool, "_read_snapshot", read)
     monkeypatch.setattr(tool, "_detect_newline", detect)
-    result = tool.execute({
-        "patch": "*** Begin Patch\n"
-        "*** Update File: a.txt\n@@\n-hello\n+world\n"
-        "*** Update File: b.txt\n@@\n-hello\n+world\n"
-        "*** End Patch\n",
-    })
+    result = tool.execute(
+        {
+            "patch": "*** Begin Patch\n"
+            "*** Update File: a.txt\n@@\n-hello\n+world\n"
+            "*** Update File: b.txt\n@@\n-hello\n+world\n"
+            "*** End Patch\n",
+        }
+    )
     assert result.success, result
     assert reads == {"a.txt": 3, "b.txt": 3}
     assert parses == {"a.txt": 1, "b.txt": 1}
@@ -113,12 +119,19 @@ def test_patch_revalidation_checks_bytes_even_with_identical_metadata(tmp_path, 
     assert tool._check_unchanged(loaded).error_code == "FILE_CHANGED"
 
 
-@pytest.mark.parametrize("tool_type,arguments", [
-    (fs.WriteFileTool, {"path": "a.txt", "content": "world", "overwrite": True}),
-    (fs.EditFileTool, {
-        "path": "a.txt", "edits": [{"old_text": "hello", "new_text": "world"}],
-    }),
-])
+@pytest.mark.parametrize(
+    "tool_type,arguments",
+    [
+        (fs.WriteFileTool, {"path": "a.txt", "content": "world", "overwrite": True}),
+        (
+            fs.EditFileTool,
+            {
+                "path": "a.txt",
+                "edits": [{"old_text": "hello", "new_text": "world"}],
+            },
+        ),
+    ],
+)
 def test_shared_writer_cleans_up_on_cancellation(tmp_path, monkeypatch, tool_type, arguments):
     target = tmp_path / "a.txt"
     target.write_text("hello")
@@ -135,7 +148,9 @@ def test_shared_writer_cleans_up_on_cancellation(tmp_path, monkeypatch, tool_typ
 
 @pytest.mark.parametrize("tool_type", [fs.ListFileTool, fs.FindFileTool])
 def test_directory_metadata_preserves_symlink_types_and_target_protection(
-    tmp_path, monkeypatch, tool_type,
+    tmp_path,
+    monkeypatch,
+    tool_type,
 ):
     (tmp_path / "ordinary.txt").write_text("hello")
     (tmp_path / "link.txt").symlink_to(tmp_path / "ordinary.txt")
@@ -149,6 +164,8 @@ def test_directory_metadata_preserves_symlink_types_and_target_protection(
     assert result.success, result
     entries = result.data["entries" if tool_type is fs.ListFileTool else "matches"]
     assert {item["path"]: item["type"] for item in entries} == {
-        "ordinary.txt": "file", "link.txt": "symlink", "dangling.txt": "symlink",
+        "ordinary.txt": "file",
+        "link.txt": "symlink",
+        "dangling.txt": "symlink",
     }
     assert next(item for item in entries if item["type"] == "file")["size"] == 5

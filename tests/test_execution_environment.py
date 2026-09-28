@@ -298,8 +298,10 @@ def test_session_adds_writeback_without_mutating_backend_result(tmp_path):
         backend=SimpleNamespace(execute=lambda *args: original),
     )
     proxy = SandboxedTool(
-        GetExecutionEnvironmentTool(tmp_path).definition, session,
-        execution_kind=ExecutionKind.SANDBOXED_PROCESS, writeback_mode="manual"
+        GetExecutionEnvironmentTool(tmp_path).definition,
+        session,
+        execution_kind=ExecutionKind.SANDBOXED_PROCESS,
+        writeback_mode="manual",
     )
     assert proxy.execute({}).data["execution"]["writeback_mode"] == "manual"
     assert original.data == snapshot
@@ -330,8 +332,13 @@ def test_worker_passes_host_context_to_factory(monkeypatch, capsys):
             assert arguments == request["arguments"]
             return ToolResult(True, {"execution": kwargs["execution_context"]})
 
-        return [SimpleNamespace(definition=SimpleNamespace(name=request["name"]),
-                                execution_kind=ExecutionKind.SANDBOXED_PROCESS, execute=execute)]
+        return [
+            SimpleNamespace(
+                definition=SimpleNamespace(name=request["name"]),
+                execution_kind=ExecutionKind.SANDBOXED_PROCESS,
+                execute=execute,
+            )
+        ]
 
     monkeypatch.setattr(worker, "create_default_tools", factory)
     worker.main()

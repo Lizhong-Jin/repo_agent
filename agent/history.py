@@ -11,7 +11,6 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from host_support.filesystem import open_file, set_file_mode
-
 from llm import Message, ToolDefinition
 from llm.token_estimation import estimate_context_tokens
 from tools import ExecutionKind, ToolResult
@@ -64,7 +63,9 @@ class HistoryArchive:
             if write:
                 db.commit()
         except sqlite3.Error as error:
-            raise OSError(f"Failed to read/write from/to historical archives: {type(error).__name__}") from error
+            raise OSError(
+                f"Failed to read/write from/to historical archives: {type(error).__name__}"
+            ) from error
         finally:
             if db is not None:
                 db.close()
@@ -118,7 +119,8 @@ class HistoryArchive:
                     raise ValueError
         except (OSError, ValueError, TypeError):
             raise ValueError(
-                "The original archive was missing or damaged. Please restore history.sqlite3 and try again."
+                "The original archive was missing or damaged. "
+                "Please restore history.sqlite3 and try again."
             ) from None
 
     def ref(self, message_id):

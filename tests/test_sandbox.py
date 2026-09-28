@@ -159,7 +159,9 @@ def test_real_container_isolation(tmp_path):
         tools = {tool.definition.name: tool for tool in session.tools()}
         assert tools["write_file"].execute({"path": "hello.txt", "content": "hello"}).success
         assert tools["read_file"].execute({"reads": [{"path": "hello.txt"}]}).success
-        environment = tools["get_execution_environment"].execute({"sections": ["execution", "system"]})
+        environment = tools["get_execution_environment"].execute(
+            {"sections": ["execution", "system"]}
+        )
         assert environment.success
         assert environment.data["system"]["os"] == "Linux"
         assert environment.data["execution"]["mode"] == "docker"

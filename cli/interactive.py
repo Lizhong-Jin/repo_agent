@@ -177,7 +177,9 @@ def run_interactive(
             history = conversation.fail_task() if conversation else ()
             if status:
                 status.reset_context()
-            notice = "此前完整上下文已保留；继续前请检查文件现状。" if conversation else RESET_NOTICE
+            notice = (
+                "此前完整上下文已保留；继续前请检查文件现状。" if conversation else RESET_NOTICE
+            )
             print("\n当前任务已中断。" + notice)
             continue
         except (LLMError, ValueError, OSError) as error:

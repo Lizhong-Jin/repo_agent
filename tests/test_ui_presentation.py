@@ -67,9 +67,12 @@ def test_agent_metadata_style_is_based_on_origin_including_after_fold():
 def test_compact_footer_retains_directory_usage_context_and_unknowns(tmp_path):
     status = SessionStatus(tmp_path, context_window=1_000_000)
     stats = RunStats(1)
-    stats.model_calls.append(ModelCallRecord(
-        1, usage=Usage(1_200_000, 50_000, cached_input_tokens=900_000),
-    ))
+    stats.model_calls.append(
+        ModelCallRecord(
+            1,
+            usage=Usage(1_200_000, 50_000, cached_input_tokens=900_000),
+        )
+    )
     status("model_end", stats)
     with create_pipe_input() as pipe:
         ui = ConversationUI(

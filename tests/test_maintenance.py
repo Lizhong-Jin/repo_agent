@@ -121,7 +121,9 @@ def test_reinstall_failure_restores_venv_links_records_and_shell(tmp_path, monke
         stage = (
             "venv"
             if command[1:3] == ["-m", "venv"]
-            else "pip" if command[1:4] == ["-m", "pip", "install"] else "smoke"
+            else "pip"
+            if command[1:4] == ["-m", "pip", "install"]
+            else "smoke"
         )
         if failure == stage:
             raise subprocess.CalledProcessError(1, command)
@@ -219,7 +221,16 @@ def test_failed_takeover_restores_both_old_links(tmp_path, monkeypatch):
 def test_durable_recovery_after_process_exit(tmp_path):
     root, bins, _ = installed(tmp_path)
     original = (root / MANIFEST).read_bytes()
-    script = "from pathlib import Path; import os; from installer.install_transaction import InstallTransaction; from installer.setup import command_state; from installer.installation import COMMANDS,begin_install; r=Path(os.environ['TEST_ROOT']); b=Path(os.environ['TEST_BIN']); t=InstallTransaction(r,b,{n:command_state(b/n) for n in COMMANDS}); begin_install(r); t.fresh_venv(); (r/'.venv/partial').write_text('partial'); os._exit(9)"
+    script = (
+        "from pathlib import Path; import os; "
+        "from installer.install_transaction import InstallTransaction; "
+        "from installer.setup import command_state; "
+        "from installer.installation import COMMANDS,begin_install; "
+        "r=Path(os.environ['TEST_ROOT']); b=Path(os.environ['TEST_BIN']); "
+        "t=InstallTransaction(r,b,{n:command_state(b/n) for n in COMMANDS}); "
+        "begin_install(r); t.fresh_venv(); "
+        "(r/'.venv/partial').write_text('partial'); os._exit(9)"
+    )
     result = subprocess.run(
         [sys.executable, "-c", script],
         env={
@@ -295,8 +306,9 @@ def test_actual_offline_pip_failure_rolls_back(tmp_path, existing):
         root, bins = tmp_path / "fresh", tmp_path / "bin"
         root.mkdir()
     for package in ("cli", "installer", "configuration", "host_support"):
-        shutil.copytree(SOURCE / package, root / package,
-                        ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(
+            SOURCE / package, root / package, ignore=shutil.ignore_patterns("__pycache__")
+        )
     shutil.copy2(SOURCE / "install.sh", root / "install.sh")
     (root / "scripts").mkdir(exist_ok=True)
     shutil.copy2(SOURCE / "scripts/installer-entry.sh", root / "scripts/installer-entry.sh")
@@ -486,8 +498,9 @@ def test_recovery_retry_after_docker_failure_keeps_restored_venv(tmp_path, monke
 def test_doctor_and_install_check_are_read_only(tmp_path):
     copy = tmp_path / "source"
     for package in ("cli", "installer", "configuration", "host_support"):
-        shutil.copytree(SOURCE / package, copy / package,
-                        ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(
+            SOURCE / package, copy / package, ignore=shutil.ignore_patterns("__pycache__")
+        )
     for name in ("install.sh", "scripts/installer-entry.sh", "pyproject.toml", ".env.example"):
         (copy / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(SOURCE / name, copy / name)

@@ -12,12 +12,12 @@ from tools import Tool, ToolResult
 from tools.dispatch import ToolDispatcher
 from tools.tool_groups import LoadToolGroupTool, ToolGroup, ToolGroupRegistry
 
+from .prompt import make_default_system_prompt
 from .skills import LoadSkillTool, SkillRegistry
 from .Tracing import RunStats, RunTrace
-from .prompt import make_default_system_prompt
-
 
 DEFAULT_SYSTEM_PROMPT = make_default_system_prompt()
+
 
 @dataclass(frozen=True)
 class RunResult:
@@ -114,7 +114,8 @@ class AgentRuntime:
         definitions = []
         registered_tools = [*tools, *([LoadSkillTool(skills)] if skills is not None else [])]
         self.tool_groups = ToolGroupRegistry(
-            tool_groups, (tool.definition.name for tool in registered_tools),
+            tool_groups,
+            (tool.definition.name for tool in registered_tools),
         )
         if self.tool_groups.groups:
             registered_tools.append(LoadToolGroupTool(self.tool_groups))
@@ -130,7 +131,9 @@ class AgentRuntime:
     @property
     def _definitions(self):
         # Append groups in load order so prior schemas remain a stable prefix.
-        general = tuple(d for d in self._all_definitions if d.name not in self.tool_groups.membership)
+        general = tuple(
+            d for d in self._all_definitions if d.name not in self.tool_groups.membership
+        )
         specialized = tuple(
             self._definition_by_name[name]
             for group in self.tool_groups.loaded
@@ -401,15 +404,17 @@ class AgentRuntime:
                 success=False,
                 error_code="UNKNOWN_TOOL",
                 error=f"Unknown tool. Available tools: "
-                      f"{', '.join(d.name for d in self._definitions) or '(none)'}.",
+                f"{', '.join(d.name for d in self._definitions) or '(none)'}.",
             ).to_message(call)
-        if (not self.tool_groups.enabled(call.name)
-                or (exposed_names is not None and call.name not in exposed_names)):
+        if not self.tool_groups.enabled(call.name) or (
+            exposed_names is not None and call.name not in exposed_names
+        ):
             group = self.tool_groups.membership.get(call.name)
             return ToolResult(
-                False, error_code="TOOL_NOT_LOADED",
+                False,
+                error_code="TOOL_NOT_LOADED",
                 error=f"Load tool group {group!r} with load_tool_group, then use this tool "
-                      "in the next model response after its definition is provided.",
+                "in the next model response after its definition is provided.",
             ).to_message(call)
         try:
             # A tool must not mutate the assistant history or its provider-specific state.

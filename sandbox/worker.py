@@ -13,18 +13,22 @@ def execute_request(request, workspace):
     # This entry point is launched only after native/Docker establishes isolation.
     dispatcher = ToolDispatcher(inside_sandbox=True)
     registry = None
-    project = request.get('execution_context', {}).get('python_environments', {}).get('project')
+    project = request.get("execution_context", {}).get("python_environments", {}).get("project")
     if project:
-        registry = LspRegistry(tuple(
-            replace(config, settings={'pylsp': {'plugins': {'jedi': {'environment': project}}}})
-            if config.language_id == 'python' else config
-            for config in default_lsp_registry().languages
-        ))
+        registry = LspRegistry(
+            tuple(
+                replace(config, settings={"pylsp": {"plugins": {"jedi": {"environment": project}}}})
+                if config.language_id == "python"
+                else config
+                for config in default_lsp_registry().languages
+            )
+        )
     for tool in create_default_tools(
-        workspace, isolated_execution=True,
+        workspace,
+        isolated_execution=True,
         **({"lsp_registry": registry} if registry else {}),
         execution_context=request.get("execution_context"),
-        **request.get("tool_limits", {})
+        **request.get("tool_limits", {}),
     ):
         dispatcher.register(tool)
     result = dispatcher.execute(request["name"], request["arguments"])

@@ -11,8 +11,8 @@ from prompt_toolkit.output import DummyOutput
 
 from agent import AgentRuntime
 from agent.Tracing import Tracer
-from cli.session_status import SessionStatus
 from cli.models import ModelControl, ModelSelection, ModelWizard, prompt_model
+from cli.session_status import SessionStatus
 from cli.terminal.application import ConversationUI
 from configuration.environment import (
     CONFIG_KEYS,
@@ -71,7 +71,8 @@ def test_save_preserves_comments_other_keys_and_private_permissions():
     path = user_config_path()
     path.parent.mkdir(parents=True)
     path.write_text(
-        "# comment\nLLM_MODEL=old\nexport LLM_MODEL=duplicate\nOPENAI_API_KEY=keep\nAGENT_MAX_STEPS=17\n"
+        "# comment\nLLM_MODEL=old\nexport LLM_MODEL=duplicate\n"
+        "OPENAI_API_KEY=keep\nAGENT_MAX_STEPS=17\n"
     )
     save_user_config({"LLM_MODEL": "new", "DEEPSEEK_API_KEY": 'key$literal"quote'})
     assert "# comment" in path.read_text()
@@ -173,7 +174,10 @@ def test_startup_cancel_does_not_create_sandbox_or_save(tmp_path, monkeypatch):
         raise KeyboardInterrupt
 
     monkeypatch.setattr("cli.startup.prompt_model", cancel)
-    monkeypatch.setattr("cli.execution_environment.detect_environment", lambda **kw: pytest.fail("must configure first"))
+    monkeypatch.setattr(
+        "cli.execution_environment.detect_environment",
+        lambda **kw: pytest.fail("must configure first"),
+    )
     with pytest.raises(SystemExit) as error:
         cli.main()
     assert error.value.code == 0
@@ -186,9 +190,9 @@ def make_control(tmp_path, monkeypatch):
     def factory(config):
         def response(request):
             if request.method == "GET":
-                return httpx.Response(200, json={
-                    "data": [{"id": config.model, "context_length": 2000}]
-                })
+                return httpx.Response(
+                    200, json={"data": [{"id": config.model, "context_length": 2000}]}
+                )
             calls.append(
                 (str(request.url), request.headers["authorization"], json.loads(request.content))
             )
@@ -358,13 +362,15 @@ def test_tui_model_picker_search_page_keys_mouse_and_empty_results(tmp_path, mon
         async def wait():
             while not predicate():
                 await asyncio.sleep(0.01)
+
         await asyncio.wait_for(wait(), 3)
 
     async def run():
         control, _, clients = make_control(tmp_path, monkeypatch)
         with create_pipe_input() as pipe:
-            ui = ConversationUI(control.runtime, models=control, terminal_input=pipe,
-                                terminal_output=Terminal())
+            ui = ConversationUI(
+                control.runtime, models=control, terminal_input=pipe, terminal_output=Terminal()
+            )
             task = asyncio.create_task(ui.run_async())
             await until(lambda: ui.app.is_running)
             pipe.send_text("/model\rqwen\r")
@@ -373,7 +379,9 @@ def test_tui_model_picker_search_page_keys_mouse_and_empty_results(tmp_path, mon
             await until(lambda: picker.window.render_info is not None)
             pipe.send_text("\x1b[6~")
             await until(lambda: picker.index == picker.page_size)
-            position = ui.app.renderer._last_screen.visible_windows_to_write_positions[picker.window]
+            position = ui.app.renderer._last_screen.visible_windows_to_write_positions[
+                picker.window
+            ]
             pipe.send_text(f"\x1b[<65;5;{position.ypos + 3}M")
             await until(lambda: picker.index == picker.page_size + 1)
             assert ui.app.layout.has_focus(ui.editor)

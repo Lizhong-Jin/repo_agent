@@ -361,10 +361,13 @@ class Tracer:
                 self._files.append(os.fdopen(fd, "w", encoding="utf-8"))
             if self.store is not None:
                 from .session import open_log
+
                 catalog = self.store.catalog
                 catalog.log_directory(self.session_id, create=True)
                 for kind in ("trace", "jsonl"):
-                    self._files.append(open_log(catalog.log_path(self.session_id, kind), write=True))
+                    self._files.append(
+                        open_log(catalog.log_path(self.session_id, kind), write=True)
+                    )
             self._write(
                 {"event": "session_start", **self.metadata},
                 f"会话开始: {self.session_id}, run_id={self.run_id}, "
@@ -388,8 +391,9 @@ class Tracer:
         }
         try:
             for position, output in enumerate(self._files):
-                output.write((text if position % 2 == 0 else
-                              json.dumps(record, ensure_ascii=False)) + "\n")
+                output.write(
+                    (text if position % 2 == 0 else json.dumps(record, ensure_ascii=False)) + "\n"
+                )
                 output.flush()
         except OSError as error:
             self.error = type(error).__name__

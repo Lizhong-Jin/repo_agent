@@ -33,13 +33,13 @@ def session(tmp_path):
 @pytest.fixture
 def standard_cli_environment(monkeypatch):
     """Writeback unit tests use a fake backend, including Docker preflight."""
-    from cli import main as cli
     from sandbox.environment import DockerEnvironment
 
     monkeypatch.setattr("llm.LLMClient.get_context_limit", lambda self, **kw: None)
 
     monkeypatch.setattr(
-        "cli.execution_environment.detect_environment", lambda **kw: DockerEnvironment("standard", "test", "x86_64")
+        "cli.execution_environment.detect_environment",
+        lambda **kw: DockerEnvironment("standard", "test", "x86_64"),
     )
     monkeypatch.setattr("cli.execution_environment.check_image_profile", lambda *a, **kw: None)
 
@@ -200,10 +200,14 @@ def test_cli_config_precedence(
 
     monkeypatch.setenv("AGENT_SANDBOX_WRITEBACK", env)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "mock")
-    monkeypatch.setattr("sys.argv", ["repo-agent", "--sandbox", "docker", "--model", "test", *flags])
+    monkeypatch.setattr(
+        "sys.argv", ["repo-agent", "--sandbox", "docker", "--model", "test", *flags]
+    )
     monkeypatch.setattr("cli.execution_environment.SandboxSession", lambda *a, **kw: session)
     seen = []
-    monkeypatch.setattr("cli.application.run_interactive", lambda *a, **kw: seen.append(kw["writeback"]))
+    monkeypatch.setattr(
+        "cli.application.run_interactive", lambda *a, **kw: seen.append(kw["writeback"])
+    )
     cli.main()
     assert seen == [expected]
 
@@ -283,15 +287,26 @@ def test_single_task_cli_applies_after_run_and_signals_failure(
         assert (session.root / "a").read_text() == "before"
         record(session, 1 if failed else 0)
         return SimpleNamespace(
-            status="completed", stats=RunStats(1), text="done", undisplayed_text="done",
-            history=(), response=SimpleNamespace(text="done"),
+            status="completed",
+            stats=RunStats(1),
+            text="done",
+            undisplayed_text="done",
+            history=(),
+            response=SimpleNamespace(text="done"),
         )
 
-    monkeypatch.setattr("cli.runtime_setup.AgentRuntime", lambda *a, **kw: SimpleNamespace(
-        run=run, llm=a[0], _task_number=0, estimate_context_tokens=lambda history=(): 0,
-        restore_tool_groups=lambda names: (), loaded_tool_groups=(),
-        reset_tool_groups=lambda: None,
-    ))
+    monkeypatch.setattr(
+        "cli.runtime_setup.AgentRuntime",
+        lambda *a, **kw: SimpleNamespace(
+            run=run,
+            llm=a[0],
+            _task_number=0,
+            estimate_context_tokens=lambda history=(): 0,
+            restore_tool_groups=lambda names: (),
+            loaded_tool_groups=(),
+            reset_tool_groups=lambda: None,
+        ),
+    )
     if failed:
         with pytest.raises(SystemExit) as error:
             cli.main()
@@ -527,7 +542,9 @@ def test_cli_verification_config_precedence(
 
     monkeypatch.setenv("AGENT_SANDBOX_VERIFY_COMMAND", '["python", "check.py"]')
     monkeypatch.setenv("DEEPSEEK_API_KEY", "mock")
-    monkeypatch.setattr("sys.argv", ["repo-agent", "--sandbox", "docker", "--model", "test", *flags])
+    monkeypatch.setattr(
+        "sys.argv", ["repo-agent", "--sandbox", "docker", "--model", "test", *flags]
+    )
     seen = []
 
     def construct(*args, **kwargs):

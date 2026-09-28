@@ -242,8 +242,9 @@ def test_invalid_install_is_rejected_before_creating_environment(installations, 
     root = tmp_path / "failed-install"
     root.mkdir(parents=True)
     for package in ("cli", "installer", "configuration", "host_support"):
-        shutil.copytree(SOURCE / package, root / package,
-                        ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(
+            SOURCE / package, root / package, ignore=shutil.ignore_patterns("__pycache__")
+        )
     for name in ("install.sh", "scripts/installer-entry.sh", "uninstall.sh"):
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(SOURCE / name, root / name)
@@ -393,8 +394,9 @@ def test_shell_install_cancellation_precedes_all_writes(installations, tmp_path,
     new = tmp_path / "not installed"
     new.mkdir(parents=True)
     for package in ("cli", "installer", "configuration", "host_support"):
-        shutil.copytree(SOURCE / package, new / package,
-                        ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(
+            SOURCE / package, new / package, ignore=shutil.ignore_patterns("__pycache__")
+        )
     for name in ("install.sh", "scripts/installer-entry.sh", "uninstall.sh"):
         (new / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(SOURCE / name, new / name)
@@ -588,7 +590,9 @@ def test_release_entry_uninstalls_with_broken_venv_and_stdlib_python(
     entry = root
     if from_download:
         entry = tmp_path / "download"
-        build_manifest.copy_files(root, entry, [root / name for name in [*names, wheel, "release.json"]])
+        build_manifest.copy_files(
+            root, entry, [root / name for name in [*names, wheel, "release.json"]]
+        )
     # Damaged release resources and venv must not block journal-based cleanup.
     (root / ".env.example").unlink()
     python = root / ".venv/bin/python"

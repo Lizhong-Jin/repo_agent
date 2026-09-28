@@ -23,6 +23,7 @@ from sandbox.linux_native import LinuxNativeBackend  # noqa: E402
 
 def previous_scan(root):
     """Reference algorithm from native.py + linux_native.py before this change."""
+
     def inaccessible(error):
         raise error
 
@@ -51,9 +52,15 @@ def measured_calls(scan):
         counts["metadata_queries"] += 1
         return method(*args, **kwargs)
 
-    with patch.object(os, "scandir", scandir), patch.object(
-        os, "stat", lambda *a, **kw: metadata(original_stat, *a, **kw),
-    ), patch.object(os, "lstat", lambda *a, **kw: metadata(original_lstat, *a, **kw)):
+    with (
+        patch.object(os, "scandir", scandir),
+        patch.object(
+            os,
+            "stat",
+            lambda *a, **kw: metadata(original_stat, *a, **kw),
+        ),
+        patch.object(os, "lstat", lambda *a, **kw: metadata(original_lstat, *a, **kw)),
+    ):
         scan()
     return counts
 
@@ -73,13 +80,14 @@ def benchmark(root, repeats):
             scans[name]()
             timings[name].append((time.perf_counter() - start) * 1000)
     return {
-        "host": platform.system(), "python": platform.python_version(),
-        "workspace": str(root), "repeats": repeats,
+        "host": platform.system(),
+        "python": platform.python_version(),
+        "workspace": str(root),
+        "repeats": repeats,
         "scope": "Linux workspace validation algorithm only; no namespaces or mount-policy scan",
         "count_scope": "Python os.scandir/stat/lstat calls; excludes DirEntry internal syscalls",
         "results": {
-            name: {"median_ms": round(statistics.median(timings[name]), 3),
-                   **measured_calls(scan)}
+            name: {"median_ms": round(statistics.median(timings[name]), 3), **measured_calls(scan)}
             for name, scan in scans.items()
         },
     }

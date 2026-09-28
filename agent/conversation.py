@@ -24,8 +24,20 @@ def model_identity(config):
 
 
 class SavedConversation:
-    def __init__(self, store, runtime, config, status, *, sandbox=None, restore_window=True,
-                 tracer=None, execution_mode=None, execution_backend=None, compaction_settings=None):
+    def __init__(
+        self,
+        store,
+        runtime,
+        config,
+        status,
+        *,
+        sandbox=None,
+        restore_window=True,
+        tracer=None,
+        execution_mode=None,
+        execution_backend=None,
+        compaction_settings=None,
+    ):
         self.store, self.runtime, self.config, self.status = store, runtime, config, status
         self.tracer = tracer
         self.log_error = None
@@ -67,9 +79,7 @@ class SavedConversation:
                 restore_window=restore_window and same_model,
             )
             runtime._task_number = data["task_number"]
-            self.notice = (
-                f"已恢复此项目上次会话：{store.label}（{len(self.history)} 条上下文消息）"
-            )
+            self.notice = f"已恢复此项目上次会话：{store.label}（{len(self.history)} 条上下文消息）"
             if not same_model:
                 self.notice += "；模型或地址已变化，保留消息并移除旧模型原生状态"
             if data["mode"] != self.mode:
@@ -236,8 +246,9 @@ class SavedConversation:
         self.checkpoint(transcript=transcript, strict=True)
         old_id, old_data = self.store.id, self.store.data
         record = self._record()
-        record.update(history=[], transcript=[], pending_task=None, compaction=None,
-                      loaded_tool_groups=[])
+        record.update(
+            history=[], transcript=[], pending_task=None, compaction=None, loaded_tool_groups=[]
+        )
         record["status"].update(
             calls=0,
             totals={"input_tokens": 0, "output_tokens": 0},

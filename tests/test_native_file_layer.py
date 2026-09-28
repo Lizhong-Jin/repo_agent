@@ -40,18 +40,25 @@ def test_all_file_tools_work_without_processes_or_global_scans(backend, monkeypa
     tools = {tool.definition.name: tool for tool in backend.tools()}
     files = {tool.definition.name for tool in create_file_tools(backend.workspace)}
     assert len(files) == 11
-    assert {name for name, tool in tools.items()
-            if tool.execution_kind is ExecutionKind.TRUSTED_FILE} == files
+    assert {
+        name for name, tool in tools.items() if tool.execution_kind is ExecutionKind.TRUSTED_FILE
+    } == files
     for name in files:
         assert "execution_kind" not in tools[name].definition.parameters["properties"]
     assert tools["run_python"].execution_kind is ExecutionKind.SANDBOXED_PROCESS
     assert call(backend, "make_directory", path="src/nested", parents=True).success
     assert call(backend, "write_file", path="src/a.txt", content="hello\n").success
     assert call(backend, "read_file", reads=[{"path": "src/a.txt"}]).success
-    assert call(backend, "edit_file", path="src/a.txt",
-                edits=[{"old_text": "hello", "new_text": "world"}]).success
-    result = call(backend, "apply_patch", patch=(
-        "*** Begin Patch\n*** Update File: src/a.txt\n@@\n-world\n+changed\n*** End Patch\n"))
+    assert call(
+        backend, "edit_file", path="src/a.txt", edits=[{"old_text": "hello", "new_text": "world"}]
+    ).success
+    result = call(
+        backend,
+        "apply_patch",
+        patch=(
+            "*** Begin Patch\n*** Update File: src/a.txt\n@@\n-world\n+changed\n*** End Patch\n"
+        ),
+    )
     assert result.success, result
     assert call(backend, "list_files", path="src").success
     found = call(backend, "find_files", pattern="**/*.txt")
@@ -59,24 +66,36 @@ def test_all_file_tools_work_without_processes_or_global_scans(backend, monkeypa
     searched = call(backend, "search_files", query="changed")
     assert searched.success and len(searched.data["matches"]) == 1
     assert call(backend, "get_path_info", path="src/a.txt").data["type"] == "file"
-    assert call(backend, "move_file", source="src/a.txt", destination="dst/a.txt",
-                create_parents=True).success
+    assert call(
+        backend, "move_file", source="src/a.txt", destination="dst/a.txt", create_parents=True
+    ).success
     assert (backend.workspace / "dst/a.txt").read_text() == "changed\n"
     assert call(backend, "delete_file", path="dst/a.txt").success
     assert not (backend.workspace / "dst/a.txt").exists()
     assert current_file_access() is None
 
 
-@pytest.mark.parametrize("name", ["git_status", "git_diff", "get_symbols", "get_diagnostics",
-                                  "get_execution_environment"])
+@pytest.mark.parametrize(
+    "name",
+    ["git_status", "git_diff", "get_symbols", "get_diagnostics", "get_execution_environment"],
+)
 def test_non_file_tools_keep_isolated_worker(backend, monkeypatch, name):
     calls = []
     monkeypatch.setattr(backend, "_check_workspace", lambda: calls.append("scan"))
 
     def run(**kwargs):
         calls.append(kwargs)
-        return ProcessResult(0, json.dumps({"success": True, "data": {}}), "", False,
-                             None, 1, False, False, cleanup_status="confirmed")
+        return ProcessResult(
+            0,
+            json.dumps({"success": True, "data": {}}),
+            "",
+            False,
+            None,
+            1,
+            False,
+            False,
+            cleanup_status="confirmed",
+        )
 
     monkeypatch.setattr(backend, "_run", run)
     assert call(backend, name).success
@@ -90,18 +109,22 @@ def test_unregistered_native_tool_is_rejected_without_scanning_or_spawning(backe
     assert call(backend, "unknown_plugin_tool").error_code == "UNKNOWN_TOOL"
 
 
-@pytest.mark.parametrize("name,args", [
-    ("run_command", {"command": ["/bin/echo", "hello"]}),
-    ("run_python", {"code": "print('hello')"}),
-])
+@pytest.mark.parametrize(
+    "name,args",
+    [
+        ("run_command", {"command": ["/bin/echo", "hello"]}),
+        ("run_python", {"code": "print('hello')"}),
+    ],
+)
 def test_execution_tools_keep_isolated_runner(backend, monkeypatch, name, args):
     calls = []
     monkeypatch.setattr(backend, "_check_workspace", lambda: calls.append("scan"))
 
     def run(command, **kwargs):
         calls.append(command)
-        return ProcessResult(0, "hello\n", "", False, None, 1, False, False,
-                             cleanup_status="confirmed")
+        return ProcessResult(
+            0, "hello\n", "", False, None, 1, False, False, cleanup_status="confirmed"
+        )
 
     monkeypatch.setattr(backend, "_run", run)
     result = backend.execute(backend.workspace, name, args)
@@ -109,8 +132,17 @@ def test_execution_tools_keep_isolated_runner(backend, monkeypatch, name, args):
     assert calls[:-1] == ([] if isinstance(backend, LinuxNativeBackend) else ["scan"])
 
 
-@pytest.mark.parametrize("path", [".env", ".git/config", "nested/key.pem", "logs/file.txt",
-                                  ".agents/instructions", "../outside.txt"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".env",
+        ".git/config",
+        "nested/key.pem",
+        "logs/file.txt",
+        ".agents/instructions",
+        "../outside.txt",
+    ],
+)
 def test_protected_and_outside_paths_fail_in_lightweight_layer(backend, path):
     root = backend.workspace
     target = root / path
@@ -141,12 +173,14 @@ def test_backend_configured_paths_and_embedded_runtime_are_preserved(backend, mo
     assert not call(backend, "delete_file", path="runtime/module.py").success
     assert not call(backend, "move_file", source="runtime/module.py", destination="stolen").success
     assert not call(backend, "make_directory", path="runtime/new").success
-    assert not call(backend, "write_file", path="runtime/new/deep/file", content="bad",
-                    create_parents=True).success
+    assert not call(
+        backend, "write_file", path="runtime/new/deep/file", content="bad", create_parents=True
+    ).success
     assert not (runtime / "new").exists()
     monkeypatch.setenv("AGENT_ENV_FILE", "future/config")
-    assert not call(backend, "write_file", path="future/config", content="bad",
-                    create_parents=True).success
+    assert not call(
+        backend, "write_file", path="future/config", content="bad", create_parents=True
+    ).success
     assert module.read_text() == "trusted"
 
 
@@ -162,10 +196,12 @@ def test_links_special_files_and_model_override_are_rejected(backend):
         assert not call(backend, "write_file", path=path, content="bad", overwrite=True).success
     # An unrelated hard link/FIFO no longer disables all ordinary file operations.
     assert call(backend, "write_file", path="ok", content="allowed").success
-    assert not call(backend, "write_file", path=".env", content="bad",
-                    requires_os_sandbox=False).success
-    assert not call(backend, "read_file", reads=[{"path": "outside"}],
-                    execution_kind="trusted_file").success
+    assert not call(
+        backend, "write_file", path=".env", content="bad", requires_os_sandbox=False
+    ).success
+    assert not call(
+        backend, "read_file", reads=[{"path": "outside"}], execution_kind="trusted_file"
+    ).success
     assert secret.read_text() == "SYNTHETIC_SECRET"
 
 
@@ -249,14 +285,21 @@ def test_unhealthy_backend_keeps_reads_but_blocks_all_writes(backend):
     result = call(backend, "read_file", reads=[{"path": "file"}])
     assert result.success and result.data["execution_allowed"] is False
     for name in (
-        "write_file", "edit_file", "apply_patch", "make_directory", "delete_file", "move_file",
+        "write_file",
+        "edit_file",
+        "apply_patch",
+        "make_directory",
+        "delete_file",
+        "move_file",
     ):
         assert call(backend, name).error_code == "NATIVE_UNHEALTHY"
     assert not backend.healthy
 
 
-@pytest.mark.parametrize("pattern", ["*", "**", "**/*", "src/**", "src/**/", "**/**",
-                                   "src/**/*.txt", "src/[ab].txt", "./src/*"])
+@pytest.mark.parametrize(
+    "pattern",
+    ["*", "**", "**/*", "src/**", "src/**/", "**/**", "src/**/*.txt", "src/[ab].txt", "./src/*"],
+)
 def test_lightweight_glob_preserves_pathlib_matching(backend, pattern):
     root = backend.workspace
     (root / "src/nested").mkdir(parents=True)
@@ -268,11 +311,14 @@ def test_lightweight_glob_preserves_pathlib_matching(backend, pattern):
     assert {p["path"] for p in result.data["matches"]} == expected
 
 
-@pytest.mark.parametrize("name,args", [
-    ("list_files", {"path": "src"}),
-    ("find_files", {"path": "src", "pattern": "**/*"}),
-    ("search_files", {"path": "src", "query": "SYNTHETIC_SECRET"}),
-])
+@pytest.mark.parametrize(
+    "name,args",
+    [
+        ("list_files", {"path": "src"}),
+        ("find_files", {"path": "src", "pattern": "**/*"}),
+        ("search_files", {"path": "src", "query": "SYNTHETIC_SECRET"}),
+    ],
+)
 def test_directory_swap_never_enumerates_external_tree(backend, monkeypatch, name, args):
     root = backend.workspace
     (root / "src").mkdir()

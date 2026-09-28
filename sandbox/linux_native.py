@@ -54,14 +54,24 @@ class LinuxNativeBackend(NativeBackendBase):
 
     def _read_paths(self):
         paths = {
-            self.runtime, Path(sys.prefix).resolve(), Path(sys.base_prefix).resolve(),
+            self.runtime,
+            Path(sys.prefix).resolve(),
+            Path(sys.base_prefix).resolve(),
             # Do not mount /etc or /home wholesale. Runtime loader data is enough.
-            Path("/usr"), Path("/bin"), Path("/sbin"), Path("/lib"), Path("/lib64"),
-            Path("/etc/ld.so.cache"), Path("/etc/ld.so.conf"), Path("/etc/ld.so.conf.d"),
-            Path("/etc/localtime"), Path("/etc/timezone"),
+            Path("/usr"),
+            Path("/bin"),
+            Path("/sbin"),
+            Path("/lib"),
+            Path("/lib64"),
+            Path("/etc/ld.so.cache"),
+            Path("/etc/ld.so.conf"),
+            Path("/etc/ld.so.conf.d"),
+            Path("/etc/localtime"),
+            Path("/etc/timezone"),
         }
         paths.update(
-            Path(path).resolve() for path in sys.path
+            Path(path).resolve()
+            for path in sys.path
             if path and Path(path).name in {"site-packages", "dist-packages"}
         )
         if self.gpu:
@@ -107,11 +117,17 @@ class LinuxNativeBackend(NativeBackendBase):
         if self.wsl_drivers:
             self.wsl_drivers.verify(table)
             views = self.wsl_drivers.views(read_paths)
-            roots = tuple(view / package.name for view in views
-                          for package in self.wsl_drivers.packages)
-        scan = PolicyScan(self._policy_plan(), git_read=git_read,
-                          mount_table=table, pruned_paths=views, extra_roots=roots,
-                          check_workspace_file=self._check_workspace_file)
+            roots = tuple(
+                view / package.name for view in views for package in self.wsl_drivers.packages
+            )
+        scan = PolicyScan(
+            self._policy_plan(),
+            git_read=git_read,
+            mount_table=table,
+            pruned_paths=views,
+            extra_roots=roots,
+            check_workspace_file=self._check_workspace_file,
+        )
         try:
             result = scan.run(read_paths)
             if self.wsl_drivers:
@@ -130,12 +146,30 @@ class LinuxNativeBackend(NativeBackendBase):
         hidden_file.touch(mode=0)
         hidden_dir.mkdir(mode=0)
         argv = [
-            str(self.executable), "--unshare-user", "--unshare-pid", "--unshare-net",
-            "--unshare-ipc", "--unshare-uts", "--disable-userns", "--assert-userns-disabled",
-            "--die-with-parent", "--new-session", "--cap-drop", "ALL",
-            "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
-            "--bind", str(self.workspace), str(self.workspace),
-            "--bind", str(scratch), str(scratch),
+            str(self.executable),
+            "--unshare-user",
+            "--unshare-pid",
+            "--unshare-net",
+            "--unshare-ipc",
+            "--unshare-uts",
+            "--disable-userns",
+            "--assert-userns-disabled",
+            "--die-with-parent",
+            "--new-session",
+            "--cap-drop",
+            "ALL",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--bind",
+            str(self.workspace),
+            str(self.workspace),
+            "--bind",
+            str(scratch),
+            str(scratch),
         ]
         if self.gpu:
             argv.extend(self.gpu.mount_args())
@@ -154,8 +188,9 @@ class LinuxNativeBackend(NativeBackendBase):
         for path in sorted(guards, key=lambda p: (len(p.parts), str(p))):
             if path.is_dir():
                 argv.extend(["--bind", str(path), str(path)])
-        mounts = (plan.mount_roots if tuple(read_paths) == plan.read_paths
-                  else _outermost(read_paths))
+        mounts = (
+            plan.mount_roots if tuple(read_paths) == plan.read_paths else _outermost(read_paths)
+        )
         for path in mounts:
             argv.extend(["--ro-bind", str(path), str(path)])
         if self.wsl_drivers:
@@ -167,10 +202,19 @@ class LinuxNativeBackend(NativeBackendBase):
             argv.extend(["--ro-bind", str(source), str(path)])
         # The synthetic root and /tmp contain no host files. All persistent writes
         # are confined to the explicitly mounted workspace and per-call scratch.
-        argv.extend([
-            "--remount-ro", "/", "--remount-ro", "/tmp", "--",
-            str(self.python), "-I", str(self.runtime / "sandbox/linux_exec.py"), *command,
-        ])
+        argv.extend(
+            [
+                "--remount-ro",
+                "/",
+                "--remount-ro",
+                "/tmp",
+                "--",
+                str(self.python),
+                "-I",
+                str(self.runtime / "sandbox/linux_exec.py"),
+                *command,
+            ]
+        )
         self.last_policy_metrics["materialization_ms"] = (
             perf_counter() - materialization_started
         ) * 1000
@@ -214,13 +258,23 @@ class LinuxNativeBackend(NativeBackendBase):
         driver_discovery_ms = None
         if self.wsl_drivers and self.gpu and self.gpu.kind == "wsl2":
             started = perf_counter()
-            discovery = self._run([
-                str(self.python), "-I", str(self.runtime / "sandbox/wsl_gpu_probe.py"),
-            ], timeout=30)
-            if (discovery.exit_code != 0 or discovery.timed_out
-                    or discovery.stdout_truncated or not self.healthy):
-                raise ValueError("WSL 驱动包查询失败；不会暴露整个驱动存储。\n"
-                                 + discovery.stderr[:2000])
+            discovery = self._run(
+                [
+                    str(self.python),
+                    "-I",
+                    str(self.runtime / "sandbox/wsl_gpu_probe.py"),
+                ],
+                timeout=30,
+            )
+            if (
+                discovery.exit_code != 0
+                or discovery.timed_out
+                or discovery.stdout_truncated
+                or not self.healthy
+            ):
+                raise ValueError(
+                    "WSL 驱动包查询失败；不会暴露整个驱动存储。\n" + discovery.stderr[:2000]
+                )
             self.wsl_drivers.select(discovery.stdout)
             driver_discovery_ms = (perf_counter() - started) * 1000
         if self.gpu and self.gpu.requested != "all":
@@ -229,17 +283,27 @@ class LinuxNativeBackend(NativeBackendBase):
             smi = shutil.which("nvidia-smi", path="/usr/bin:/bin:/usr/local/bin")
             if not smi:
                 raise ValueError("选择单张 GPU 需要系统 nvidia-smi")
-            inventory = self._run([
-                smi, "--query-gpu=index,minor_number,uuid", "--format=csv,noheader,nounits",
-            ], timeout=30)
+            inventory = self._run(
+                [
+                    smi,
+                    "--query-gpu=index,minor_number,uuid",
+                    "--format=csv,noheader,nounits",
+                ],
+                timeout=30,
+            )
             if inventory.exit_code != 0 or inventory.timed_out or not self.healthy:
                 raise ValueError("沙箱内 NVIDIA GPU 枚举失败：" + inventory.stderr[:2000])
             self.gpu = self.gpu.select(inventory.stdout)
         denied = self.directory / "denied.txt"
         denied.write_text("private host data")
         command = [
-            str(self.python), "-I", str(self.runtime / "sandbox/linux_preflight.py"),
-            "--workspace", str(self.workspace), "--denied", str(denied),
+            str(self.python),
+            "-I",
+            str(self.runtime / "sandbox/linux_preflight.py"),
+            "--workspace",
+            str(self.workspace),
+            "--denied",
+            str(denied),
         ]
         if self.gpu:
             command.append("--gpu")
@@ -248,17 +312,26 @@ class LinuxNativeBackend(NativeBackendBase):
         try:
             report = json.loads(result.stdout)
             isolation = report["isolation"]
-            valid = (isolation["exit_code"] == 0 and isolation["timed_out"] is False
-                     and isolation["stdout"].strip() == "native-ok")
+            valid = (
+                isolation["exit_code"] == 0
+                and isolation["timed_out"] is False
+                and isolation["stdout"].strip() == "native-ok"
+            )
         except (ValueError, KeyError, TypeError, AttributeError):
             report, isolation, valid = {}, {}, False
-        if (not valid or result.timed_out or result.stdout_truncated or not self.healthy
-                or (not self.gpu and result.exit_code != 0)):
+        if (
+            not valid
+            or result.timed_out
+            or result.stdout_truncated
+            or not self.healthy
+            or (not self.gpu and result.exit_code != 0)
+        ):
             raise ValueError(
                 "Linux 原生沙箱自检失败；需要 bubblewrap、libseccomp 以及可用的非特权 "
                 "user namespace。系统 AppArmor、sysctl 或外层容器可能限制 namespace；"
                 "不会退回未隔离执行。\n"
-                + str(isolation.get("stderr", ""))[:2000] + result.stderr[:2000]
+                + str(isolation.get("stderr", ""))[:2000]
+                + result.stderr[:2000]
             )
         self.preflight_metrics = {"isolation_ms": isolation.get("duration_ms")}
         if driver_discovery_ms is not None:
@@ -270,20 +343,30 @@ class LinuxNativeBackend(NativeBackendBase):
     def _validate_gpu_preflight(self, check, result):
         try:
             report = json.loads(check["stdout"])
-            valid = (check["exit_code"] == 0 and check["timed_out"] is False
-                     and report["cuda_kernel_verified"] is True
-                     and isinstance(report["devices"], list) and bool(report["devices"]))
+            valid = (
+                check["exit_code"] == 0
+                and check["timed_out"] is False
+                and report["cuda_kernel_verified"] is True
+                and isinstance(report["devices"], list)
+                and bool(report["devices"])
+            )
             if self.gpu.visible_uuid:
                 valid = valid and report["devices"] == [self.gpu.visible_uuid]
         except (ValueError, KeyError, TypeError):
             valid = False
-        if (result.exit_code != 0 or result.timed_out or result.stdout_truncated
-                or not self.healthy or not valid):
+        if (
+            result.exit_code != 0
+            or result.timed_out
+            or result.stdout_truncated
+            or not self.healthy
+            or not valid
+        ):
             diagnostic = check.get("stderr", "") if isinstance(check, dict) else ""
             raise ValueError(
                 "Linux native CUDA 自检失败；未退回 CPU 或放宽隔离。"
                 "请检查驱动、UVM 设备权限、libcuda/PTX JIT 库和所选 GPU；MIG/NVSwitch 暂不支持。\n"
                 "如需关闭 GPU，可显式使用 --sandbox-profile standard。\n"
-                + str(diagnostic)[:2000] + result.stderr[:2000]
+                + str(diagnostic)[:2000]
+                + result.stderr[:2000]
             )
         self.gpu_probe = report

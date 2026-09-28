@@ -65,8 +65,10 @@ def confirm_commands(agent_home: Path, bin_dir: Path) -> dict[str, str | None]:
         target = installed_command(agent_home, name)
         if old_target == target:
             continue
-        if (old_target.name != target.name
-                or old_target.parent.parts[-2:] != target.parent.parts[-2:]):
+        if (
+            old_target.name != target.name
+            or old_target.parent.parts[-2:] != target.parent.parts[-2:]
+        ):
             raise ValueError(
                 f"保留已有命令 {command}（无法识别为旧安装）；请用 --bin-dir 选择其他目录"
             )
@@ -145,6 +147,7 @@ def install_command(
     if not matches or os.name == "nt":
         if os.name == "nt":
             from host_support.windows_install import publish_command
+
             publish_command(command, target)
         elif previous is None:
             command.symlink_to(target)
@@ -161,6 +164,7 @@ def install_command(
 def configure_path(bin_dir: Path, record: dict | None = None, transaction=None) -> list[Path]:
     if os.name == "nt":
         from host_support.windows_install import apply_path_change, path_change
+
         change = path_change(bin_dir)
         if change is None:
             return []
@@ -262,8 +266,9 @@ def main(argv=None, *, approved_commands=None) -> None:
         help="无需询问，跳过额外补齐；Python 服务仍安装",
     )
     parser.set_defaults(toolchains=None)
-    parser.add_argument("--offline", action="store_true",
-                        help="禁止下载，依赖必须完整位于 wheelhouse")
+    parser.add_argument(
+        "--offline", action="store_true", help="禁止下载，依赖必须完整位于 wheelhouse"
+    )
     parser.add_argument("--wheelhouse", type=Path, help="本地依赖 wheel 目录")
     parser.add_argument("--no-path", action="store_true")
     parser.add_argument("--bootstrap", action="store_true", help=argparse.SUPPRESS)
@@ -281,21 +286,25 @@ def main(argv=None, *, approved_commands=None) -> None:
         release = None
         if args.wheel:
             from .release_manifest import read_release
+
             release = read_release(agent_home)
             if args.wheel.resolve() != (agent_home / release["wheel"]).resolve():
                 raise ValueError("wheel 与发行清单不匹配")
         verify_bundle_platform(agent_home)
-        bundled_wheels = agent_home / 'wheelhouse'
+        bundled_wheels = agent_home / "wheelhouse"
         wheelhouse = args.wheelhouse or (bundled_wheels if bundled_wheels.is_dir() else None)
-        offline_packages = args.offline or bool(release and bundled_wheels.is_dir()
-                                                 and args.wheelhouse is None)
+        offline_packages = args.offline or bool(
+            release and bundled_wheels.is_dir() and args.wheelhouse is None
+        )
         package_flags = source_flags(wheelhouse, offline=offline_packages)
-        requirements = requirement_files(agent_home, native=args.mode == 'native',
-                                         source=not args.wheel)
+        requirements = requirement_files(
+            agent_home, native=args.mode == "native", source=not args.wheel
+        )
         if args.offline:
-            if args.toolchains or (args.mode == 'docker' and not args.skip_sandbox):
-                raise ValueError('离线模式不下载工具链或构建镜像；'
-                                 '预装后使用 --skip-toolchains/--skip-sandbox')
+            if args.toolchains or (args.mode == "docker" and not args.skip_sandbox):
+                raise ValueError(
+                    "离线模式不下载工具链或构建镜像；预装后使用 --skip-toolchains/--skip-sandbox"
+                )
             args.toolchains = False
         network_options()
         extra_languages = []
@@ -343,11 +352,23 @@ def main(argv=None, *, approved_commands=None) -> None:
                 return
             if args.bootstrap and offline_packages:
                 # Check completeness before moving the existing environment.
-                with tempfile.TemporaryDirectory(prefix='repo-agent-wheel-check-') as check_dir:
-                    run_download([sys.executable, '-m', 'pip', 'download',
-                                  '--only-binary=:all:', '--require-hashes',
-                                  *package_flags, *requirement_args(requirements),
-                                  '--dest', check_dir], label='验证离线依赖', cwd=agent_home)
+                with tempfile.TemporaryDirectory(prefix="repo-agent-wheel-check-") as check_dir:
+                    run_download(
+                        [
+                            sys.executable,
+                            "-m",
+                            "pip",
+                            "download",
+                            "--only-binary=:all:",
+                            "--require-hashes",
+                            *package_flags,
+                            *requirement_args(requirements),
+                            "--dest",
+                            check_dir,
+                        ],
+                        label="验证离线依赖",
+                        cwd=agent_home,
+                    )
             if args.bootstrap and args.mode == "native":
                 args.toolchains = (
                     choose_toolchains(args.toolchains) if args.languages != "python" else False
@@ -374,9 +395,16 @@ def main(argv=None, *, approved_commands=None) -> None:
                     subprocess.run([python, "-m", "venv", str(agent_home / ".venv")], check=True)
                     python = str(installed_python(agent_home))
                     print("安装核心依赖……", flush=True)
-                    locked = [python, '-m', 'pip', 'install', '--require-hashes',
-                              '--only-binary=:all:', *package_flags,
-                              *requirement_args(requirements)]
+                    locked = [
+                        python,
+                        "-m",
+                        "pip",
+                        "install",
+                        "--require-hashes",
+                        "--only-binary=:all:",
+                        *package_flags,
+                        *requirement_args(requirements),
+                    ]
                     if not args.wheel:
                         print("源码安装：自动准备开发依赖（pytest、Ruff）。", flush=True)
                     run_download(locked, label="安装固定版本依赖", cwd=agent_home)
@@ -527,7 +555,8 @@ def main(argv=None, *, approved_commands=None) -> None:
             except (OSError, ValueError, subprocess.SubprocessError) as error:
                 unfinished_languages.append(language)
                 print(
-                    f"[WARN] {language} 未完成：{error}\n重试：repo-agent toolchains install {language}",
+                    f"[WARN] {language} 未完成：{error}\n"
+                    f"重试：repo-agent toolchains install {language}",
                     flush=True,
                 )
         try:

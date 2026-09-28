@@ -22,7 +22,8 @@ class ToolDispatcher:
         if name in self.tools:
             raise ValueError(f"Duplicate tool name: {name}")
         if self.inside_sandbox and kind not in {
-            ExecutionKind.TRUSTED_FILE, ExecutionKind.SANDBOXED_PROCESS,
+            ExecutionKind.TRUSTED_FILE,
+            ExecutionKind.SANDBOXED_PROCESS,
         }:
             raise ValueError(f"Host tool {name} cannot be registered in a sandbox worker")
         self.tools[name] = tool
@@ -75,8 +76,13 @@ class ToolDispatcher:
         from .execute import GetExecutionEnvironmentTool
         from .git_tools import GitDiffTool, GitStatusTool
 
-        if (type(tool) in {GetExecutionEnvironmentTool, GitDiffTool, GitStatusTool}
-                and tool.execution_allowed is False):
+        if (
+            type(tool) in {GetExecutionEnvironmentTool, GitDiffTool, GitStatusTool}
+            and tool.execution_allowed is False
+        ):
             return tool.execute(arguments)
-        return ToolResult(False, error_code="SANDBOX_REQUIRED",
-                          error="Process tools require a native/Docker execution adapter.")
+        return ToolResult(
+            False,
+            error_code="SANDBOX_REQUIRED",
+            error="Process tools require a native/Docker execution adapter.",
+        )

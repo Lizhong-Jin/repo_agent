@@ -82,7 +82,8 @@ def test_every_builtin_tool_has_concrete_metadata_and_unchanged_model_schema(tmp
     controls = [
         LoadSkillTool(SkillRegistry(tmp_path)),
         LoadToolGroupTool(ToolGroupRegistry(DEFAULT_TOOL_GROUPS, [])),
-        HistoryTool(None, "search"), HistoryTool(None, "read"),
+        HistoryTool(None, "search"),
+        HistoryTool(None, "read"),
     ]
     network = [WebSearchTool(None), WebFetchTool(None)]
     for tool in [*defaults, *controls, *network]:
@@ -93,19 +94,30 @@ def test_every_builtin_tool_has_concrete_metadata_and_unchanged_model_schema(tmp
     assert all(t.execution_kind is ExecutionKind.TRUSTED_NETWORK for t in network)
     kinds = {t.definition.name: t.execution_kind for t in defaults}
     assert {name for name, kind in kinds.items() if kind is ExecutionKind.SANDBOXED_PROCESS} == {
-        "get_execution_environment", "run_command", "run_python", "git_status", "git_diff",
-        "get_symbols", "go_to_definition", "find_references", "get_diagnostics", "get_hover",
+        "get_execution_environment",
+        "run_command",
+        "run_python",
+        "git_status",
+        "git_diff",
+        "get_symbols",
+        "go_to_definition",
+        "find_references",
+        "get_diagnostics",
+        "get_hover",
         "search_workspace_symbols",
     }
     assert sum(kind is ExecutionKind.TRUSTED_FILE for kind in kinds.values()) == 11
 
 
-@pytest.mark.parametrize("kind,handler", [
-    (ExecutionKind.HOST_CONTROL, "_host"),
-    (ExecutionKind.TRUSTED_FILE, "_file"),
-    (ExecutionKind.TRUSTED_NETWORK, "_network"),
-    (ExecutionKind.SANDBOXED_PROCESS, "_process"),
-])
+@pytest.mark.parametrize(
+    "kind,handler",
+    [
+        (ExecutionKind.HOST_CONTROL, "_host"),
+        (ExecutionKind.TRUSTED_FILE, "_file"),
+        (ExecutionKind.TRUSTED_NETWORK, "_network"),
+        (ExecutionKind.SANDBOXED_PROCESS, "_process"),
+    ],
+)
 def test_runtime_routes_each_kind_through_dispatcher(kind, handler, monkeypatch):
     tool = type("DeclaredTool", (HostTool,), {"execution_kind": kind})()
     runtime = AgentRuntime(object(), [tool])
@@ -135,8 +147,10 @@ def test_declared_process_without_adapter_never_runs_host_code():
     assert json.loads(response.content)["error"]["code"] == "SANDBOX_REQUIRED"
 
 
-@pytest.mark.parametrize("tool_type", [RunCommandTool, RunPythonTool, GetExecutionEnvironmentTool,
-                                       GitDiffTool, GitStatusTool])
+@pytest.mark.parametrize(
+    "tool_type",
+    [RunCommandTool, RunPythonTool, GetExecutionEnvironmentTool, GitDiffTool, GitStatusTool],
+)
 def test_execution_allowed_flag_alone_cannot_bypass_isolation(tmp_path, monkeypatch, tool_type):
     tool = tool_type(tmp_path, execution_allowed=True)
     monkeypatch.setattr(tool, "execute", lambda *_: pytest.fail("Raw process tool executed"))
@@ -147,7 +161,9 @@ def test_execution_allowed_flag_alone_cannot_bypass_isolation(tmp_path, monkeypa
 
 @pytest.mark.parametrize("tool_type", [GetExecutionEnvironmentTool, GitDiffTool, GitStatusTool])
 def test_only_exact_restricted_local_implementations_have_compatibility_route(
-    tmp_path, monkeypatch, tool_type,
+    tmp_path,
+    monkeypatch,
+    tool_type,
 ):
     tool = tool_type(tmp_path, execution_allowed=False)
     monkeypatch.setattr(tool, "execute", lambda *_: ToolResult(True, {"local": True}))
@@ -155,9 +171,13 @@ def test_only_exact_restricted_local_implementations_have_compatibility_route(
     dispatcher.register(tool)
     assert dispatcher.execute(tool.definition.name, {}).data == {"local": True}
     # A subclass cannot inherit the special allowance by copying the declaration.
-    child = type("PluginTool", (tool_type,), {
-        "execution_kind": ExecutionKind.SANDBOXED_PROCESS,
-    })(tmp_path, execution_allowed=False)
+    child = type(
+        "PluginTool",
+        (tool_type,),
+        {
+            "execution_kind": ExecutionKind.SANDBOXED_PROCESS,
+        },
+    )(tmp_path, execution_allowed=False)
     dispatcher = ToolDispatcher()
     dispatcher.register(child)
     assert dispatcher.execute(child.definition.name, {}).error_code == "SANDBOX_REQUIRED"
@@ -184,8 +204,9 @@ def test_proxies_preserve_kind_and_execute_through_their_backend(tmp_path, kind,
     assert calls == [(tmp_path, "example", {})]
 
 
-@pytest.mark.parametrize("kind", [ExecutionKind.HOST_CONTROL, ExecutionKind.TRUSTED_NETWORK,
-                                  "sandboxed_process", None])
+@pytest.mark.parametrize(
+    "kind", [ExecutionKind.HOST_CONTROL, ExecutionKind.TRUSTED_NETWORK, "sandboxed_process", None]
+)
 def test_proxy_cannot_silently_reclassify_a_host_tool(kind):
     with pytest.raises(ValueError):
         NativeTool(HostTool.definition, None, kind)
@@ -209,7 +230,9 @@ def test_worker_refuses_host_control_and_network_tools(kind):
 
 
 def test_worker_runs_validated_process_and_rejects_model_route_override(
-    tmp_path, monkeypatch, capsys,
+    tmp_path,
+    monkeypatch,
+    capsys,
 ):
     from sandbox import worker
 
@@ -223,8 +246,9 @@ def test_worker_runs_validated_process_and_rejects_model_route_override(
             return ToolResult(True, {"isolated": True})
 
     monkeypatch.setattr(worker, "create_default_tools", lambda *a, **kw: [ProcessTool()])
-    worker.execute_request({"name": "example", "arguments": {},
-                            "execution_kind": "host_control"}, tmp_path)
+    worker.execute_request(
+        {"name": "example", "arguments": {}, "execution_kind": "host_control"}, tmp_path
+    )
     assert json.loads(capsys.readouterr().out)["data"] == {"isolated": True}
     assert calls == [{}]  # Request metadata never changes the registered route.
 
