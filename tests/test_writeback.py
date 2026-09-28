@@ -39,9 +39,9 @@ def standard_cli_environment(monkeypatch):
     monkeypatch.setattr("llm.LLMClient.get_context_limit", lambda self, **kw: None)
 
     monkeypatch.setattr(
-        cli, "detect_environment", lambda **kw: DockerEnvironment("standard", "test", "x86_64")
+        "cli.execution_environment.detect_environment", lambda **kw: DockerEnvironment("standard", "test", "x86_64")
     )
-    monkeypatch.setattr(cli, "check_image_profile", lambda *a, **kw: None)
+    monkeypatch.setattr("cli.execution_environment.check_image_profile", lambda *a, **kw: None)
 
 
 def completed(status="completed"):
@@ -173,7 +173,7 @@ def test_interrupted_task_does_not_leak_into_later_completed_task(session, monke
 
 
 def test_user_template_preserves_writeback_setting_on_reinstall(tmp_path, monkeypatch):
-    from cli.setup import configure_user
+    from installer.setup import configure_user
 
     root = Path(__file__).resolve().parents[1]
     monkeypatch.setenv("AGENT_CONFIG_DIR", str(tmp_path))
@@ -201,9 +201,9 @@ def test_cli_config_precedence(
     monkeypatch.setenv("AGENT_SANDBOX_WRITEBACK", env)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "mock")
     monkeypatch.setattr("sys.argv", ["repo-agent", "--sandbox", "docker", "--model", "test", *flags])
-    monkeypatch.setattr(cli, "SandboxSession", lambda *a, **kw: session)
+    monkeypatch.setattr("cli.execution_environment.SandboxSession", lambda *a, **kw: session)
     seen = []
-    monkeypatch.setattr(cli, "run_interactive", lambda *a, **kw: seen.append(kw["writeback"]))
+    monkeypatch.setattr("cli.application.run_interactive", lambda *a, **kw: seen.append(kw["writeback"]))
     cli.main()
     assert seen == [expected]
 
@@ -274,8 +274,8 @@ def test_single_task_cli_applies_after_run_and_signals_failure(
             "on-success",
         ],
     )
-    monkeypatch.setattr(cli, "SandboxSession", lambda *a, **kw: session)
-    monkeypatch.setattr(cli, "LLMClient", lambda *a: nullcontext(object()))
+    monkeypatch.setattr("cli.execution_environment.SandboxSession", lambda *a, **kw: session)
+    monkeypatch.setattr("cli.runtime_setup.LLMClient", lambda *a: nullcontext(object()))
 
     def run(task, *, history=()):
         assert not history
@@ -287,7 +287,7 @@ def test_single_task_cli_applies_after_run_and_signals_failure(
             history=(), response=SimpleNamespace(text="done"),
         )
 
-    monkeypatch.setattr(cli, "AgentRuntime", lambda *a, **kw: SimpleNamespace(
+    monkeypatch.setattr("cli.runtime_setup.AgentRuntime", lambda *a, **kw: SimpleNamespace(
         run=run, llm=a[0], _task_number=0, estimate_context_tokens=lambda history=(): 0,
         restore_tool_groups=lambda names: (), loaded_tool_groups=(),
         reset_tool_groups=lambda: None,
@@ -534,7 +534,7 @@ def test_cli_verification_config_precedence(
         seen.append(kwargs["verify_command"])
         return session
 
-    monkeypatch.setattr(cli, "SandboxSession", construct)
-    monkeypatch.setattr(cli, "run_interactive", lambda *a, **kw: None)
+    monkeypatch.setattr("cli.execution_environment.SandboxSession", construct)
+    monkeypatch.setattr("cli.application.run_interactive", lambda *a, **kw: None)
     cli.main()
     assert seen == [expected]

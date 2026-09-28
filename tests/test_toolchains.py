@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from cli import dependencies, install_network, setup, toolchains
-from cli.installation import COMMANDS, begin_install, load_record, prepare_venv, save_record
+from installer import dependencies, install_network, setup, toolchains
+from installer.installation import COMMANDS, begin_install, load_record, prepare_venv, save_record
 
 
 def states(services=()):
@@ -248,8 +248,7 @@ def test_cli_dispatch_does_not_read_model_configuration(monkeypatch):
 
     seen = []
     monkeypatch.setattr(
-        main,
-        "configured_environment",
+        "cli.startup.configured_environment",
         lambda *a: pytest.fail("model config is irrelevant"),
     )
     monkeypatch.setattr(toolchains, "main", lambda argv: seen.append(argv))

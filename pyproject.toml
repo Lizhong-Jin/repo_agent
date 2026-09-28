@@ -22,12 +22,12 @@ repo-agent-build-sandbox = "sandbox.build:main"
 include-package-data = false
 
 [tool.setuptools.packages.find]
-include = ["agent", "agent.*", "cli", "cli.*", "llm", "llm.*", "sandbox", "sandbox.*", "tools", "tools.*", "host_support", "host_support.*"]
+include = ["agent", "agent.*", "cli", "cli.*", "llm", "llm.*", "sandbox", "sandbox.*", "tools", "tools.*", "host_support", "host_support.*", "installer", "installer.*", "configuration", "configuration.*"]
 exclude = ["*..git", "*..git.*", "*..venv", "*..venv.*", "*.venv", "*.venv.*", "*.node_modules", "*.node_modules.*", "*.__pycache__", "*.__pycache__.*", "*.build", "*.build.*", "*.dist", "*.dist.*", "*.logs", "*.logs.*", "*..pytest_cache", "*..pytest_cache.*", "*..ruff_cache", "*..ruff_cache.*"]
 
 [tool.setuptools.package-data]
 "agent" = ["skills/builtin/*/SKILL.md"]
-"cli" = ["resources/default.env", "resources/dependencies/node/package-lock.json", "resources/dependencies/node/package.json", "resources/docker-context.tar.gz", "resources/requirements-build.lock", "resources/requirements-core.lock", "resources/requirements-dev.lock", "resources/requirements-lsp.lock"]
+"installer" = ["resources/default.env", "resources/dependencies/node/package-lock.json", "resources/dependencies/node/package.json", "resources/docker-context.tar.gz", "resources/requirements-build.lock", "resources/requirements-core.lock", "resources/requirements-dev.lock", "resources/requirements-lsp.lock"]
 "sandbox" = ["Dockerfile"]
 
 [tool.setuptools.cmdclass]

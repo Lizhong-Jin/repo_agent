@@ -3,31 +3,14 @@
 from agent import AgentRuntime, RunResult
 from llm import LLMError, Message
 
+from .conversation_help import HELP, RESET_NOTICE, describe_skills
+from .input import SessionInput
 from .sessions_command import new_name, ui_command
-from .live import SessionInput
 from .thinking_display import ThinkingDisplay
+from .writeback import finish_writeback
 
-HELP = (
-    "输入任务后按回车。/help 查看帮助，/clear 清空上下文，/new [名称] 启动新会话。"
-    "/compact 压缩上下文并归档原文。"
-    "/rename 名称 改名；/sessions 列出会话；/logs [序号] --tail 100 查看日志。"
-    "/exit、/quit 或 Ctrl+D 退出并保存；下次启动默认恢复，--new-session 启动全新会话。"
-    "/model 选择供应商、模型和 API Key，保存并切换。"
-    "/skills 查看技能；任务开头用 $技能名 显式指定，也可由模型按需选择。"
-    "/context [auto|窗口上限token数] 查看占用、自动获取或手动设置上限。"
-    "/thinking list 查看有效档位；/thinking low 等直接切换，history on 保留历史思考，reset 重置。"
-    "Shift+Tab 按模型切换并记住偏好；Ctrl+T 展开/折叠思考。"
-    "/thinking display collapsed|expanded|hidden 设置并保存显示偏好。"
-    "Ctrl+C 取消当前输入或中断任务；执行中要退出可先按 Ctrl+C，再输入 /exit。"
-)
-RESET_NOTICE = "上下文已清空；已经执行的文件操作不会撤销。"
 INPUT_TOP = "┏" + "━" * 18 + " 用户输入 " + "━" * 18
 INPUT_BOTTOM = "┗" + "━" * 46
-
-
-def describe_skills(runtime: AgentRuntime) -> str:
-    skills = getattr(runtime, "skills", None)
-    return skills.describe() if skills is not None else "当前未启用技能框架。"
 
 
 def display_result(result: RunResult) -> None:
@@ -53,7 +36,7 @@ def run_interactive(
 
     display = display or ThinkingDisplay()
     if sys.stdin.isatty() and sys.stdout.isatty():
-        from .tui import ConversationUI
+        from .terminal.application import ConversationUI
 
         ConversationUI(
             runtime,
@@ -223,48 +206,3 @@ def run_interactive(
         else:
             # max_steps also has paired tool results, so a follow-up can safely continue.
             history = result.history
-
-
-def finish_writeback(sandbox, result, mode: str, *, emit=print) -> bool:
-    """Called exactly once at a user task boundary, never once per tool."""
-    if sandbox is None or mode == "manual":
-        return True
-    sandbox.last_backup = None
-    try:
-        if getattr(sandbox.backend, "healthy", True) and not sandbox.changes()[1]:
-            # Read-only diagnostics (including expected nonzero exits) have nothing to publish.
-            from sandbox.writeback import WritebackGuard
-
-            sandbox.guard = WritebackGuard()
-            emit("无需自动回写：没有文件变更。")
-            return result.status == "completed"
-        reason = sandbox.guard.reason(result, sandbox.backend)
-        if reason:
-            emit(f"未自动回写：{reason}。副本：{sandbox.workspace}")
-            return False
-        if sandbox.verify_command:
-            emit("正在容器中执行最终验证（时限以当前执行配置为准）……")
-        verification_error = sandbox.verify_writeback()
-        if verification_error:
-            emit(
-                f"未自动回写：{verification_error}。"
-                f"验证记录：{sandbox.directory / 'verification.json'}；副本：{sandbox.workspace}"
-            )
-            return False
-        changed = sandbox.apply()
-    except (ValueError, OSError, KeyboardInterrupt) as error:
-        sandbox.guard.needs_review = True
-        emit(f"自动回写未完成：{str(error) or '回写被中断'}；副本：{sandbox.workspace}")
-        if sandbox.last_backup:
-            emit(f"可能已有部分文件写入；恢复备份：{sandbox.last_backup}")
-        return False
-    if changed:
-        emit(f"已自动回写 {len(changed)} 个文件：" + ", ".join(changed))
-        emit(f"回写前备份：{sandbox.last_backup}")
-        if sandbox.verify_command:
-            emit(f"执行检查：已配置的最终验证通过；记录：{sandbox.directory / 'verification.json'}")
-        else:
-            emit("执行检查：已调用的工具无未解决失败；不代表已执行完整测试。")
-    else:
-        emit("无需自动回写：没有文件变更。")
-    return True

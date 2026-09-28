@@ -6,12 +6,12 @@ import sys
 import warnings
 from dataclasses import dataclass, field, replace
 
+from configuration.environment import read_config, save_user_config
+from host_support.paths import user_config_path
 from llm import ConfigurationError, LLMClient
 from llm.model_catalog import require_supported_model, supported_providers
 from llm.providers import get_provider
 
-from .config import read_config, save_user_config
-from .installation import user_config_path
 from .model_picker import pick_model
 
 RESET_SETTINGS = {

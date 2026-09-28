@@ -9,32 +9,16 @@ import shlex
 import ssl
 import subprocess
 import sys
-from contextlib import contextmanager
 from pathlib import Path
 
 if not __package__:
     from _bootstrap import enable_host_support
 
     enable_host_support()
+    __package__ = "installer"
 
 from host_support.diagnostics import print_diagnostics
-from host_support.filesystem import open_file
-from host_support.locking import lock_descriptor
 from host_support.paths import environment_python, installed_command
-
-
-@contextmanager
-def file_lock(path):
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd = open_file(path, os.O_RDWR | os.O_CREAT, nonblocking=False)
-    try:
-        try:
-            lock_descriptor(fd, blocking=False)
-        except BlockingIOError:
-            raise ValueError(f"另一个安装、卸载或配置操作正在进行，请稍后重试：{path}") from None
-        yield
-    finally:
-        os.close(fd)  # Keep the inode: unlinking a lock file can split concurrent locks.
 
 
 def probe(command, *, timeout=15, cwd=None):

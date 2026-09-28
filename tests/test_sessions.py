@@ -11,11 +11,11 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
 from agent import AgentRuntime
+from agent.conversation import SavedConversation
 from agent.session import SessionStore
-from cli.live import SessionStatus
-from cli.session import SavedConversation
-from cli.transcript import Transcript
-from cli.tui import ConversationUI
+from agent.transcript import Transcript
+from cli.session_status import SessionStatus
+from cli.terminal.application import ConversationUI
 from llm import LLMClient, LLMConfig, LLMResponse, Message, ToolCall, Usage
 from llm.schemas import ProviderState
 from sandbox import SandboxPolicy, SandboxSession
@@ -332,7 +332,7 @@ def test_cli_auto_resume_and_new_flag(tmp_path, monkeypatch, capsys):
     project = tmp_path / "project"
     project.mkdir()
     monkeypatch.setenv("DEEPSEEK_API_KEY", "synthetic-key")
-    monkeypatch.setattr(cli, "LLMClient", factory)
+    monkeypatch.setattr("cli.runtime_setup.LLMClient", factory)
     for task, flags in [("remember blue", []), ("what color", []), ("fresh", ["--new-session"])]:
         monkeypatch.setattr(
             "sys.argv",
@@ -371,7 +371,7 @@ def test_single_task_cli_resumes(tmp_path, monkeypatch):
             pass
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "synthetic-key")
-    monkeypatch.setattr(cli, "LLMClient", factory)
+    monkeypatch.setattr("cli.runtime_setup.LLMClient", factory)
     for task in ("first", "second"):
         monkeypatch.setattr(
             "sys.argv",
@@ -511,7 +511,8 @@ def factory(config):
     client = LLMClient(config, http_client=httpx.Client(transport=httpx.MockTransport(reply)))
     client._owned = True
     return client
-cli.LLMClient = factory
+from cli import runtime_setup
+runtime_setup.LLMClient = factory
 sys.argv = ["repo-agent", task, "--sandbox", "local", "--model", "m", "--root", project]
 cli.main()
 """
@@ -543,11 +544,11 @@ def test_cli_reconnects_original_sandbox_and_new_flag_creates_copy(tmp_path, mon
     project.mkdir()
     (project / "a").write_text("original")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "synthetic-key")
-    monkeypatch.setattr(cli, "LLMClient", lambda config: nullcontext(Model(config)))
+    monkeypatch.setattr("cli.runtime_setup.LLMClient", lambda config: nullcontext(Model(config)))
     monkeypatch.setattr(
-        cli, "detect_environment", lambda **kw: DockerEnvironment("standard", "test", "x86_64")
+        "cli.execution_environment.detect_environment", lambda **kw: DockerEnvironment("standard", "test", "x86_64")
     )
-    monkeypatch.setattr(cli, "check_image_profile", lambda *args, **kw: None)
+    monkeypatch.setattr("cli.execution_environment.check_image_profile", lambda *args, **kw: None)
     monkeypatch.setattr(
         "sandbox.session.DockerBackend", lambda policy: SimpleNamespace(healthy=True)
     )
@@ -568,7 +569,7 @@ def test_cli_reconnects_original_sandbox_and_new_flag_creates_copy(tmp_path, mon
             assert (sandbox.workspace / "a").read_text() == "original"
             assert not conversation.history
 
-    monkeypatch.setattr(cli, "run_interactive", interactive)
+    monkeypatch.setattr("cli.application.run_interactive", interactive)
     try:
         for flags in ([], [], ["--new-session"]):
             monkeypatch.setattr(

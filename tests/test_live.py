@@ -10,7 +10,9 @@ from test_streaming import ANTHROPIC, CHAT, GEMINI, RESPONSES, Pieces, chat, sse
 
 from agent import AgentRuntime
 from cli.interactive import display_result
-from cli.live import LiveOutput, SessionInput, ThinkingControl
+from cli.output import LiveOutput
+from cli.input import SessionInput
+from cli.thinking_control import ThinkingControl
 from cli.settings import add_runtime_arguments, request_options
 from llm import AsyncLLMClient, ConfigurationError, LLMClient, LLMConfig, LLMRequest, Message
 from llm.errors import LLMTimeoutError
@@ -204,7 +206,7 @@ def test_interactive_settings_reach_requests_and_trace(tmp_path, monkeypatch, ca
 
 def test_session_token_totals_missing_usage_and_duplicate_events(tmp_path):
     from agent.Tracing import ModelCallRecord, RunStats
-    from cli.live import SessionStatus
+    from cli.session_status import SessionStatus
     from llm import Usage
 
     status = SessionStatus(tmp_path)
@@ -229,7 +231,7 @@ def test_session_token_totals_missing_usage_and_duplicate_events(tmp_path):
 
 def test_session_unknown_is_not_reported_as_zero(tmp_path):
     from agent.Tracing import ModelCallRecord, RunStats
-    from cli.live import SessionStatus
+    from cli.session_status import SessionStatus
     from llm import Usage
 
     status = SessionStatus(tmp_path)
@@ -242,7 +244,7 @@ def test_session_unknown_is_not_reported_as_zero(tmp_path):
 
 def test_toolbar_shows_live_totals_and_project_path(tmp_path):
     from agent.Tracing import ModelCallRecord, RunStats
-    from cli.live import SessionStatus
+    from cli.session_status import SessionStatus
     from llm import Usage
 
     status = SessionStatus(tmp_path)
@@ -285,8 +287,7 @@ def test_cli_session_clear_keeps_usage_totals(tmp_path, monkeypatch, capsys):
 
     http = httpx.Client(transport=httpx.MockTransport(handler))
     monkeypatch.setattr(
-        cli,
-        "LLMClient",
+        "cli.runtime_setup.LLMClient",
         lambda config: LLMClient(LLMConfig("deepseek", "m", api_key="key"), http_client=http),
     )
     monkeypatch.setattr(
@@ -324,7 +325,7 @@ def test_cli_session_clear_keeps_usage_totals(tmp_path, monkeypatch, capsys):
 
 def test_context_uses_latest_round_not_session_total_and_resets(tmp_path):
     from agent.Tracing import ModelCallRecord, RunStats
-    from cli.live import SessionStatus
+    from cli.session_status import SessionStatus
     from llm import Usage
 
     status = SessionStatus(tmp_path, context_window=10000)
@@ -348,7 +349,7 @@ def test_context_uses_latest_round_not_session_total_and_resets(tmp_path):
 
 def test_context_missing_usage_clears_old_percentage(tmp_path):
     from agent.Tracing import ModelCallRecord, RunStats
-    from cli.live import SessionStatus
+    from cli.session_status import SessionStatus
     from llm import Usage
 
     status = SessionStatus(tmp_path, context_window=1000)
@@ -364,14 +365,14 @@ def test_context_missing_usage_clears_old_percentage(tmp_path):
 
 @pytest.mark.parametrize("value", [0, -1, True, 1.2, "1000"])
 def test_context_window_validation(tmp_path, value):
-    from cli.live import SessionStatus
+    from cli.session_status import SessionStatus
 
     with pytest.raises(ConfigurationError):
         SessionStatus(tmp_path, context_window=value)
 
 
 def test_context_unknown_limit_and_over_limit_are_explicit(tmp_path):
-    from cli.live import SessionStatus
+    from cli.session_status import SessionStatus
 
     status = SessionStatus(tmp_path)
     status.context_tokens = 1500

@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 
 from cli import config_command
-from cli.config import CONFIG_KEYS, read_config, save_user_config
-from cli.installation import user_config_path
 from cli.models import ModelSelection
+from configuration.environment import CONFIG_KEYS, read_config, save_user_config
+from installer.installation import user_config_path
 
 SOURCE = Path(__file__).resolve().parents[1]
 
@@ -187,9 +187,9 @@ def test_config_entry_bypasses_agent_and_broken_runtime_values(tmp_path, monkeyp
 
     monkeypatch.setattr(sys, "argv", ["repo-agent", "config", "show"])
     monkeypatch.setenv("LLM_STREAM", "invalid")
-    monkeypatch.setattr(cli, "LLMClient", lambda *a, **kw: pytest.fail("must not start model"))
+    monkeypatch.setattr("cli.runtime_setup.LLMClient", lambda *a, **kw: pytest.fail("must not start model"))
     monkeypatch.setattr(
-        cli, "detect_environment", lambda **kw: pytest.fail("must not start Docker")
+        "cli.execution_environment.detect_environment", lambda **kw: pytest.fail("must not start Docker")
     )
     cli.main()
     assert 'LLM_STREAM = "invalid"' in capsys.readouterr().out

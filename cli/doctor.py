@@ -4,43 +4,27 @@ import argparse
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 if not __package__:
     from _bootstrap import enable_host_support
 
     enable_host_support()
+    __package__ = "cli"
 
 from host_support.paths import installed_command, installed_python
-
-if __package__:
-    from .dependencies import available_mode, native_preflight, service_report
-    from .install_transaction import TRANSACTION
-    from .installation import (
-        COMMANDS,
-        DEFAULT_IMAGE,
-        load_record,
-        read_record,
-        registry_dir,
-        user_config_path,
-    )
-    from .maintenance import environment_report, print_report, probe
-    from .paths import installation_root
-else:
-    from install_transaction import TRANSACTION
-    from installation import (
-        COMMANDS,
-        DEFAULT_IMAGE,
-        load_record,
-        read_record,
-        registry_dir,
-        user_config_path,
-    )
-    from maintenance import environment_report, print_report, probe
-    from paths import installation_root
-
-    from dependencies import available_mode, native_preflight, service_report
+from installer.dependencies import available_mode, native_preflight, service_report
+from installer.install_transaction import TRANSACTION
+from installer.installation import (
+    COMMANDS,
+    DEFAULT_IMAGE,
+    load_record,
+    read_record,
+    registry_dir,
+    user_config_path,
+)
+from installer.maintenance import environment_report, print_report, probe
+from installer.paths import installation_root
 
 
 def diagnose(root, workspace, *, mode=None, docker=None):
@@ -112,10 +96,8 @@ def diagnose(root, workspace, *, mode=None, docker=None):
         add("ERROR", "运行依赖", "虚拟环境不可用，请重新安装")
     add("OK", "用户配置", str(user_config_path()))
     try:
-        if not __package__:
-            sys.path.insert(0, str(root))
-        from cli.config import load_configuration
         from cli.config_command import validate_configuration
+        from configuration.environment import load_configuration
 
         _, sources, project = load_configuration(workspace)
         add("OK", "项目配置", str(project))

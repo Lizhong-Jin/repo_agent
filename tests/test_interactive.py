@@ -211,7 +211,7 @@ def test_main_without_task_starts_session_and_closes_client(tmp_path, monkeypatc
             self.closed = True
 
     client = Client([reply("answer1"), reply("answer2")])
-    monkeypatch.setattr(cli, "LLMClient", lambda config: client)
+    monkeypatch.setattr("cli.runtime_setup.LLMClient", lambda config: client)
     monkeypatch.setattr(
         "sys.argv", ["repo-agent", "--sandbox", "local", "--model", "test", "--root", str(tmp_path)]
     )

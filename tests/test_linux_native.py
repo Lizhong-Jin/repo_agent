@@ -212,7 +212,7 @@ def test_system_scan_other_errors_are_not_ignored(linux_policy, monkeypatch, err
 
 
 def test_linux_dependency_checks_and_manual_toolchain_hint(monkeypatch):
-    from cli import dependencies
+    from installer import dependencies
 
     monkeypatch.setattr(dependencies, "sys", SimpleNamespace(platform="linux"))
     monkeypatch.setattr(dependencies.shutil, "which", lambda *a, **kw: None)
@@ -542,7 +542,7 @@ def test_real_linux_default_cli_and_session(tmp_path, monkeypatch):
         result = backend.execute(tmp_path, "run_command", {"command": ["/bin/echo", "linux cli"]})
         assert result.success and result.data["stdout"] == "linux cli\n", result
 
-    monkeypatch.setattr(cli, "run_interactive", interactive)
+    monkeypatch.setattr("cli.application.run_interactive", interactive)
     cli.main()
     assert len(backends) == 1 and not backends[0].directory.exists()
     store = SessionStore(tmp_path).open()

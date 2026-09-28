@@ -4,10 +4,10 @@ import pytest
 from test_runtime import RecordingTool, ScriptedLLM, reply
 
 from agent import AgentRuntime
-from cli.config import load_configuration, read_config, user_config_path
 from cli.config_command import main as config_main
 from cli.config_command import validate_value, validate_values
 from cli.settings import add_runtime_arguments
+from configuration.environment import load_configuration, read_config, user_config_path
 from llm import ToolCall
 
 

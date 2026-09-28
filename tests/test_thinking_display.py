@@ -12,13 +12,13 @@ from test_tui import until
 
 from agent import AgentRuntime
 from agent.Tracing import Tracer
-from cli.config import read_config, user_config_path
+from agent.transcript import Transcript
 from cli.config_command import validate_value
-from cli.live import LiveOutput
+from cli.output import LiveOutput
 from cli.settings import add_runtime_arguments
 from cli.thinking_display import ThinkingDisplay
-from cli.transcript import Transcript
-from cli.tui import ConversationUI
+from cli.terminal.application import ConversationUI
+from configuration.environment import read_config, user_config_path
 from llm import (
     AsyncLLMClient,
     LLMClient,
@@ -545,7 +545,7 @@ def test_redacted_anthropic_block_without_usage_is_not_displayed(capsys):
 
 
 def test_terminal_control_characters_are_display_only():
-    from cli.transcript import display_text
+    from agent.transcript import display_text
 
     raw = "a\x1b[2J\x1b]52;c;secret\x07b\rnext\nline"
     displayed = display_text(raw)

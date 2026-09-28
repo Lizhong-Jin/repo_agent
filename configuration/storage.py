@@ -5,17 +5,8 @@ import re
 from datetime import datetime, timezone
 from uuid import uuid4
 
-if not __package__:
-    from _bootstrap import enable_host_support
-
-    enable_host_support()
-
+from host_support.locking import file_lock
 from host_support.storage import atomic_write
-
-if __package__:
-    from .maintenance import file_lock
-else:
-    from maintenance import file_lock
 
 BACKUP_NAME = re.compile(r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{32}\.env")
 

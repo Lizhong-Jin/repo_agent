@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cli import maintenance
+from installer import maintenance
 
 
 def interpreter(monkeypatch, prefix, *, platform="linux", executable=None):

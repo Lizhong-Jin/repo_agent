@@ -9,9 +9,9 @@ from test_runtime import RecordingTool, ScriptedLLM, reply
 from test_sessions import Model
 
 from agent import AgentRuntime
+from agent.conversation import SavedConversation
 from agent.session import SessionStore
-from cli.live import SessionStatus
-from cli.session import SavedConversation
+from cli.session_status import SessionStatus
 from llm import Message, ToolCall, ToolDefinition
 from sandbox.native import NativeTool
 from tools import DEFAULT_TOOL_GROUPS, ExecutionKind, ToolGroup, ToolResult, create_default_tools

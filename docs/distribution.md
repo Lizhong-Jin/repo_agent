@@ -51,9 +51,9 @@ Windows 构建机可运行 `python -X utf8 scripts/build_release.py --target win
 
 ## 产物目录与包内容
 
-macOS/Linux 发行包仅提供顶层 `install-release.sh`，安装、恢复和备用卸载共用内部的 `scripts/installer-entry.sh`；源码仓库继续保留 `install.sh` / `uninstall.sh`。新构建清单使用 schema 2，强制校验共用脚本及卸载模块；新版安装器仍可读取 schema 1 的旧发行包。修改后需要重新构建发行包，已有压缩包不会自动变化。发布时应按上面的流程递增版本号。
+macOS/Linux 发行包仅提供顶层 `install-release.sh`，安装、恢复和备用卸载共用内部的 `scripts/installer-entry.sh`；源码仓库继续保留 `install.sh` / `uninstall.sh`。新构建清单使用 schema 4，显式记录目标平台并校验 `installer/`、`configuration/` 等安装所需文件；新版安装器仍可读取 schema 1～3 的旧发行包。构建器在写出压缩包前使用安装器的校验逻辑验证清单，避免发布无法安装的包。修改后需要重新构建发行包，已有压缩包不会自动变化。发布时应按上面的流程递增版本号。
 
-Windows ZIP 使用 schema 3，记录 `windows-x86_64` 目标并仅提供顶层 `install_release.ps1`；同一脚本通过 `--uninstall`、`--check`、`--recover` 完成维护，不附带另一份卸载入口或 POSIX Shell 安装脚本。共用 Python 安装事务、配置保留和归属检查。
+Windows ZIP 同样使用 schema 4（旧版为 schema 3），记录 `windows-x86_64` 目标并仅提供顶层 `install_release.ps1`；同一脚本通过 `--uninstall`、`--check`、`--recover` 完成维护，不附带另一份卸载入口或 POSIX Shell 安装脚本。共用 Python 安装事务、配置保留和归属检查。
 
 默认输出到 `dist/<版本>/<平台>/`；`--output` 仅替换 `dist` 这一层，版本来自 `pyproject.toml`。例如：
 
@@ -170,3 +170,7 @@ wheel、sdist、发行包构建及源码模式的镜像重建入口都会检查�
 `tests/test_build_manifest.py` 包含实际 wheel 构建、删除模块后重复构建、sdist 解包后重建 wheel、新增 JSON 资源、生成配置漂移和未声明文件排除等回归；默认使用测试环境中已有的 setuptools/wheel，不联网安装构建工具。
 
 `requirements-dev.lock` 从 `pyproject.toml` 的 `dev` extra 导出，包含 pytest、Ruff 及其依赖；源码安装自动使用该清单，发行版安装不使用它。它随统一构建清单提供，不表示普通用户运行环境会安装开发工具。
+
+## 安装代码与资源归属
+
+安装、恢复和发行校验实现位于 `installer/`；wheel 资源位于 `installer/resources/`。Shell 和 PowerShell 引导直接调用 `installer/` 中的入口，不再提供上述实现的 `cli/` 包装层。schema 4 校验新路径，schema 1～3 继续按各自原有的 `cli/` 路径校验。分发引导同时包含 `configuration/` 和 `host_support/`；安装仅导入配置存储，不加载模型配置或终端依赖。目录职责见[代码组织](code-organization.md)。

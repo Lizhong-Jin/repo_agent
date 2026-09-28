@@ -1,4 +1,4 @@
-name: Host file services
+name: Tests and host file services
 
 on:
   push:
@@ -12,6 +12,29 @@ env:
   PYTHONUTF8: '1'
 
 jobs:
+  regression:
+    name: Default suite (${{ matrix.os }}, Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.11', '3.13']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Prepare development environment and installed entrypoints
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
+          .venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
+          .venv/bin/python -m pip install --no-build-isolation --no-deps -e .
+      - name: Run all default tests
+        run: .venv/bin/python -m pytest -q -ra --durations=15
+
   contracts:
     strategy:
       fail-fast: false
@@ -26,7 +49,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install -e ".[dev]"
-      - run: python -m pytest -q tests/test_host_file_contracts.py tests/test_windows_files.py tests/test_windows_release.py
+      - run: python -m pytest -q tests/test_architecture_boundaries.py tests/test_host_file_contracts.py tests/test_windows_files.py tests/test_windows_release.py
 
   windows-release:
     runs-on: windows-latest

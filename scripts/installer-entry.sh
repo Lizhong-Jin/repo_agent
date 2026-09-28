@@ -137,7 +137,7 @@ fi
 if [[ -z "$agent_python" ]]; then
     printf '未找到组件齐全的 Python 3.11+；可用 AGENT_PYTHON 指定完整解释器。\n' >&2
     if [[ -n "$agent_partial_python" ]]; then
-        "$agent_partial_python" -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from maintenance import python_components_report, print_report; print_report(python_components_report())' "$agent_install_dir/cli" || true
+        "$agent_partial_python" -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from maintenance import python_components_report, print_report; print_report(python_components_report())' "$agent_install_dir/installer" || true
     else
         printf 'macOS 可安装完整 Python：https://www.python.org/downloads/macos/；Linux 请通过发行版包管理器安装 Python 3.11+ 及匹配的 venv 组件。\n' >&2
     fi
@@ -145,9 +145,9 @@ if [[ -z "$agent_python" ]]; then
 fi
 printf '使用 Python：%s\n' "$agent_python"
 if [[ "$agent_entry" == release ]]; then
-    exec "$agent_python" -B "$agent_install_dir/cli/release_install.py" "$@"
+    exec "$agent_python" -B "$agent_install_dir/installer/release_install.py" "$@"
 fi
 if [[ "$agent_entry" == uninstall ]]; then
-    exec "$agent_python" -B "$agent_install_dir/cli/uninstall.py" --agent-home "$agent_install_dir" "$@"
+    exec "$agent_python" -B "$agent_install_dir/installer/uninstall.py" --agent-home "$agent_install_dir" "$@"
 fi
-exec "$agent_python" "$agent_install_dir/cli/setup.py" --bootstrap --agent-home "$agent_install_dir" "$@"
+exec "$agent_python" "$agent_install_dir/installer/setup.py" --bootstrap --agent-home "$agent_install_dir" "$@"

@@ -18,7 +18,7 @@ from prompt_toolkit.output import DummyOutput
 from agent.session import SessionStore
 from agent.Tracing import Tracer
 from cli.sessions_command import main, show_log, ui_command
-from cli.tui import ConversationUI
+from cli.terminal.application import ConversationUI
 from test_sessions import open_conversation, perform  # noqa: F401 (shared fixture)
 
 
@@ -87,9 +87,9 @@ def test_catalog_queries_require_no_model_or_sandbox(tmp_path, monkeypatch, caps
     from cli import main as cli
     def forbidden(*args, **kwargs):
         pytest.fail("read-only command attempted to initialize runtime/config")
-    monkeypatch.setattr(cli, "LLMClient", forbidden)
-    monkeypatch.setattr(cli, "configured_environment", forbidden)
-    monkeypatch.setattr(cli, "SandboxSession", forbidden)
+    monkeypatch.setattr("cli.runtime_setup.LLMClient", forbidden)
+    monkeypatch.setattr("cli.startup.configured_environment", forbidden)
+    monkeypatch.setattr("cli.execution_environment.SandboxSession", forbidden)
     for argv in (["sessions", "list", "--root", str(tmp_path)],
                  ["--root", str(tmp_path), "sessions", "list"]):
         monkeypatch.setattr(sys, "argv", ["repo-agent", *argv])
@@ -302,7 +302,7 @@ def test_named_cli_start_resume_and_live_commands(tmp_path, monkeypatch, capsys)
     from test_sessions import Model
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "synthetic-key")
-    monkeypatch.setattr(cli, "LLMClient", lambda config: nullcontext(Model(config)))
+    monkeypatch.setattr("cli.runtime_setup.LLMClient", lambda config: nullcontext(Model(config)))
     base = ["repo-agent", "--sandbox", "local", "--model", "m", "--root", str(tmp_path)]
     for flags, commands in [
         (["--new-session", "--name", "from CLI"], ["one", "/exit"]),

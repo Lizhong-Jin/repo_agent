@@ -31,7 +31,7 @@ for module in pkgutil.iter_modules(host_support.__path__):
     importlib.import_module('host_support.' + module.name)
 assert not any(name.split('.')[0] in {'agent', 'tools', 'sandbox', 'cli', 'packaging'}
                for name in sys.modules)
-import cli.setup, cli.doctor, cli.uninstall, cli.release_install
+import installer.setup, cli.doctor, installer.uninstall, installer.release_install
 assert not any(name.split('.')[0] in {'agent', 'tools', 'sandbox', 'httpx', 'yaml'}
                for name in sys.modules)
 print('stdlib-only')
@@ -76,7 +76,7 @@ def test_host_and_execution_guest_capabilities_are_independent():
 def test_posix_layouts_and_overrides_remain_consistent(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "private state"))
     assert app_directory("state") == tmp_path / "private state/repo-agent"
-    from cli.installation import registry_dir
+    from installer.installation import registry_dir
     from tools._internal.file_policy import session_state_root
 
     assert registry_dir().parent == session_state_root().parent == app_directory("state")

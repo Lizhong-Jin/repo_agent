@@ -48,7 +48,7 @@ CLI 使用 `create_native_backend()`。旧 `NativeBackend` 构造入口及 `seat
 
 ## 构建与引导
 
-`build_manifest.py` 将 `host_support` 纳入 wheel、sdist、Docker 上下文和发行引导包。native 的可信 worker 副本也包含它。直接执行安装/诊断脚本时，`cli/_bootstrap.py` 从脚本位置加入可信安装根目录，不从任务目录加载公共模块。
+`build_manifest.py` 将 `host_support` 纳入 wheel、sdist、Docker 上下文和发行引导包。native 的可信 worker 副本也包含它。直接执行安装/诊断脚本时，`installer/_bootstrap.py` 或旧入口的 `cli/_bootstrap.py` 从脚本位置加入可信安装根目录，不从任务目录加载公共模块。安装服务位于 `installer/`；配置备份使用仅依赖标准库的 `configuration/storage.py`，不会导入模型配置或终端界面。
 
 无 Python 时的 Shell 引导仍独立运行，继续读取 `runtime/python.lock`。不要为了统一 Python 代码，让准备 Python 的步骤反过来依赖 Python。
 
@@ -85,9 +85,11 @@ CLI 使用 `create_native_backend()`。旧 `NativeBackend` 构造入口及 `seat
 python -m pytest -q tests/test_host_file_contracts.py tests/test_windows_files.py
 ```
 
-`.github/workflows/host-files.yml` 配置了 Windows/macOS/Linux × Python 3.11/3.13 的六组契约测试，运行 `test_host_file_contracts.py`、`test_windows_files.py`、`test_windows_release.py`。另有 Windows Python 3.13 作业构建 ZIP、设置归档变量后执行真实安装生命周期，并上传测试产物。Windows 文件测试包含 junction 场景、只读文件原子替换和全部 local 文件工具；非 Windows 环境跳过 Windows 内核用例。
+`.github/workflows/host-files.yml` 配置了 Windows/macOS/Linux × Python 3.11/3.13 的六组契约测试，运行 `test_architecture_boundaries.py`、`test_host_file_contracts.py`、`test_windows_files.py`、`test_windows_release.py`。另有 Windows Python 3.13 作业构建 ZIP、设置归档变量后执行真实安装生命周期，并上传测试产物。Windows 文件测试包含 junction 场景、只读文件原子替换和全部 local 文件工具；非 Windows 环境跳过 Windows 内核用例。
 
-工作流配置不等于运行成功。当前 CI 没有运行全量默认套件、Ruff 或真实 Docker Desktop 回写测试；Windows Docker 回写需下面的独立开关与镜像。发布前应检查对应提交的实际作业结果，而非将本地模拟测试或上传配置当作实机证据。
+工作流还配置了 Linux/macOS × Python 3.11/3.13 的四组默认全量回归，准备仓库 `.venv` 和安装入口后运行整个 `tests/` 目录。默认全量仍按平台、依赖和开关跳过真实环境用例；Windows 仍限定为上述契约及发行安装测试。当前 CI 未配置 Ruff 或真实 Docker Desktop 回写测试；Windows Docker 回写需下面的独立开关与镜像。
+
+工作流配置不等于运行成功。发布前应检查对应提交的实际作业结果，而非将本地模拟测试或上传配置当作实机证据。
 
 已安装 Git for Windows、已启动 Docker Desktop 的 Linux 容器模式且本地已有 `repo-agent-sandbox:v1` 时，可单独运行真实容器往返测试：
 

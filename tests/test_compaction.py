@@ -11,11 +11,11 @@ from prompt_toolkit.output import DummyOutput
 
 from agent import AgentRuntime
 from agent.compaction import SECTIONS, CompactionSettings
+from agent.conversation import SavedConversation
 from agent.history import HistoryArchive, HistoryTool
 from agent.session import SessionStore
-from cli.live import SessionStatus
-from cli.session import SavedConversation
-from cli.tui import ConversationUI
+from cli.session_status import SessionStatus
+from cli.terminal.application import ConversationUI
 from llm import LLMConfig, LLMRequest, LLMResponse, Message, ToolCall, Usage
 from llm.schemas import ProviderState
 from tools import ExecutionKind, ToolResult

@@ -3,11 +3,57 @@
 import os
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from cli import install_network as network
+from installer import install_network as network
+
+
+def test_default_network_options():
+    assert network.network_options() == (2, 600)
+
+
+def test_installer_settings_are_isolated_in_fresh_pytest_process(tmp_path):
+    # Set these before pytest starts, so the real autouse fixture must remove them.
+    env = {
+        **os.environ,
+        "AGENT_INSTALL_RETRIES": "0",
+        "AGENT_INSTALL_TIMEOUT": "invalid",
+        "AGENT_INSTALL_PROXY": "https://proxy.invalid",
+        "AGENT_INSTALL_PYPI_INDEX": "https://index.invalid",
+        "AGENT_INSTALL_NPM_REGISTRY": "https://npm.invalid",
+        "AGENT_INSTALL_GOPROXY": "https://go.invalid",
+        "PIP_RETRIES": "9",
+        "npm_config_fetch_retries": "9",
+    }
+    path = Path(__file__).resolve()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "--basetemp",
+            str(tmp_path / "child-pytest"),
+            f"{path}::test_default_network_options",
+            f"{path}::test_retries_transient_error_then_succeeds",
+            f"{path}::test_download_ignores_inherited_installer_overrides",
+        ],
+        cwd=path.parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_download_ignores_inherited_installer_overrides():
+    assert not any(key.startswith("AGENT_INSTALL_") for key in os.environ)
+    env = network.download_environment()
+    assert env["PIP_RETRIES"] == env["npm_config_fetch_retries"] == "0"
 
 
 @pytest.mark.parametrize(
@@ -143,8 +189,14 @@ def test_real_timeout_stops_child_before_retry_or_rollback(tmp_path, monkeypatch
     import time
 
     child_output = tmp_path / "late-write"
-    child = f"import time; from pathlib import Path; time.sleep(1); Path({str(child_output)!r}).write_text('bad')"
-    parent = f"import subprocess,sys,time; subprocess.Popen([sys.executable, '-c', {child!r}]); time.sleep(10)"
+    child = (
+        "import time; from pathlib import Path; time.sleep(1); "
+        f"Path({str(child_output)!r}).write_text('bad')"
+    )
+    parent = (
+        "import subprocess,sys,time; "
+        f"subprocess.Popen([sys.executable, '-c', {child!r}]); time.sleep(10)"
+    )
     monkeypatch.setattr(network, "network_options", lambda: (0, 0.15))
     with pytest.raises(network.DownloadError, match="超时"):
         network.run_download([sys.executable, "-c", parent], label="timeout test")

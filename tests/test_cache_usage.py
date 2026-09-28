@@ -4,7 +4,7 @@ import pytest
 
 from agent import AgentRuntime
 from agent.Tracing import ModelCallRecord, RunStats
-from cli.live import SessionStatus
+from cli.session_status import SessionStatus
 from llm import Usage
 
 

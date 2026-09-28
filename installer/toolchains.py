@@ -12,40 +12,25 @@ if not __package__:
     from _bootstrap import enable_host_support
 
     enable_host_support()
+    __package__ = "installer"
 
+from host_support.locking import file_lock
 from host_support.paths import installed_python, scripts_dir
 
-if __package__:
-    from .dependencies import (
-        LANGUAGES,
-        install_language_servers,
-        language_status,
-        native_preflight,
-        prepare_toolchains,
-        print_language_status,
-        service_report,
-    )
-    from .install_network import run_download
-    from .install_transaction import TRANSACTION
-    from .installation import load_record, registry_dir, save_record
-    from .maintenance import file_lock, print_report
-    from .paths import installation_root, resource_path
-else:
-    from install_network import run_download
-    from install_transaction import TRANSACTION
-    from installation import load_record, registry_dir, save_record
-    from maintenance import file_lock, print_report
-    from paths import installation_root, resource_path
-
-    from dependencies import (
-        LANGUAGES,
-        install_language_servers,
-        language_status,
-        native_preflight,
-        prepare_toolchains,
-        print_language_status,
-        service_report,
-    )
+from .dependencies import (
+    LANGUAGES,
+    install_language_servers,
+    language_status,
+    native_preflight,
+    prepare_toolchains,
+    print_language_status,
+    service_report,
+)
+from .install_network import run_download
+from .install_transaction import TRANSACTION
+from .installation import load_record, registry_dir, save_record
+from .maintenance import print_report
+from .paths import installation_root, resource_path
 
 
 def install_server(root, language):

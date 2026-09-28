@@ -13,20 +13,14 @@ if not __package__:
     from _bootstrap import enable_host_support
 
     enable_host_support()
+    __package__ = "installer"
 
+from host_support.locking import file_lock
 from host_support.paths import app_directory, user_bin_dir
 
-if __package__:
-    from . import setup, uninstall
-    from .maintenance import file_lock
-    from .paths import extract_files
-    from .release_manifest import digest, read_release
-else:
-    import setup
-    import uninstall
-    from maintenance import file_lock
-    from paths import extract_files
-    from release_manifest import digest, read_release
+from . import setup, uninstall
+from .paths import extract_files
+from .release_manifest import digest, read_release
 
 
 def locate_release_root(extracted):

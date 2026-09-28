@@ -11,8 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from cli import install_transaction, installation, setup, uninstall
 from host_support import integration, paths, windows_install
+from installer import install_transaction, installation, setup, uninstall
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -64,7 +64,7 @@ def test_cross_build_evaluates_markers_for_windows(tmp_path):
 
 @pytest.mark.parametrize("name", ["../escape", "C:stream", "file.", "NUL", "a\\b"])
 def test_zip_paths_rejected_before_writing(tmp_path, name):
-    from cli.paths import extract_files
+    from installer.paths import extract_files
 
     archive = tmp_path / "bad.zip"
     with zipfile.ZipFile(archive, "w") as output:
@@ -81,7 +81,7 @@ def test_zip_paths_rejected_before_writing(tmp_path, name):
     ("file", "file/child"), ("folder/file", "folder/file/child"), ("Folder/a", "folder/b"),
 ])
 def test_zip_ambiguous_tree_rejected_before_writing(tmp_path, names):
-    from cli.paths import extract_files
+    from installer.paths import extract_files
 
     archive = tmp_path / "bad.zip"
     with zipfile.ZipFile(archive, "w") as output:
@@ -95,7 +95,7 @@ def test_zip_ambiguous_tree_rejected_before_writing(tmp_path, names):
 
 
 def test_windows_defaults_local_and_preserves_recorded_mode(tmp_path, monkeypatch):
-    from cli import dependencies
+    from installer import dependencies
 
     monkeypatch.setattr(dependencies, "sys", SimpleNamespace(platform="win32"))
     assert dependencies.available_mode(tmp_path) == "local"
@@ -230,9 +230,9 @@ def test_windows_path_rollback_after_interrupted_install(tmp_path, windows_host)
 @pytest.mark.skipif(os.name != "nt" or not os.environ.get("REPO_AGENT_WINDOWS_ARCHIVE"),
                     reason="Requires built Windows ZIP and a real Windows kernel")
 def test_real_windows_release_survives_download_removal_and_uninstalls(tmp_path):
-    from cli.paths import extract_files
-    from cli.release_install import locate_release_root
-    from cli.release_manifest import read_release
+    from installer.paths import extract_files
+    from installer.release_install import locate_release_root
+    from installer.release_manifest import read_release
 
     archive = Path(os.environ["REPO_AGENT_WINDOWS_ARCHIVE"]).resolve()
     tmp_path = tmp_path / "中文 release"

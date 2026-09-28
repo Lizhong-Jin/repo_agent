@@ -19,9 +19,6 @@ from prepare_python_bundle import prepare, runtime_records
 
 # This policy module is stdlib-only; setuptools is installed later in the build venv.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from host_support.paths import environment_python  # noqa: E402
-from host_support.platforms import release_target  # noqa: E402
-
 from build_manifest import (  # noqa: E402
     CONTEXT_ARCHIVE,
     RESOURCE_FILES,
@@ -32,6 +29,9 @@ from build_manifest import (  # noqa: E402
     verify_release_archive,
     verify_wheel,
 )
+from host_support.paths import environment_python  # noqa: E402
+from host_support.platforms import release_target  # noqa: E402
+from installer.release_manifest import RELEASE_SCHEMA, read_release  # noqa: E402
 
 
 def runtime_archives(targets, source, *, offline):
@@ -58,17 +58,18 @@ def write_release(bundle, output, version, target, wheel_name):
         if path.is_file()
     }
     manifest = {
-        "schema": 3 if target == "windows-x86_64" else 2,
+        "schema": RELEASE_SCHEMA,
+        "target": target,
         "name": "repo-agent",
         "version": version,
         "wheel": "wheels/" + wheel_name,
         "files": files,
     }
-    if target == "windows-x86_64":
-        manifest["target"] = target
     (bundle / "release.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
     )
+    # Fail before replacing an existing artifact if bootstrap files are incomplete.
+    read_release(bundle)
     directory = output / version / target
     directory.mkdir(parents=True, exist_ok=True)
     release_directory = f"repo-agent-{version}-{target}"

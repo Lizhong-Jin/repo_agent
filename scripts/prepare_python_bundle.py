@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from host_support.platforms import PlatformInfo, release_target  # noqa: E402
-from cli.paths import extract_files  # noqa: E402
+from installer.paths import extract_files  # noqa: E402
 
 
 def runtime_records(root=ROOT):

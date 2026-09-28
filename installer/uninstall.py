@@ -12,32 +12,22 @@ if not __package__:
     from _bootstrap import enable_host_support
 
     enable_host_support()
+    __package__ = "installer"
 
+from configuration.storage import backups, config_lock
+from host_support.locking import file_lock
 from host_support.paths import installed_command, public_command, user_bin_dir
 
-if __package__:
-    from .installation import (
-        COMMANDS,
-        MANIFEST,
-        load_record,
-        read_record,
-        registry_dir,
-        save_record,
-    )
-    from .paths import installation_root
-else:
-    from installation import COMMANDS, MANIFEST, load_record, read_record, registry_dir, save_record
-    from paths import installation_root
-
-
-if __package__:
-    from .config_storage import backups, config_lock
-    from .install_transaction import TRANSACTION
-    from .maintenance import file_lock
-else:
-    from config_storage import backups, config_lock
-    from install_transaction import TRANSACTION
-    from maintenance import file_lock
+from .install_transaction import TRANSACTION
+from .installation import (
+    COMMANDS,
+    MANIFEST,
+    load_record,
+    read_record,
+    registry_dir,
+    save_record,
+)
+from .paths import installation_root
 
 
 def other_installations(data: dict) -> tuple[list[dict], bool]:

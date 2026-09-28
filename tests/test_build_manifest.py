@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 import build_manifest as manifest
-from cli.paths import extract_files
+from installer.paths import extract_files
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -152,6 +152,10 @@ def test_real_wheel_and_sdist_keep_new_resource_and_drop_removed_module(source, 
         assert archive.read("agent/release_fixture.json") == resource.read_bytes()
         assert "cli/removed_fixture.py" in archive.namelist()
         assert "host_support/processes.py" in archive.namelist()
+        assert "installer/setup.py" in archive.namelist()
+        assert "configuration/storage.py" in archive.namelist()
+        assert "agent/conversation.py" in archive.namelist()
+        assert "cli/installation.py" not in archive.namelist()
         assert "sandbox/native_common.py" in archive.namelist()
         assert "cli/.env" not in archive.namelist()
         assert "cli/undeclared.json" not in archive.namelist()
@@ -175,10 +179,40 @@ def test_real_wheel_and_sdist_keep_new_resource_and_drop_removed_module(source, 
     assert not (rebuilt / "cli/removed_fixture.py").exists()
     rebuilt_wheel = build(rebuilt, "wheel")
     policy.verify_wheel(rebuilt_wheel, rebuilt)
+    # Exercise the shipped layout outside the checkout, not only archive membership.
+    installed = tmp_path / "wheel-site"
+    with zipfile.ZipFile(rebuilt_wheel) as archive:
+        archive.extractall(installed)
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", """
+import pathlib, sys
+root = pathlib.Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(root))
+import cli.main, cli.application, cli.arguments, cli.commands
+import cli.startup, cli.execution_environment, cli.runtime_setup
+import cli.terminal.application, cli.runtime_events, cli.task_execution
+import agent.conversation, agent.transcript, agent.session_state, agent.thinking, sandbox.build
+import installer.setup, installer.paths, configuration.environment, configuration.storage
+for name, module in tuple(sys.modules.items()):
+    if name.split('.')[0] in {'cli', 'agent', 'sandbox', 'installer', 'configuration'}:
+        assert pathlib.Path(module.__file__).resolve().is_relative_to(root), name
+assert installer.paths.resource_path('default.env').is_file()
+with installer.paths.docker_build_context() as context:
+    assert (context / 'installer/setup.py').is_file()
+    assert (context / 'configuration/storage.py').is_file()
+print('shipped-layout-ok')
+""", str(installed)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "shipped-layout-ok"
     # Check the real built context, not just matching two Python lists.
     with zipfile.ZipFile(rebuilt_wheel) as archive:
         context = tmp_path / "context.tar.gz"
-        context.write_bytes(archive.read("cli/resources/docker-context.tar.gz"))
+        context.write_bytes(archive.read("installer/resources/docker-context.tar.gz"))
     with tarfile.open(context) as archive:
         assert archive.extractfile("agent/release_fixture.json").read() == resource.read_bytes()
         assert "host_support/filesystem.py" in archive.getnames()
@@ -220,9 +254,9 @@ def test_sdist_rejects_missing_declared_resource(source):
 
 
 def test_source_docker_entry_rejects_stale_allowlist(source, monkeypatch):
-    from cli import paths
+    from installer import paths
 
-    monkeypatch.setattr(paths, "__file__", str(source / "cli/paths.py"))
+    monkeypatch.setattr(paths, "__file__", str(source / "installer/paths.py"))
     (source / "cli/new_module.py").write_text("new = True\n")
     with pytest.raises(ValueError, match="out of sync"):
         with paths.docker_build_context():

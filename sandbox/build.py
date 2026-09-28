@@ -4,8 +4,8 @@ import argparse
 import subprocess
 from pathlib import Path
 
-from cli.installation import record_image
-from cli.paths import docker_build_context, installation_root
+from installer.installation import record_image
+from installer.paths import docker_build_context, installation_root
 
 from .environment import (
     CUDA_BASE,

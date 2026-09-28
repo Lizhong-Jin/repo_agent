@@ -15,27 +15,18 @@ if not __package__:
     from _bootstrap import enable_host_support
 
     enable_host_support()
+    __package__ = "installer"
 
 from host_support.paths import installed_command, public_command
 
-if __package__:
-    from .installation import (
-        COMMANDS,
-        DEFAULT_IMAGE,
-        MANIFEST,
-        registry_dir,
-        registry_name,
-        write_json,
-    )
-else:
-    from installation import (
-        COMMANDS,
-        DEFAULT_IMAGE,
-        MANIFEST,
-        registry_dir,
-        registry_name,
-        write_json,
-    )
+from .installation import (
+    COMMANDS,
+    DEFAULT_IMAGE,
+    MANIFEST,
+    registry_dir,
+    registry_name,
+    write_json,
+)
 
 TRANSACTION = ".repo-agent-install-transaction"
 

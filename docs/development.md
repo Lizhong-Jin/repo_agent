@@ -2,7 +2,7 @@
 
 [文档首页](index.md) · [项目首页](../README.md)
 
-本文面向源码开发者，命令默认在仓库根目录执行。先阅读[项目架构](../Project_Architecture.md)，工具扩展见[工具开发参考](tools.md)，打包发布见[构建与分发](distribution.md)。独立发行版用户不需要运行开发检查。
+本文面向源码开发者，命令默认在仓库根目录执行。先阅读[项目架构](../Project_Architecture.md)和[代码组织](code-organization.md)，工具扩展见[工具开发参考](tools.md)，打包发布见[构建与分发](distribution.md)。独立发行版用户不需要运行开发检查。
 
 ## 开发环境与验证
 
@@ -12,13 +12,41 @@
 .venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
 .venv/bin/python -m pip install --require-hashes -r requirements-build.lock
 .venv/bin/python -m pytest -q
-.venv/bin/ruff check agent cli llm tools sandbox host_support scripts examples tests build_support.py build_manifest.py
-.venv/bin/ruff format --check agent cli llm tools sandbox host_support scripts examples tests build_support.py build_manifest.py
+.venv/bin/ruff check agent cli llm tools sandbox host_support installer configuration scripts examples tests build_support.py build_manifest.py
+.venv/bin/ruff format --check agent cli llm tools sandbox host_support installer configuration scripts examples tests build_support.py build_manifest.py
 python3 build_manifest.py
 python3 scripts/lock_dependencies.py --check
 ```
 
 开发依赖安装可能联网；锁文件检查需要 uv。Ruff 命令表示建议覆盖范围，不表示当前仓库已经通过全部规则。默认测试使用模拟模型，不消耗在线推理额度；安装入口测试需要仓库 `.venv/bin/repo-agent` 可运行。构建清单测试使用已有的 setuptools/wheel，因此旧安装补齐时上方也安装锁定的构建依赖。独立发行版不安装开发依赖。
+
+### 快速跑默认全量测试
+
+开发环境就绪后，在仓库根目录运行即可，不需要每次重新安装依赖：
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+`pyproject.toml` 已将 `tests/` 设为默认收集目录，因此无需逐个列出测试文件。查看跳过原因和最慢的用例：
+
+```bash
+.venv/bin/python -m pytest -q -ra --durations=15
+```
+
+修复失败后可用 `.venv/bin/python -m pytest -q --ff` 优先执行上次失败的用例，再执行其余全量测试；`--lf` 只跑上次失败的用例，不能替代全量回归。
+
+全新源码目录如尚无开发环境，可按以下步骤准备一次；安装可能联网：
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
+.venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
+.venv/bin/python -m pip install --no-build-isolation --no-deps -e .
+.venv/bin/python -m pytest -q
+```
+
+最后的 editable 安装会创建安装入口测试依赖的 `.venv/bin/repo-agent`。CI 的 `regression` 作业采用同样的准备流程，在 Linux/macOS × Python 3.11/3.13 上运行默认全量测试。默认全量会收集整个测试目录，但仍会按平台、依赖和开关跳过真实环境用例；下列验收需在对应环境中单独启用。
 
 将以下验证分别记录，不能用默认测试通过替代真实环境验收：
 
@@ -41,7 +69,7 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py t
 
 开关只选择测试，不能补齐依赖；缺少目标平台或硬件时的跳过不计为通过。真实模型 API 的可用性、参数和计费需要另行验证，不属于默认套件的结论。
 
-原生 Windows 开发测试需另行准备 Python 和开发依赖，虚拟环境入口为 `.venv\Scripts\python.exe`；发行 ZIP 不安装 pytest/Ruff。当前 Windows CI 运行共享文件、Windows 文件和发行安装三份测试模块，没有声明整个默认套件已适配 Windows。工作流范围见[平台验证说明](platform-adaptation.md#扩展与验证)。
+原生 Windows 开发测试需另行准备 Python 和开发依赖，虚拟环境入口为 `.venv\Scripts\python.exe`；发行 ZIP 不安装 pytest/Ruff。当前 Windows CI 运行架构边界、共享文件、Windows 文件和发行安装四份测试模块，没有声明整个默认套件已适配 Windows。工作流范围见[平台验证说明](platform-adaptation.md#扩展与验证)。
 
 ## 离线开发环境
 

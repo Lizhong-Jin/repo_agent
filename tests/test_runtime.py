@@ -228,7 +228,7 @@ def test_cli_uses_runtime(monkeypatch, tmp_path, capsys):
             pass
 
     model = FakeClient([reply("CLI result")])
-    monkeypatch.setattr(cli, "LLMClient", lambda config: model)
+    monkeypatch.setattr("cli.runtime_setup.LLMClient", lambda config: model)
     monkeypatch.setattr(
         "sys.argv",
         ["repo-agent", "--sandbox", "local", "task", "--model", "test", "--root", str(tmp_path)],

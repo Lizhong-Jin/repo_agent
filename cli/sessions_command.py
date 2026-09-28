@@ -9,8 +9,7 @@ from collections import deque
 from pathlib import Path
 
 from agent.session import SessionStore, open_log
-
-from .transcript import display_text
+from agent.transcript import display_text
 
 
 class CommandParser(argparse.ArgumentParser):

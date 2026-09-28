@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 import build_manifest
-from cli.release_manifest import digest, read_release
+from installer.release_manifest import digest, read_release
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -78,11 +78,14 @@ def test_default_builds_all_complete_platforms_with_one_shared_wheel(
         suffix = '.zip' if target == 'windows-x86_64' else '.tar.gz'
         assert archive == output / version / target / f'{prefix}{suffix}'
         extracted = tmp_path / f'extracted-{target}'
-        from cli.paths import extract_files
+        from installer.paths import extract_files
         extracted.mkdir()
         extract_files(archive, extracted)
         bundle = extracted / prefix
         manifest = read_release(bundle)
+        assert manifest["schema"] == 4 and manifest["target"] == target
+        assert "installer/setup.py" in manifest["files"]
+        assert "cli/setup.py" not in manifest["files"]
         assert (bundle / 'runtime/target').read_text().strip() == target
         runtime = 'runtime/python/python.exe' if target == 'windows-x86_64' else 'runtime/python.tar.gz'
         assert (bundle / runtime).read_bytes() == target.encode()
@@ -160,3 +163,24 @@ def test_cli_without_target_uses_all_platform_default(builder, monkeypatch, tmp_
     builder.main()
     assert calls[0][0][1] == tmp_path
     assert calls[0][1]['target'] is None
+
+
+def test_incomplete_installer_fails_before_replacing_archive(builder, build_inputs, monkeypatch):
+    root, output, _ = build_inputs
+    archive = builder.build(root, output, "uv", target="macos-arm64")[0]
+    before = archive.read_bytes()
+    checksum = archive.with_name(archive.name + ".sha256").read_bytes()
+    original = builder.bootstrap_files
+
+    def omit_setup(*args, **kwargs):
+        return [
+            path
+            for path in original(*args, **kwargs)
+            if path.relative_to(root).as_posix() != "installer/setup.py"
+        ]
+
+    monkeypatch.setattr(builder, "bootstrap_files", omit_setup)
+    with pytest.raises(ValueError, match="必要文件"):
+        builder.build(root, output, "uv", target="macos-arm64")
+    assert archive.read_bytes() == before
+    assert archive.with_name(archive.name + ".sha256").read_bytes() == checksum

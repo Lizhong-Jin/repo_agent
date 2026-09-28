@@ -103,7 +103,7 @@ def test_interactive_file_tasks_with_default_tools(tmp_path, monkeypatch, capsys
             assert config.max_retries == 0
             return LLMClient(config, http_client=http)
 
-        monkeypatch.setattr(cli, "LLMClient", make_client)
+        monkeypatch.setattr("cli.runtime_setup.LLMClient", make_client)
         cli.main()
 
     output = capsys.readouterr().out

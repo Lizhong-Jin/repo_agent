@@ -7,8 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from cli import dependencies, doctor, install_network, setup
-from cli.installation import COMMANDS, begin_install, load_record, prepare_venv, save_record
+from cli import doctor
+from installer import dependencies, install_network, setup
+from installer.installation import COMMANDS, begin_install, load_record, prepare_venv, save_record
 from sandbox import lsp_smoke
 from sandbox.native import NativeBackend
 

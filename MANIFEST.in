@@ -18,6 +18,8 @@ recursive-include llm *.py
 recursive-include sandbox *.py
 recursive-include tools *.py
 recursive-include host_support *.py
+recursive-include installer *.py
+recursive-include configuration *.py
 include agent/skills/builtin/*/SKILL.md
 include sandbox/Dockerfile
 prune agent/.git
@@ -140,5 +142,45 @@ prune host_support/.pytest_cache
 prune host_support/**/.pytest_cache
 prune host_support/.ruff_cache
 prune host_support/**/.ruff_cache
+prune installer/.git
+prune installer/**/.git
+prune installer/.venv
+prune installer/**/.venv
+prune installer/venv
+prune installer/**/venv
+prune installer/node_modules
+prune installer/**/node_modules
+prune installer/__pycache__
+prune installer/**/__pycache__
+prune installer/build
+prune installer/**/build
+prune installer/dist
+prune installer/**/dist
+prune installer/logs
+prune installer/**/logs
+prune installer/.pytest_cache
+prune installer/**/.pytest_cache
+prune installer/.ruff_cache
+prune installer/**/.ruff_cache
+prune configuration/.git
+prune configuration/**/.git
+prune configuration/.venv
+prune configuration/**/.venv
+prune configuration/venv
+prune configuration/**/venv
+prune configuration/node_modules
+prune configuration/**/node_modules
+prune configuration/__pycache__
+prune configuration/**/__pycache__
+prune configuration/build
+prune configuration/**/build
+prune configuration/dist
+prune configuration/**/dist
+prune configuration/logs
+prune configuration/**/logs
+prune configuration/.pytest_cache
+prune configuration/**/.pytest_cache
+prune configuration/.ruff_cache
+prune configuration/**/.ruff_cache
 global-exclude *.pyc *.pyo .env .env.*
 include .env.example

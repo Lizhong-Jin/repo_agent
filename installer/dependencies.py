@@ -12,6 +12,7 @@ if not __package__:
     from _bootstrap import enable_host_support
 
     enable_host_support()
+    __package__ = "installer"
 
 from host_support.languages import (
     GO_MINIMUM,
@@ -30,13 +31,8 @@ from host_support.languages import (
 from host_support.paths import installed_python, scripts_dir
 from host_support.probes import native_availability
 
-if __package__:
-    from .install_network import run_download
-    from .paths import resource_path
-else:
-    from install_network import run_download
-    from paths import resource_path
-
+from .install_network import run_download
+from .paths import resource_path
 
 HINTS = {
     "python": "运行 repo-agent toolchains install python",

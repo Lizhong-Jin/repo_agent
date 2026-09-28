@@ -1,0 +1,123 @@
+"""Keyboard actions for the full-screen view; no model execution here."""
+
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.key_binding import KeyBindings
+
+from llm import LLMError
+
+from ..shortcuts import shortcut_label
+
+
+def create_bindings(ui):
+    keys = KeyBindings()
+    choosing_model = Condition(
+        lambda: ui.model_wizard is not None and ui.model_wizard.stage == "model"
+    )
+
+    def search_model(_):
+        if choosing_model() and ui.model_picker:
+            ui.model_picker.search(ui.editor.text)
+
+    ui.editor.buffer.on_text_changed += search_model
+
+    @keys.add("up", filter=choosing_model)
+    def model_up(event):
+        ui.model_picker.move(-1)
+
+    @keys.add("down", filter=choosing_model)
+    def model_down(event):
+        ui.model_picker.move(1)
+
+    @keys.add("enter")
+    def submit(event):
+        ui.submit()
+
+    @keys.add("escape", "enter")
+    def newline(event):
+        ui.editor.buffer.insert_text("\n")
+
+    @keys.add("s-tab")
+    def thinking(event):
+        if ui.model_wizard:
+            return
+        if ui.busy:
+            ui.phase = "任务运行中；结束后可切换思考设置"
+        elif ui.thinking:
+            try:
+                ui.thinking.cycle()
+                ui.refresh_footer()
+            except (ValueError, OSError, LLMError) as error:
+                ui.append(f"\n设置未变更：{error}\n")
+
+    @keys.add("f2")
+    def rename_session(event):
+        if ui.conversation and not ui.busy and not ui.model_wizard and not ui.renaming:
+            ui.rename_draft = ui.editor.text
+            ui.renaming = True
+            ui.editor.text = ui.conversation.store.catalog.get(ui.conversation.store.id)["name"]
+            ui.editor.buffer.cursor_position = len(ui.editor.text)
+            ui.phase = f"会话改名 · {shortcut_label('Enter')} 保存 · Ctrl+C 取消"
+
+    @keys.add("c-t")
+    def toggle_thinking(event):
+        if ui.model_wizard:
+            return
+        try:
+            ui.display.toggle()
+            ui.flush_text()
+            ui.render_transcript()
+            ui.refresh_footer()
+        except (ValueError, OSError, LLMError) as error:
+            ui.append(f"\n设置未变更：{error}\n")
+
+    @keys.add("c-c")
+    def interrupt(event):
+        if ui.renaming:
+            ui.renaming = False
+            ui.editor.text = ui.rename_draft
+            ui.phase = "改名已取消"
+            return
+        if ui.model_wizard:
+            ui.cancel_model()
+            return
+        if ui.busy:
+            ui.cancelled.set()
+            ui.phase = "正在停止；等待当前网络读取或工具安全结束…"
+        else:
+            ui.editor.text = ""
+            ui.phase = "输入已清空；Ctrl+D 退出"
+
+    @keys.add("c-d")
+    def exit_app(event):
+        if ui.renaming:
+            interrupt(event)
+            return
+        if ui.model_wizard:
+            ui.cancel_model()
+            return
+        if ui.busy:
+            ui.cancelled.set()
+            ui.phase = "正在停止；结束后再次 Ctrl+D 退出"
+        elif not ui.editor.text:
+            ui.app.exit()
+
+    @keys.add("pageup")
+    def up(event):
+        if choosing_model():
+            ui.model_picker.move(-ui.model_picker.page_size)
+        else:
+            ui.scroll_history(-ui.history_page_size())
+
+    @keys.add("pagedown")
+    def down(event):
+        if choosing_model():
+            ui.model_picker.move(ui.model_picker.page_size)
+        else:
+            ui.scroll_history(ui.history_page_size())
+
+    @keys.add("c-end")
+    @keys.add("escape", "g")
+    def end(event):
+        ui.follow_latest()
+
+    return keys

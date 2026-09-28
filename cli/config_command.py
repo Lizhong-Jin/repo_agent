@@ -11,12 +11,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
+from configuration.environment import CONFIG_KEYS, load_configuration, read_config, save_user_config
+from configuration.storage import backup_config, backups, reset_config, restore_config
+from host_support.paths import user_config_path
 from llm import ConfigurationError, LLMClient, LLMConfig
 from llm.providers import PROVIDERS, get_provider
 
-from .config import CONFIG_KEYS, load_configuration, read_config, save_user_config
-from .config_storage import backup_config, backups, reset_config, restore_config
-from .installation import user_config_path
 from .models import ModelWizard, clean_value, persist_selection, prompt_model
 from .settings import (
     RUNTIME_OPTIONS,
@@ -350,7 +350,7 @@ def main(argv=None):
             if args.action == "restore":
                 backup = restore_config(path, args.name, validate_file)
             else:
-                from .paths import resource_path
+                from installer.paths import resource_path
 
                 template = resource_path("default.env")
                 validate_file(template)

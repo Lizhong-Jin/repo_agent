@@ -7,10 +7,12 @@ from prompt_toolkit.output import DummyOutput
 
 from agent import AgentRuntime
 from agent.Tracing import ModelCallRecord, RunStats
+from agent.transcript import Transcript
 from cli.formatting import format_tokens
-from cli.live import LiveOutput, SessionStatus
-from cli.transcript import Transcript
-from cli.tui import ConversationLexer, ConversationUI
+from cli.output import LiveOutput
+from cli.session_status import SessionStatus
+from cli.terminal.application import ConversationUI
+from cli.terminal.widgets import ConversationLexer
 from llm import Usage
 
 

@@ -7,7 +7,7 @@ from typing import Any
 
 from agent.compaction import CompactionSettings
 from llm import ConfigurationError
-from llm.thinking import thinking_options
+from llm.thinking import native_thinking, thinking_options
 
 from .thinking_display import display_mode
 
@@ -36,23 +36,6 @@ def stream_value(value: str) -> bool:
     if value.lower() not in {"true", "false", "1", "0"}:
         raise argparse.ArgumentTypeError("LLM_STREAM must be true, false, 1 or 0")
     return value.lower() in {"true", "1"}
-
-
-THINKING_FIELDS = {
-    "thinking",
-    "reasoning",
-    "reasoning_effort",
-    "enable_thinking",
-    "thinking_budget",
-    "output_config",
-}
-
-
-def native_thinking(extra):
-    return bool(THINKING_FIELDS.intersection(extra)) or (
-        isinstance(extra.get("generationConfig"), dict)
-        and "thinkingConfig" in extra["generationConfig"]
-    )
 
 
 class ThinkingArgument(argparse.Action):

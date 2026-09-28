@@ -54,8 +54,9 @@ try {
     $manifestFile = Join-Path $agentRoot 'release.json'
     Assert-NoReparse $manifestFile
     $manifest = Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($manifest.schema -ne 3 -or $manifest.name -ne 'repo-agent' -or
+    if ($manifest.schema -notin @(3, 4) -or $manifest.name -ne 'repo-agent' -or
         $manifest.target -ne 'windows-x86_64') { throw 'Invalid Windows release manifest.' }
+    $installerPackage = if ($manifest.schema -eq 4) { 'installer' } else { 'cli' }
     $maintenance = ($agentArguments -contains '--check') -or
                    ($agentArguments -contains '--recover') -or
                    ($agentArguments -contains '--uninstall')
@@ -75,14 +76,16 @@ try {
         }
         $seen[$name] = $true
         if ($name.StartsWith('runtime/python/')) { $runtimeFiles += $property }
-        $bootstrap = $name.StartsWith('runtime/') -or $name.StartsWith('cli/') -or
+        $bootstrap = $name.StartsWith('runtime/') -or $name.StartsWith('cli/') -or $name.StartsWith('installer/') -or
+                     $name.StartsWith('configuration/') -or
                      $name.StartsWith('host_support/') -or $name -eq 'install_release.ps1'
         if (-not $maintenance -or $bootstrap) {
             Assert-FileHash (Join-Path $agentRoot $name) ([string]$property.Value)
         }
     }
     foreach ($required in @('install_release.ps1', 'runtime/python/python.exe', 'runtime/target',
-                            'runtime/python.lock', 'cli/release_install.py', 'cli/uninstall.py')) {
+                            'runtime/python.lock', ($installerPackage + '/release_install.py'),
+                            ($installerPackage + '/uninstall.py'))) {
         if (-not $seen.ContainsKey($required)) { throw "Incomplete release: $required" }
     }
     if ((Get-Content -LiteralPath (Join-Path $agentRoot 'runtime/target') -Raw).Trim() -ne 'windows-x86_64') {
@@ -154,7 +157,7 @@ try {
     & $agentPython -X utf8 -I -B -c $probe
     if ($LASTEXITCODE -ne 0) { throw 'Python runtime check failed.' }
     Write-Output "Using Python: $agentPython"
-    & $agentPython -X utf8 -E -s -B (Join-Path $agentRoot 'cli/release_install.py') @agentArguments
+    & $agentPython -X utf8 -E -s -B (Join-Path $agentRoot ($installerPackage + '/release_install.py')) @agentArguments
     exit $LASTEXITCODE
 } catch {
     [Console]::Error.WriteLine('Release operation failed: ' + $_.Exception.Message)

@@ -10,10 +10,13 @@
 | --- | --- | --- |
 | 宿主平台服务 | [host_support/](host_support/)、[平台适配边界](docs/platform-adaptation.md) | 标准库实现的平台标识、目录和解释器布局、安全文件操作、锁、原子写入、进程生命周期、工具链清单与诊断 |
 | Windows 适配 | [host_support/windows_files.py](host_support/windows_files.py)、[host_support/windows_install.py](host_support/windows_install.py)、[install_release.ps1](install_release.ps1) | 句柄相对文件操作、文件锁、用户命令归属与 PATH、ZIP 运行时引导；不提供原生进程隔离 |
-| 命令入口 | [cli/main.py](cli/main.py)、[cli/settings.py](cli/settings.py) | 分发命令、加载参数、选择项目和执行环境 |
-| 交互界面 | [cli/tui.py](cli/tui.py)、[cli/interactive.py](cli/interactive.py)、[cli/live.py](cli/live.py) | 全屏/普通终端、流式显示、用量和上下文状态 |
-| 会话管理 | [agent/session.py](agent/session.py)、[cli/session.py](cli/session.py)、[cli/sessions_command.py](cli/sessions_command.py) | 项目隔离、快照、名称索引、恢复、会话查询和日志查看 |
-| 对话显示记录 | [cli/transcript.py](cli/transcript.py) | 保存可见文本与思考区块，独立于模型原生历史 |
+| 命令入口 | [cli/main.py](cli/main.py)、[cli/arguments.py](cli/arguments.py)、[cli/commands.py](cli/commands.py)、[cli/startup.py](cli/startup.py) | 装配入口、参数校验、独立子命令和配置启动流程 |
+| 应用装配 | [cli/application.py](cli/application.py)、[cli/execution_environment.py](cli/execution_environment.py)、[cli/runtime_setup.py](cli/runtime_setup.py) | 后端与 Runtime 装配、交互/单任务执行、保存和资源生命周期 |
+| 交互界面 | [cli/terminal/](cli/terminal/)、[cli/interactive.py](cli/interactive.py)、[cli/output.py](cli/output.py) | 全屏/普通终端、流式展示 |
+| 会话控制 | [agent/session_state.py](agent/session_state.py)、[agent/thinking.py](agent/thinking.py) | 用量与上下文统计、思考设置校验和提交；不依赖 CLI 或终端组件 |
+| 交互执行适配 | [cli/runtime_events.py](cli/runtime_events.py)、[cli/task_execution.py](cli/task_execution.py) | Runtime 事件快照、回调生命周期、后台任务与回写衔接 |
+| 会话管理 | [agent/session.py](agent/session.py)、[agent/conversation.py](agent/conversation.py)、[cli/sessions_command.py](cli/sessions_command.py) | 项目隔离、快照、名称索引、恢复、会话查询和日志查看 |
+| 对话显示记录 | [agent/transcript.py](agent/transcript.py) | 保存可见文本与思考区块，独立于模型原生历史，不依赖终端组件 |
 | Agent 循环 | [agent/runtime.py](agent/runtime.py) | 构造请求、顺序执行工具、截断恢复、返回有效历史 |
 | Skills | [agent/skills/registry.py](agent/skills/registry.py)、[agent/skills/tool.py](agent/skills/tool.py) | 发现并校验技能，显式或按需加载正文 |
 | 模型层 | [llm/client.py](llm/client.py)、[llm/schemas.py](llm/schemas.py)、[llm/adapters/](llm/adapters/) | 同步/异步调用、流式解析、协议转换、原生状态和错误 |
@@ -29,10 +32,13 @@
 | Docker 沙箱 | [sandbox/session.py](sandbox/session.py)、[sandbox/docker.py](sandbox/docker.py)、[sandbox/writeback.py](sandbox/writeback.py) | 工作副本、容器、回写检查、备份与恢复 |
 | 追踪 | [agent/Tracing.py](agent/Tracing.py) | 模型/工具事件、计时、任务与运行片段统计 |
 | 构建与分发 | [build_manifest.py](build_manifest.py)、[build_support.py](build_support.py)、[scripts/build_release.py](scripts/build_release.py) | 统一文件清单、生成构建配置、校验 wheel / sdist / Docker 上下文与发行包 |
-| 配置与安装 | [cli/config.py](cli/config.py)、[cli/config_command.py](cli/config_command.py)、[cli/setup.py](cli/setup.py)、[cli/uninstall.py](cli/uninstall.py) | 配置加载及备份、安装、诊断、归属清理 |
+| 配置服务 | [configuration/environment.py](configuration/environment.py)、[configuration/storage.py](configuration/storage.py)、[cli/config_command.py](cli/config_command.py) | 配置加载、保存与备份由 configuration 管理；参数交互与校验命令由 CLI 装配 |
+| 安装与分发服务 | [installer/](installer/)、[cli/doctor.py](cli/doctor.py) | 安装、卸载、依赖、事务、资源和发行清单；诊断命令由 CLI 汇总 |
 | 受管运行时与离线材料 | [runtime/python.lock](runtime/python.lock)、[scripts/bootstrap-python.sh](scripts/bootstrap-python.sh)、[scripts/prepare_python_bundle.py](scripts/prepare_python_bundle.py) | 固定平台 Python 归档与校验值、引导运行时、准备平台依赖；源码安装另包含开发依赖 |
 
 ## 一次任务的流程
+
+目录归属、依赖约束和安装兼容入口见[代码组织](docs/code-organization.md)。`cli` 保留命令装配与终端交互，`agent` 和 `sandbox` 不再导入 CLI；安装引导只使用 `installer`、`configuration.storage` 和宿主标准库服务。
 
 ```mermaid
 flowchart TD

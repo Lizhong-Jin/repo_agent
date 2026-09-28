@@ -15,6 +15,7 @@ if not __package__:
     from _bootstrap import enable_host_support
 
     enable_host_support()
+    __package__ = "installer"
 
 from host_support.archives import archive_path
 

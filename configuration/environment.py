@@ -5,10 +5,10 @@ import re
 from contextlib import contextmanager
 from pathlib import Path
 
+from host_support.paths import user_config_path as user_config_path
 from llm.providers import PROVIDERS
 
-from .config_storage import config_lock, read_bytes, replace_config
-from .installation import user_config_path as user_config_path
+from .storage import config_lock, read_bytes, replace_config
 
 CONFIG_KEYS = frozenset(
     "LLM_PROVIDER LLM_MODEL LLM_BASE_URL LLM_TEMPERATURE LLM_TOOL_CHOICE LLM_THINKING "

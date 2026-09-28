@@ -9,8 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from cli import install_network
-from cli.installation import (
+from installer import install_network
+from installer.installation import (
     COMMANDS,
     MANIFEST,
     begin_install,
@@ -18,8 +18,8 @@ from cli.installation import (
     prepare_venv,
     save_record,
 )
-from cli.setup import configure_path, configure_user, install_command
-from cli.uninstall import uninstall
+from installer.setup import configure_path, configure_user, install_command
+from installer.uninstall import uninstall
 
 SOURCE = Path(__file__).resolve().parents[1]
 
@@ -224,7 +224,7 @@ def test_image_cleanup_checks_ownership_and_never_forces(installations, monkeypa
             value = ""
         return SimpleNamespace(returncode=0, stdout=value)
 
-    monkeypatch.setattr("cli.uninstall.subprocess.run", run)
+    monkeypatch.setattr("installer.uninstall.subprocess.run", run)
     result = uninstall(root, remove_image=True, dry_run=mode == "dry_run")
     assert result is (mode != "offline")
     deleted = [command for command in calls if command[1:3] == ["image", "rm"]]
@@ -240,28 +240,13 @@ def test_invalid_install_is_rejected_before_creating_environment(installations, 
     if takeover:
         old, _, bins = installations(custom_bin=True)
     root = tmp_path / "failed-install"
-    (root / "cli").mkdir(parents=True)
-    for name in (
-        "install.sh",
-        "scripts/installer-entry.sh",
-        "uninstall.sh",
-        "cli/_bootstrap.py",
-        "cli/installation.py",
-        "cli/uninstall.py",
-        "cli/setup.py",
-        "cli/maintenance.py",
-        "cli/install_transaction.py",
-        "cli/config_storage.py",
-        "cli/dependencies.py",
-        "cli/paths.py",
-        "cli/install_network.py",
-        "cli/install_packages.py",
-        "cli/toolchains.py",
-    ):
+    root.mkdir(parents=True)
+    for package in ("cli", "installer", "configuration", "host_support"):
+        shutil.copytree(SOURCE / package, root / package,
+                        ignore=shutil.ignore_patterns("__pycache__"))
+    for name in ("install.sh", "scripts/installer-entry.sh", "uninstall.sh"):
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(SOURCE / name, root / name)
-    shutil.copytree(SOURCE / "host_support", root / "host_support",
-                    ignore=shutil.ignore_patterns("__pycache__"))
     # Missing project metadata must fail preflight, before creating an environment.
     env = {
         **os.environ,
@@ -286,7 +271,7 @@ def test_invalid_install_is_rejected_before_creating_environment(installations, 
         for name in COMMANDS:
             assert (bins / name).resolve() == old / ".venv/bin" / name
     result = subprocess.run(
-        [sys.executable, "-S", str(root / "cli/uninstall.py"), "--agent-home", str(root)],
+        [sys.executable, "-S", str(root / "installer/uninstall.py"), "--agent-home", str(root)],
         env=env,
         capture_output=True,
         text=True,
@@ -332,7 +317,7 @@ def test_reinstall_preserves_identity_and_can_prepare_partial_venv_again(install
 
 
 def test_malformed_journal_fails_before_deleting_any_command(installations):
-    from cli.installation import write_json
+    from installer.installation import write_json
 
     root, data, bins = installations()
     data["commands"].append({"path": "/unexpected", "target": "/unexpected"})
@@ -346,12 +331,12 @@ def test_malformed_journal_fails_before_deleting_any_command(installations):
 def test_successful_rebuild_records_image_and_preserves_installation_fields(
     installations, monkeypatch
 ):
-    from cli.installation import record_image
+    from installer.installation import record_image
 
     root, data, _ = installations()
     replies = iter(["sha256:new-image", "my-daemon"])
     monkeypatch.setattr(
-        "cli.installation.subprocess.run",
+        "installer.installation.subprocess.run",
         lambda *a, **kw: SimpleNamespace(stdout=next(replies), returncode=0),
     )
     record_image(root, "custom:test")
@@ -366,7 +351,7 @@ def test_successful_rebuild_records_image_and_preserves_installation_fields(
 def test_confirmed_takeover_and_uninstall_do_not_restore_old_commands(
     installations, tmp_path, monkeypatch, uninstall_old_first
 ):
-    from cli import setup
+    from installer import setup
 
     old, _, bins = installations()
     new, _, _ = installations("new install")
@@ -406,26 +391,13 @@ def test_confirmed_takeover_and_uninstall_do_not_restore_old_commands(
 def test_shell_install_cancellation_precedes_all_writes(installations, tmp_path, answer):
     old, _, bins = installations()
     new = tmp_path / "not installed"
-    (new / "cli").mkdir(parents=True)
-    for name in (
-        "install.sh",
-        "scripts/installer-entry.sh",
-        "cli/setup.py",
-        "cli/_bootstrap.py",
-        "cli/installation.py",
-        "cli/maintenance.py",
-        "cli/install_transaction.py",
-        "cli/config_storage.py",
-        "cli/dependencies.py",
-        "cli/paths.py",
-        "cli/install_network.py",
-        "cli/install_packages.py",
-        "cli/toolchains.py",
-    ):
+    new.mkdir(parents=True)
+    for package in ("cli", "installer", "configuration", "host_support"):
+        shutil.copytree(SOURCE / package, new / package,
+                        ignore=shutil.ignore_patterns("__pycache__"))
+    for name in ("install.sh", "scripts/installer-entry.sh", "uninstall.sh"):
         (new / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(SOURCE / name, new / name)
-    shutil.copytree(SOURCE / "host_support", new / "host_support",
-                    ignore=shutil.ignore_patterns("__pycache__"))
     before = snapshot(tmp_path)
     result = subprocess.run(
         [str(new / "install.sh"), "--mode", "local", "--skip-sandbox"],
@@ -445,7 +417,7 @@ def test_shell_install_cancellation_precedes_all_writes(installations, tmp_path,
 
 
 def test_bootstrap_confirms_once_before_creating_environment(installations, tmp_path, monkeypatch):
-    from cli import setup
+    from installer import setup
 
     old, _, bins = installations()
     new = tmp_path / "fresh"
@@ -504,7 +476,7 @@ def test_bootstrap_confirms_once_before_creating_environment(installations, tmp_
 
 @pytest.mark.parametrize("failure", ["build", "changed_link", "missing_entry"])
 def test_takeover_failure_preserves_old_commands(installations, monkeypatch, failure):
-    from cli import setup
+    from installer import setup
 
     old, _, bins = installations()
     new, _, _ = installations("new")
@@ -536,7 +508,7 @@ def test_takeover_failure_preserves_old_commands(installations, monkeypatch, fai
 
 @pytest.mark.parametrize("kind", ["file", "directory", "unrelated_link"])
 def test_unrelated_command_blocks_takeover_before_prompt(installations, monkeypatch, kind):
-    from cli.setup import confirm_commands
+    from installer.setup import confirm_commands
 
     _, _, bins = installations()
     new, _, _ = installations("new")
@@ -556,7 +528,7 @@ def test_unrelated_command_blocks_takeover_before_prompt(installations, monkeypa
 
 
 def test_dangling_relative_install_links_can_be_replaced(installations, monkeypatch):
-    from cli import setup
+    from installer import setup
 
     _, _, bins = installations()
     new, _, _ = installations("new")
@@ -594,7 +566,7 @@ def test_release_entry_uninstalls_with_broken_venv_and_stdlib_python(
     import shlex
 
     import build_manifest
-    from cli.release_manifest import digest
+    from installer.release_manifest import digest
 
     (tmp_path / "data/versions").mkdir(parents=True)
     root, data, bins = installations("data/versions/0.1.0")
@@ -605,7 +577,8 @@ def test_release_entry_uninstalls_with_broken_venv_and_stdlib_python(
     (root / "wheels").mkdir()
     (root / wheel).write_bytes(b"placeholder")
     manifest = {
-        "schema": 2,
+        "schema": 4,
+        "target": "macos-arm64",
         "name": "repo-agent",
         "version": "0.1.0",
         "wheel": wheel,

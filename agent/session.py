@@ -12,10 +12,9 @@ from uuid import uuid4
 
 from host_support.filesystem import open_file, set_file_mode
 from host_support.locking import lock_descriptor
+from host_support.paths import session_state_root
 from host_support.storage import atomic_write
-
 from llm import LLMError, LLMRequest, Message
-from tools._internal.file_policy import session_state_root
 
 SESSION_ID = re.compile(r"[0-9a-f]{32}")
 MAX_BYTES = 64 * 1024 * 1024
@@ -435,7 +434,7 @@ class SessionCatalog:
             text = ""
             if snapshot.exists():
                 data = _read(snapshot)
-                from cli.transcript import Transcript
+                from agent.transcript import Transcript
                 transcript = Transcript.from_records(data["transcript"])
                 text = "".join(b.text() for b in transcript.blocks if b.kind != "thinking")
                 if text:
@@ -447,7 +446,7 @@ class SessionCatalog:
             return path
 
     def append_chat(self, sid, text):
-        from cli.transcript import display_text
+        from agent.transcript import display_text
         path = self.ensure_chat(sid)
         with open_log(path, write=True) as stream:
             stream.write(display_text(text))

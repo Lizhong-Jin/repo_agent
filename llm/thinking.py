@@ -10,6 +10,22 @@ from .errors import ConfigurationError
 from .providers import get_provider
 from .thinking_profiles import EFFORTS, thinking_profile
 
+THINKING_FIELDS = {
+    "thinking",
+    "reasoning",
+    "reasoning_effort",
+    "enable_thinking",
+    "thinking_budget",
+    "output_config",
+}
+
+
+def native_thinking(extra):
+    return bool(THINKING_FIELDS.intersection(extra)) or (
+        isinstance(extra.get("generationConfig"), dict)
+        and "thinkingConfig" in extra["generationConfig"]
+    )
+
 
 def normalize_settings(profile, *, mode="auto", effort=None, budget=None, history="auto"):
     if history not in ("auto", "on", "off"):

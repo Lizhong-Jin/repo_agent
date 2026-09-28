@@ -10,6 +10,7 @@ if not __package__:
     from _bootstrap import enable_host_support
 
     enable_host_support()
+    __package__ = "installer"
 
 from host_support.paths import app_directory
 from host_support.processes import kill_process_group, start_process

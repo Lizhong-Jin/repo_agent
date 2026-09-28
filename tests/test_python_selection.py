@@ -16,15 +16,16 @@ SOURCE = Path(__file__).resolve().parents[1]
 @pytest.fixture
 def checkout(tmp_path):
     root = tmp_path / "source copy"
-    (root / "cli").mkdir(parents=True)
+    root.mkdir(parents=True)
     shutil.copy2(SOURCE / "install.sh", root / "install.sh")
     (root / "scripts").mkdir()
     shutil.copy2(SOURCE / "scripts/installer-entry.sh", root / "scripts/installer-entry.sh")
-    shutil.copy2(SOURCE / "cli/maintenance.py", root / "cli/maintenance.py")
-    shutil.copy2(SOURCE / "cli/_bootstrap.py", root / "cli/_bootstrap.py")
+    (root / "installer").mkdir()
+    for name in ("__init__.py", "maintenance.py", "_bootstrap.py"):
+        shutil.copy2(SOURCE / "installer" / name, root / "installer" / name)
     shutil.copytree(SOURCE / "host_support", root / "host_support",
                     ignore=shutil.ignore_patterns("__pycache__"))
-    (root / "cli/setup.py").write_text(
+    (root / "installer/setup.py").write_text(
         "import os,sys,json; print('SETUP:' + json.dumps(sys.argv[1:])); open(os.environ['SELECTION_RESULT'], 'w').write(os.environ.get('SELECTED_PYTHON', ''))"
     )
     return root

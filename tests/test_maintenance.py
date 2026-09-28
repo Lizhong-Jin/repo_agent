@@ -9,11 +9,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from cli import config_command, doctor, install_network, setup
-from cli.config import CONFIG_KEYS, read_config, save_user_config
-from cli.config_storage import backup_config, backups, config_lock
-from cli.install_transaction import TRANSACTION, InstallTransaction, recover_install
-from cli.installation import (
+from cli import config_command, doctor
+from configuration.environment import CONFIG_KEYS, read_config, save_user_config
+from configuration.storage import backup_config, backups, config_lock
+from host_support.locking import file_lock
+from installer import install_network, setup
+from installer.install_transaction import TRANSACTION, InstallTransaction, recover_install
+from installer.installation import (
     COMMANDS,
     MANIFEST,
     begin_install,
@@ -22,8 +24,8 @@ from cli.installation import (
     save_record,
     user_config_path,
 )
-from cli.maintenance import environment_report, file_lock
-from cli.uninstall import uninstall
+from installer.maintenance import environment_report
+from installer.uninstall import uninstall
 
 SOURCE = Path(__file__).resolve().parents[1]
 
@@ -217,7 +219,7 @@ def test_failed_takeover_restores_both_old_links(tmp_path, monkeypatch):
 def test_durable_recovery_after_process_exit(tmp_path):
     root, bins, _ = installed(tmp_path)
     original = (root / MANIFEST).read_bytes()
-    script = "from pathlib import Path; import os; from cli.install_transaction import InstallTransaction; from cli.setup import command_state; from cli.installation import COMMANDS,begin_install; r=Path(os.environ['TEST_ROOT']); b=Path(os.environ['TEST_BIN']); t=InstallTransaction(r,b,{n:command_state(b/n) for n in COMMANDS}); begin_install(r); t.fresh_venv(); (r/'.venv/partial').write_text('partial'); os._exit(9)"
+    script = "from pathlib import Path; import os; from installer.install_transaction import InstallTransaction; from installer.setup import command_state; from installer.installation import COMMANDS,begin_install; r=Path(os.environ['TEST_ROOT']); b=Path(os.environ['TEST_BIN']); t=InstallTransaction(r,b,{n:command_state(b/n) for n in COMMANDS}); begin_install(r); t.fresh_venv(); (r/'.venv/partial').write_text('partial'); os._exit(9)"
     result = subprocess.run(
         [sys.executable, "-c", script],
         env={
@@ -292,9 +294,9 @@ def test_actual_offline_pip_failure_rolls_back(tmp_path, existing):
     else:
         root, bins = tmp_path / "fresh", tmp_path / "bin"
         root.mkdir()
-    shutil.copytree(SOURCE / "cli", root / "cli", ignore=shutil.ignore_patterns("__pycache__"))
-    shutil.copytree(SOURCE / "host_support", root / "host_support",
-                    ignore=shutil.ignore_patterns("__pycache__"))
+    for package in ("cli", "installer", "configuration", "host_support"):
+        shutil.copytree(SOURCE / package, root / package,
+                        ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copy2(SOURCE / "install.sh", root / "install.sh")
     (root / "scripts").mkdir(exist_ok=True)
     shutil.copy2(SOURCE / "scripts/installer-entry.sh", root / "scripts/installer-entry.sh")
@@ -423,7 +425,7 @@ def test_doctor_dispatch_bypasses_broken_configuration(monkeypatch):
 
 @pytest.mark.parametrize("had_old", [False, True])
 def test_image_promotion_failure_restores_previous_tag(tmp_path, monkeypatch, had_old):
-    from cli.installation import DEFAULT_IMAGE
+    from installer.installation import DEFAULT_IMAGE
 
     root, bins, _ = installed(tmp_path)
     images = {DEFAULT_IMAGE: "sha256:aaa"} if had_old else {}
@@ -442,7 +444,7 @@ def test_image_promotion_failure_restores_previous_tag(tmp_path, monkeypatch, ha
             pytest.fail(f"Unexpected command: {command}")
         return SimpleNamespace(returncode=0, stdout="")
 
-    monkeypatch.setattr("cli.install_transaction.subprocess.run", docker_run)
+    monkeypatch.setattr("installer.install_transaction.subprocess.run", docker_run)
     transaction = InstallTransaction(
         root, bins, {name: os.readlink(bins / name) for name in COMMANDS}
     )
@@ -466,12 +468,12 @@ def test_recovery_retry_after_docker_failure_keeps_restored_venv(tmp_path, monke
     def fail(*args, **kwargs):
         raise OSError("Docker unavailable")
 
-    monkeypatch.setattr("cli.install_transaction.subprocess.run", fail)
+    monkeypatch.setattr("installer.install_transaction.subprocess.run", fail)
     with pytest.raises(ValueError, match="恢复未完成"):
         transaction.rollback()
     assert (root / ".venv/old-data").exists()
     monkeypatch.setattr(
-        "cli.install_transaction.subprocess.run",
+        "installer.install_transaction.subprocess.run",
         lambda command, **kw: SimpleNamespace(
             returncode=0, stdout="test-daemon" if command[1] == "info" else "sha256:aaa"
         ),
@@ -483,9 +485,9 @@ def test_recovery_retry_after_docker_failure_keeps_restored_venv(tmp_path, monke
 
 def test_doctor_and_install_check_are_read_only(tmp_path):
     copy = tmp_path / "source"
-    shutil.copytree(SOURCE / "cli", copy / "cli", ignore=shutil.ignore_patterns("__pycache__"))
-    shutil.copytree(SOURCE / "host_support", copy / "host_support",
-                    ignore=shutil.ignore_patterns("__pycache__"))
+    for package in ("cli", "installer", "configuration", "host_support"):
+        shutil.copytree(SOURCE / package, copy / package,
+                        ignore=shutil.ignore_patterns("__pycache__"))
     for name in ("install.sh", "scripts/installer-entry.sh", "pyproject.toml", ".env.example"):
         (copy / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(SOURCE / name, copy / name)

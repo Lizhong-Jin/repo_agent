@@ -50,15 +50,15 @@ def test_cli_defaults_to_native_despite_old_writeback_config(tmp_path, monkeypat
         return SimpleNamespace(healthy=True, tools=lambda: [], close=lambda: closed.append(True),
                                execution_context=lambda: {"gpu_access": {"enabled": False}})
 
-    monkeypatch.setattr(cli, "NativeBackend", native_backend)
-    monkeypatch.setattr(cli, "detect_environment", lambda **kw: pytest.fail("Docker selected"))
+    monkeypatch.setattr("cli.execution_environment.NativeBackend", native_backend)
+    monkeypatch.setattr("cli.execution_environment.detect_environment", lambda **kw: pytest.fail("Docker selected"))
     observed = []
 
     def interactive(runtime, **kwargs):
         observed.append(kwargs["conversation"].mode)
         assert kwargs.get("sandbox") is None
 
-    monkeypatch.setattr(cli, "run_interactive", interactive)
+    monkeypatch.setattr("cli.application.run_interactive", interactive)
     cli.main()
     assert observed == [mode]
     assert native_calls == ([tmp_path] if mode == "native" else [])
@@ -377,7 +377,7 @@ def test_native_cli_records_mode_and_closes_backend(tmp_path, monkeypatch):
         result = backend.execute(tmp_path, "run_python", {"code": "print('native cli')"})
         assert result.success and result.data["exit_code"] == 0, result
 
-    monkeypatch.setattr(cli, "run_interactive", interactive)
+    monkeypatch.setattr("cli.application.run_interactive", interactive)
     cli.main()
     assert len(backends) == 1 and not backends[0].directory.exists()
     store = SessionStore(tmp_path).open()

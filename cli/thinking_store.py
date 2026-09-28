@@ -5,13 +5,12 @@ import os
 import tempfile
 from pathlib import Path
 
+from configuration.storage import config_lock, read_bytes
+from host_support.paths import user_config_path
 from llm import ConfigurationError
 from llm.providers import get_provider
+from llm.thinking import native_thinking
 from llm.thinking_profiles import endpoint, parse_profile
-
-from .config_storage import config_lock, read_bytes
-from .installation import user_config_path
-from .settings import native_thinking
 
 
 def preference_path():

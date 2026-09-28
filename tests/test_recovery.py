@@ -15,7 +15,8 @@ from test_streaming import ANTHROPIC, chat, sse
 from agent import AgentRuntime
 from agent.Tracing import Tracer
 from cli.interactive import display_result, run_interactive
-from cli.live import LiveOutput, SessionStatus
+from cli.output import LiveOutput
+from cli.session_status import SessionStatus
 from llm import (
     AsyncLLMClient,
     InvalidResponseError,
@@ -334,9 +335,9 @@ def test_invalid_recovery_response_cannot_poison_saved_history(finish):
 def test_recovery_config_roundtrip_and_cli_override(monkeypatch, tmp_path):
     import argparse
 
-    from cli.config import read_config, save_user_config
     from cli.config_command import validate_value, validate_values
     from cli.settings import add_runtime_arguments
+    from configuration.environment import read_config, save_user_config
 
     assert validate_value("AGENT_MAX_RECOVERIES", "0") == "0"
     with pytest.raises(ValueError):
@@ -396,7 +397,7 @@ def test_full_tui_preserves_partial_text_and_history_after_recovery_limit():
     from prompt_toolkit.output import DummyOutput
     from test_tui import until
 
-    from cli.tui import ConversationUI
+    from cli.terminal.application import ConversationUI
 
     async def run():
         model = ScriptedLLM([reply("partial", finish="length"), reply("continued")])

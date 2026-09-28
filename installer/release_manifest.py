@@ -9,8 +9,12 @@ if not __package__:
     from _bootstrap import enable_host_support
 
     enable_host_support()
+    __package__ = "installer"
 
 from host_support.archives import archive_path
+from host_support.platforms import RELEASE_TARGETS
+
+RELEASE_SCHEMA = 4
 
 
 def digest(path):
@@ -26,7 +30,7 @@ def read_release(root, *, verify=True):
     data = json.loads(manifest.read_text(encoding="utf-8"))
     if (
         not isinstance(data, dict)
-        or data.get("schema") not in (1, 2, 3)
+        or data.get("schema") not in (1, 2, 3, RELEASE_SCHEMA)
         or data.get("name") != "repo-agent"
         or not isinstance(data.get("version"), str)
         or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9.+-]*", data.get("version", ""))
@@ -34,10 +38,17 @@ def read_release(root, *, verify=True):
     ):
         raise ValueError("无法识别发行清单")
     seen = set()
-    if data["schema"] == 3:
-        if data.get("target") != "windows-x86_64":
+    target = data.get("target")
+    if data["schema"] == RELEASE_SCHEMA and (
+        not isinstance(target, str) or target not in RELEASE_TARGETS
+    ):
+        raise ValueError("无法识别发行平台")
+    windows = data["schema"] == 3 or target == "windows-x86_64"
+    if windows:
+        if target != "windows-x86_64":
             raise ValueError("无法识别 Windows 发行平台")
         from host_support.windows_files import validate_snapshot_names
+
         validate_snapshot_names(data["files"])
     for name, expected in data["files"].items():
         relative = archive_path(name)
@@ -65,31 +76,54 @@ def read_release(root, *, verify=True):
         raise ValueError("发行包缺少 wheel")
     required = {
         wheel,
-        "cli/setup.py",
-        "cli/release_install.py",
         ".env.example",
         "pyproject.toml",
         "requirements-core.lock",
         "requirements-lsp.lock",
         "uv.lock",
     }
+    # Schemas 1–3 retain the original cli/ layout. Schema 4 makes the service
+    # package move explicit so a damaged new bundle cannot pass as a legacy one.
+    package = "installer" if data["schema"] == RELEASE_SCHEMA else "cli"
+    required.update({f"{package}/setup.py", f"{package}/release_install.py"})
+    if data["schema"] == RELEASE_SCHEMA:
+        required.update(
+            {
+                "installer/__init__.py",
+                "installer/_bootstrap.py",
+                "installer/release_manifest.py",
+                "configuration/__init__.py",
+                "configuration/storage.py",
+                "host_support/__init__.py",
+            }
+        )
     if data["schema"] == 1:
         required.update({"install.sh", "install-release.sh", "uninstall.sh"})
-    elif data["schema"] == 2:
+    elif not windows:
         required.update(
             {
                 "install-release.sh",
                 "scripts/installer-entry.sh",
                 "scripts/bootstrap-python.sh",
                 "runtime/python.lock",
-                "cli/uninstall.py",
+                f"{package}/uninstall.py",
             }
         )
     else:
-        required.update({"install_release.ps1", "runtime/python/python.exe",
-                         "runtime/python.lock", "runtime/target", "cli/uninstall.py"})
-        if any(name.endswith((".sh", ".ps1")) and name != "install_release.ps1"
-               for name in data["files"] if "/" not in name or name.startswith("scripts/")):
+        required.update(
+            {
+                "install_release.ps1",
+                "runtime/python/python.exe",
+                "runtime/python.lock",
+                "runtime/target",
+                f"{package}/uninstall.py",
+            }
+        )
+        if any(
+            name.endswith((".sh", ".ps1")) and name != "install_release.ps1"
+            for name in data["files"]
+            if "/" not in name or name.startswith("scripts/")
+        ):
             raise ValueError("Windows 发行包仅允许 install_release.ps1 安装入口")
     if (
         not isinstance(wheel, str)

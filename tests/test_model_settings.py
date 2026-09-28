@@ -11,14 +11,19 @@ from prompt_toolkit.output import DummyOutput
 
 from agent import AgentRuntime
 from agent.Tracing import Tracer
-from cli.config import CONFIG_KEYS, configured_environment, read_config, save_user_config
-from cli.installation import user_config_path
-from cli.live import SessionStatus
+from cli.session_status import SessionStatus
 from cli.models import ModelControl, ModelSelection, ModelWizard, prompt_model
-from cli.tui import ConversationUI
+from cli.terminal.application import ConversationUI
+from configuration.environment import (
+    CONFIG_KEYS,
+    configured_environment,
+    read_config,
+    save_user_config,
+)
+from installer.installation import user_config_path
 from llm import LLMClient, LLMConfig
-from llm.providers import PROVIDERS
 from llm.model_catalog import supported_models, supported_providers
+from llm.providers import PROVIDERS
 
 
 @pytest.fixture(autouse=True)
@@ -91,7 +96,7 @@ def test_failed_save_preserves_original_config(tmp_path, monkeypatch, kind):
         def fail(*args):
             raise OSError("failed")
 
-        monkeypatch.setattr("cli.config.os.replace", fail)
+        monkeypatch.setattr("configuration.environment.os.replace", fail)
     with pytest.raises((ValueError, OSError)):
         save_user_config({"LLM_MODEL": "new\nINJECT=1" if kind == "control_character" else "new"})
     assert path.read_bytes() == before
@@ -142,7 +147,7 @@ def test_startup_wizard_saves_and_uses_new_model(tmp_path, monkeypatch, explicit
         args.append("--configure-model")
     monkeypatch.setattr(sys, "argv", args)
     monkeypatch.setattr(
-        cli, "prompt_model", lambda wizard: ModelSelection("qwen", "qwen-plus", "new-key")
+        "cli.startup.prompt_model", lambda wizard: ModelSelection("qwen", "qwen-plus", "new-key")
     )
     seen = []
 
@@ -150,7 +155,7 @@ def test_startup_wizard_saves_and_uses_new_model(tmp_path, monkeypatch, explicit
         seen.append(runtime.llm.config)
         assert kwargs["models"].config.model == "qwen-plus"
 
-    monkeypatch.setattr(cli, "run_interactive", interactive)
+    monkeypatch.setattr("cli.application.run_interactive", interactive)
     cli.main()
     assert seen[0].model == "qwen-plus" and seen[0].api_key == "new-key"
     values = read_config(user_config_path())
@@ -167,8 +172,8 @@ def test_startup_cancel_does_not_create_sandbox_or_save(tmp_path, monkeypatch):
     def cancel(wizard):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli, "prompt_model", cancel)
-    monkeypatch.setattr(cli, "detect_environment", lambda **kw: pytest.fail("must configure first"))
+    monkeypatch.setattr("cli.startup.prompt_model", cancel)
+    monkeypatch.setattr("cli.execution_environment.detect_environment", lambda **kw: pytest.fail("must configure first"))
     with pytest.raises(SystemExit) as error:
         cli.main()
     assert error.value.code == 0
@@ -248,7 +253,7 @@ def test_failed_switch_preserves_client_settings_and_configuration(tmp_path, mon
     def fail(*args):
         raise OSError("disk full")
 
-    monkeypatch.setattr("cli.config.os.replace", fail)
+    monkeypatch.setattr("configuration.environment.os.replace", fail)
     with pytest.raises(OSError):
         control.switch(ModelSelection("qwen", "qwen-plus", "new-key"))
     assert control.runtime.llm is clients[0] and not clients[0]._http.is_closed

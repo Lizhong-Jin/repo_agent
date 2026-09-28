@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from agent import AgentRuntime
 from agent.Tracing import ModelCallRecord, RunStats
-from cli.live import SessionStatus
+from cli.session_status import SessionStatus
 from llm import Message, ToolCall, Usage
 from llm.schemas import ProviderState, ToolDefinition
 from llm.token_estimation import estimate_context_tokens

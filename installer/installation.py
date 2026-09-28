@@ -12,6 +12,7 @@ if not __package__:
     from _bootstrap import enable_host_support
 
     enable_host_support()
+    __package__ = "installer"
 
 from host_support.paths import app_directory, installed_command, public_command, user_config_path
 from host_support.storage import atomic_write

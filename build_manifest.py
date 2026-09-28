@@ -13,14 +13,14 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-PACKAGES = ("agent", "cli", "llm", "sandbox", "tools", "host_support")
+PACKAGES = ("agent", "cli", "llm", "sandbox", "tools", "host_support", "installer", "configuration")
 LOCK_FILES = tuple(f"requirements-{kind}.lock" for kind in ("core", "lsp", "build", "dev"))
-# Files installed in cli/resources, with explicit source -> wheel destination mapping.
+# Files installed in installer/resources, with explicit source -> wheel destination mapping.
 RESOURCE_FILES = (
-    (".env.example", "cli/resources/default.env"),
-    *((name, "cli/resources/" + name) for name in LOCK_FILES),
+    (".env.example", "installer/resources/default.env"),
+    *((name, "installer/resources/" + name) for name in LOCK_FILES),
     *(
-        ("dependencies/node/" + name, "cli/resources/dependencies/node/" + name)
+        ("dependencies/node/" + name, "installer/resources/dependencies/node/" + name)
         for name in ("package.json", "package-lock.json")
     ),
 )
@@ -34,7 +34,7 @@ INSTALL_SCRIPTS = (
     "scripts/bootstrap-python.sh",
     "runtime/python.lock",
 )
-CONTEXT_ARCHIVE = "cli/resources/docker-context.tar.gz"
+CONTEXT_ARCHIVE = "installer/resources/docker-context.tar.gz"
 EXCLUDED_DIRS = (
     ".git",
     ".venv",
@@ -132,7 +132,10 @@ def bootstrap_files(root, target=None):
         *PUBLIC_METADATA,
         ".env.example",
         *LOCK_FILES,
-        *(name for name in package_sources(root) if name.startswith(("cli/", "host_support/"))),
+        *(
+            name for name in package_sources(root)
+            if name.startswith(("cli/", "host_support/", "installer/", "configuration/"))
+        ),
     }
     return [regular_file(root, name) for name in sorted(names)]
 

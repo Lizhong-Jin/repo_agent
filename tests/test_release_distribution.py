@@ -11,13 +11,14 @@ from pathlib import Path
 
 import pytest
 
-from cli import paths, release_install
-from cli.release_manifest import digest, read_release
+from installer import paths, release_install
+from installer.release_manifest import digest, read_release
 
 SOURCE = Path(__file__).resolve().parents[1]
 
 
 def bundle_at(root, version="0.1.0"):
+    """Legacy schema 1 payload: cli/ paths deliberately exercise compatibility."""
     root.mkdir()
     names = [
         "install.sh",
@@ -50,10 +51,10 @@ def bundle_at(root, version="0.1.0"):
 def test_release_location_uses_installed_prefix_and_packaged_resources(tmp_path, monkeypatch):
     root = tmp_path / "versions/0.1.0"
     site = root / ".venv/lib/python3.13/site-packages"
-    assets = site / "cli/resources"
+    assets = site / "installer/resources"
     assets.mkdir(parents=True)
     (assets / "default.env").write_text("LLM_MODEL=packaged")
-    monkeypatch.setattr(paths, "__file__", str(site / "cli/paths.py"))
+    monkeypatch.setattr(paths, "__file__", str(site / "installer/paths.py"))
     monkeypatch.setattr(sys, "prefix", str(root / ".venv"))
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env.example").write_text("LLM_MODEL=workspace")
@@ -93,7 +94,7 @@ def test_archive_rejects_unsafe_members_before_extracting(tmp_path, names):
 
 def test_installed_docker_context_is_complete_and_temporary(tmp_path, monkeypatch):
     site = tmp_path / "site-packages"
-    assets = site / "cli/resources"
+    assets = site / "installer/resources"
     assets.mkdir(parents=True)
     # Wheels may also contain sandbox/Dockerfile; this alone isn't a source checkout.
     (site / "sandbox").mkdir()
@@ -102,7 +103,7 @@ def test_installed_docker_context_is_complete_and_temporary(tmp_path, monkeypatc
         info = tarfile.TarInfo("sandbox/Dockerfile")
         info.size = 4
         bundle.addfile(info, io.BytesIO(b"FROM"))
-    monkeypatch.setattr(paths, "__file__", str(site / "cli/paths.py"))
+    monkeypatch.setattr(paths, "__file__", str(site / "installer/paths.py"))
     with paths.docker_build_context() as context:
         assert context != site
         assert (context / "sandbox/Dockerfile").read_text() == "FROM"
@@ -178,7 +179,7 @@ def test_confirm_once_before_staging_and_preserve_config(tmp_path, monkeypatch):
 
 
 def test_node_lock_matches_declared_versions():
-    from cli.dependencies import TYPESCRIPT, TYPESCRIPT_SERVER
+    from installer.dependencies import TYPESCRIPT, TYPESCRIPT_SERVER
 
     directory = SOURCE / "dependencies/node"
     package = json.loads((directory / "package.json").read_text())
@@ -342,7 +343,7 @@ def test_recovery_from_custom_version_directory_keeps_location(tmp_path, monkeyp
 
 
 def test_release_dependency_failure_preserves_old_command_and_config(tmp_path, monkeypatch):
-    from cli.installation import COMMANDS
+    from installer.installation import COMMANDS
 
     bundle = bundle_at(tmp_path / "download")
     monkeypatch.setattr(release_install, "__file__", str(bundle / "cli/release_install.py"))
@@ -496,3 +497,72 @@ def test_uninstall_flags_require_uninstall(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as error:
         release_install.main(["--purge"])
     assert error.value.code == 2
+
+
+@pytest.mark.parametrize("schema", [1, 2, 3, 4])
+def test_manifest_layout_versions_keep_legacy_releases_readable(tmp_path, schema):
+    root = bundle_at(tmp_path / "release")
+    manifest = read_release(root)
+    files = manifest["files"]
+    if schema != 1:
+        for name in ("install.sh", "uninstall.sh"):
+            files.pop(name)
+            (root / name).unlink()
+    added = []
+    if schema == 2:
+        added = [
+            "scripts/installer-entry.sh",
+            "scripts/bootstrap-python.sh",
+            "runtime/python.lock",
+            "cli/uninstall.py",
+        ]
+    if schema in (3, 4):
+        manifest["target"] = "windows-x86_64"
+        files.pop("install-release.sh")
+        (root / "install-release.sh").unlink()
+        package = "installer" if schema == 4 else "cli"
+        added = [
+            "install_release.ps1",
+            "runtime/python/python.exe",
+            "runtime/python.lock",
+            "runtime/target",
+            f"{package}/uninstall.py",
+        ]
+    if schema == 4:
+        for name in ("setup.py", "release_install.py"):
+            files.pop(f"cli/{name}")
+            (root / "cli" / name).unlink()
+            added.append(f"installer/{name}")
+        added += [
+            "installer/__init__.py",
+            "installer/_bootstrap.py",
+            "installer/release_manifest.py",
+            "configuration/__init__.py",
+            "configuration/storage.py",
+            "host_support/__init__.py",
+        ]
+    for name in added:
+        path = root / name
+        path.parent.mkdir(exist_ok=True, parents=True)
+        path.write_text(name)
+        files[name] = digest(path)
+    manifest["schema"] = schema
+    (root / "release.json").write_text(json.dumps(manifest))
+    assert read_release(root)["schema"] == schema
+    # Removing an entry from both the payload and the manifest must still be rejected.
+    entry = "installer/setup.py" if schema == 4 else "cli/setup.py"
+    (root / entry).unlink()
+    files.pop(entry)
+    (root / "release.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="必要文件"):
+        read_release(root)
+
+
+@pytest.mark.parametrize("target", [None, [], "windows-arm64", "unknown"])
+def test_new_manifest_rejects_unknown_platform(tmp_path, target):
+    root = bundle_at(tmp_path / "release")
+    manifest = read_release(root)
+    manifest.update(schema=4, target=target)
+    (root / "release.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="发行平台"):
+        read_release(root)

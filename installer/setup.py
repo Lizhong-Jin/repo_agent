@@ -14,78 +14,42 @@ if not __package__:
     from _bootstrap import enable_host_support
 
     enable_host_support()
+    __package__ = "installer"
 
+from configuration.storage import config_lock
 from host_support.integration import command_state, shell_path_plan
+from host_support.locking import file_lock
 from host_support.paths import installed_command, installed_python, public_command, user_bin_dir
 
-if __package__:
-    from .installation import (
-        COMMANDS,
-        begin_install,
-        load_record,
-        prepare_venv,
-        record_image,
-        registry_dir,
-        save_record,
-        user_config_path,
-    )
-else:
-    # install.sh runs this with the base interpreter before any dependencies exist.
-    from installation import (
-        COMMANDS,
-        begin_install,
-        load_record,
-        prepare_venv,
-        record_image,
-        registry_dir,
-        save_record,
-        user_config_path,
-    )
-
-
-if __package__:
-    from .config_storage import config_lock
-    from .dependencies import (
-        available_mode,
-        language_status,
-        native_preflight,
-        preparation_report,
-        print_language_status,
-        selected_languages,
-        service_report,
-    )
-    from .install_network import network_options, run_download
-    from .install_packages import (
-        requirement_args,
-        requirement_files,
-        source_flags,
-        verify_bundle_platform,
-    )
-    from .install_transaction import TRANSACTION, InstallTransaction, recover_install
-    from .maintenance import environment_report, file_lock, print_report
-    from .toolchains import install_missing
-else:
-    from config_storage import config_lock
-    from install_network import network_options, run_download
-    from install_packages import (
-        requirement_args,
-        requirement_files,
-        source_flags,
-        verify_bundle_platform,
-    )
-    from install_transaction import TRANSACTION, InstallTransaction, recover_install
-    from maintenance import environment_report, file_lock, print_report
-    from toolchains import install_missing
-
-    from dependencies import (
-        available_mode,
-        language_status,
-        native_preflight,
-        preparation_report,
-        print_language_status,
-        selected_languages,
-        service_report,
-    )
+from .dependencies import (
+    available_mode,
+    language_status,
+    native_preflight,
+    preparation_report,
+    print_language_status,
+    selected_languages,
+    service_report,
+)
+from .install_network import network_options, run_download
+from .install_packages import (
+    requirement_args,
+    requirement_files,
+    source_flags,
+    verify_bundle_platform,
+)
+from .install_transaction import TRANSACTION, InstallTransaction, recover_install
+from .installation import (
+    COMMANDS,
+    begin_install,
+    load_record,
+    prepare_venv,
+    record_image,
+    registry_dir,
+    save_record,
+    user_config_path,
+)
+from .maintenance import environment_report, print_report
+from .toolchains import install_missing
 
 
 def confirm_commands(agent_home: Path, bin_dir: Path) -> dict[str, str | None]:
@@ -316,10 +280,7 @@ def main(argv=None, *, approved_commands=None) -> None:
         selected_languages(args.languages)
         release = None
         if args.wheel:
-            if __package__:
-                from .release_manifest import read_release
-            else:
-                from release_manifest import read_release
+            from .release_manifest import read_release
             release = read_release(agent_home)
             if args.wheel.resolve() != (agent_home / release["wheel"]).resolve():
                 raise ValueError("wheel 与发行清单不匹配")

@@ -154,11 +154,10 @@ def test_normal_cli_uses_detected_profile_without_extra_flags(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "mock-key")
     monkeypatch.setattr("sys.argv", ["repo-agent", "--sandbox", "docker", "--model", "mock", "--root", str(tmp_path)])
     monkeypatch.setattr(
-        cli,
-        "detect_environment",
+        "cli.execution_environment.detect_environment",
         lambda **kw: environment.DockerEnvironment(profile, "test", "x86_64"),
     )
-    monkeypatch.setattr(cli, "check_image_profile", lambda *a, **kw: None)
+    monkeypatch.setattr("cli.execution_environment.check_image_profile", lambda *a, **kw: None)
 
     def session(root, policy, **kwargs):
         policies.append(policy)
@@ -167,8 +166,8 @@ def test_normal_cli_uses_detected_profile_without_extra_flags(
             return []
         return SimpleNamespace(workspace=root, directory=root, tools=tools)
 
-    monkeypatch.setattr(cli, "SandboxSession", session)
-    monkeypatch.setattr(cli, "run_interactive", lambda *a, **kw: None)
+    monkeypatch.setattr("cli.execution_environment.SandboxSession", session)
+    monkeypatch.setattr("cli.application.run_interactive", lambda *a, **kw: None)
     cli.main()
     assert policies[0].gpus == expected_gpu
     assert policies[0].image == "repo-agent-sandbox:v1"

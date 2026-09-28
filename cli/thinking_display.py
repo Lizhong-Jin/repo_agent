@@ -1,6 +1,6 @@
 """User-wide display preference, independent of model effort and reasoning state."""
 
-from .config import save_user_config
+from configuration.environment import save_user_config
 
 DISPLAY_MODES = ("collapsed", "expanded", "hidden")
 

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from cli.install_packages import requirement_args, requirement_files, source_flags
+from installer.install_packages import requirement_args, requirement_files, source_flags
 
 ROOT = Path(__file__).resolve().parents[1]
 

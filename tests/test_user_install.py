@@ -8,8 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from cli.config import CONFIG_KEYS, configured_environment, read_config, user_config_path
-from cli.setup import configure_path, configure_user, install_command
+from configuration.environment import (
+    CONFIG_KEYS,
+    configured_environment,
+    read_config,
+    user_config_path,
+)
+from installer.setup import configure_path, configure_user, install_command
 
 SOURCE = Path(__file__).resolve().parents[1]
 
@@ -190,7 +195,7 @@ def test_setup_installs_working_command_without_modifying_projects(
     setup = [
         sys.executable,
         "-m",
-        "cli.setup",
+        "installer.setup",
         "--agent-home",
         str(install),
         "--mode",
@@ -237,7 +242,7 @@ def test_setup_installs_working_command_without_modifying_projects(
 
 
 def test_failed_sandbox_build_reports_failure_before_path_setup(user_home, monkeypatch):
-    from cli import setup
+    from installer import setup
 
     install = user_home / "isolated install"
     install.mkdir()
@@ -304,8 +309,8 @@ def test_startup_defaults_and_partial_cli_overrides(
     # Model defaults must also work with zero CLI arguments and the default sandbox.
     sandbox = SimpleNamespace(healthy=True, tools=lambda: [], close=lambda: None,
                               execution_context=lambda: {"gpu_access": {"enabled": False}})
-    monkeypatch.setattr(cli, "NativeBackend", lambda *args, **kwargs: sandbox)
-    monkeypatch.setattr(cli, "detect_environment", lambda **kwargs: pytest.fail("Docker selected"))
+    monkeypatch.setattr("cli.execution_environment.NativeBackend", lambda *args, **kwargs: sandbox)
+    monkeypatch.setattr("cli.execution_environment.detect_environment", lambda **kwargs: pytest.fail("Docker selected"))
     seen_clients = []
     seen_runtime = []
 
@@ -335,8 +340,8 @@ def test_startup_defaults_and_partial_cli_overrides(
         assert kwargs["conversation"].mode == "native"
         assert runtime.run("mock task").status == "completed"
 
-    monkeypatch.setattr(cli, "LLMClient", client_from_config)
-    monkeypatch.setattr(cli, "run_interactive", interactive)
+    monkeypatch.setattr("cli.runtime_setup.LLMClient", client_from_config)
+    monkeypatch.setattr("cli.application.run_interactive", interactive)
     cli.main()
     assert len(seen_clients) == 1
     settings = seen_clients[0].config

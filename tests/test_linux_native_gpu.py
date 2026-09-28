@@ -262,14 +262,14 @@ def test_cli_passes_native_profile_and_gpu_selection(tmp_path, monkeypatch, flag
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
     monkeypatch.setattr(sys, "argv", ["repo-agent", "--sandbox", "native", "--root", str(tmp_path),
                                      "--model", "m", *flags])
-    monkeypatch.setattr(cli, "sys", SimpleNamespace(platform="linux", stdin=sys.stdin, stdout=sys.stdout))
+    monkeypatch.setattr("cli.arguments.sys", SimpleNamespace(platform="linux", stdin=sys.stdin, stdout=sys.stdout))
     captured = []
 
     def constructor(root, **kwargs):
         captured.append((kwargs["profile"], kwargs["gpus"]))
         raise ValueError("stop after backend selection")
 
-    monkeypatch.setattr(cli, "NativeBackend", constructor)
+    monkeypatch.setattr("cli.execution_environment.NativeBackend", constructor)
     with pytest.raises(SystemExit) as error:
         cli._main()
     assert error.value.code == 1
@@ -282,7 +282,7 @@ def test_cli_rejects_conflicting_or_empty_selection(tmp_path, monkeypatch, flags
     from cli import main as cli
 
     monkeypatch.setattr(sys, "argv", ["repo-agent", "--sandbox", "native", *flags])
-    monkeypatch.setattr(cli, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr("cli.arguments.sys", SimpleNamespace(platform="linux"))
     with pytest.raises(SystemExit) as error:
         cli._main()
     assert error.value.code == 2

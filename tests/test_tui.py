@@ -8,8 +8,8 @@ from test_live import control
 
 from agent import AgentRuntime
 from agent.skills import SkillRegistry
-from cli.live import SessionStatus
-from cli.tui import ConversationUI
+from cli.session_status import SessionStatus
+from cli.terminal.application import ConversationUI
 from llm import LLMResponse, Message, Usage
 
 

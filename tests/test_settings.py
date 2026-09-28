@@ -46,8 +46,8 @@ def test_cli_normalizes_empty_base_url(tmp_path, monkeypatch, env_value, flags, 
         ],
     )
     monkeypatch.setattr(LLMClient, "get_context_limit", lambda self, **kw: None)
-    monkeypatch.setattr(cli, "LLMClient", make_client)
-    monkeypatch.setattr(cli, "run_interactive", lambda runtime, **kwargs: None)
+    monkeypatch.setattr("cli.runtime_setup.LLMClient", make_client)
+    monkeypatch.setattr("cli.application.run_interactive", lambda runtime, **kwargs: None)
     cli.main()  # Construct and close the real client without making any API requests.
     assert seen == [expected]
 

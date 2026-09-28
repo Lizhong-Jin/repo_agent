@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from agent import AgentRuntime
-from cli.live import ThinkingControl
+from cli.thinking_control import ThinkingControl
 from cli.models import ModelControl, ModelSelection
 from cli.settings import add_runtime_arguments, request_options
 from cli.thinking_store import (
