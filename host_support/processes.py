@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .cancellation import current_cancellation
+
 logger = logging.getLogger(__name__)
 
 
@@ -133,6 +135,7 @@ class ProcessRunner:
         *,
         cwd: str | Path,
         timeout_seconds: int = 60,
+        cancellation=None,
     ) -> ProcessResult:
         """Run synchronously; raise ValueError for invalid inputs or ProcessStartError.
 
@@ -148,6 +151,9 @@ class ProcessRunner:
             raise ValueError("timeout_seconds must be a positive integer")
         if not isinstance(cwd, (str, Path)) or not str(cwd).strip() or "\x00" in str(cwd):
             raise ValueError("cwd must be a non-empty path without NUL")
+        cancellation = cancellation if cancellation is not None else current_cancellation()
+        if cancellation is not None:
+            cancellation.check()
         self.last_cleanup_status = "not_needed"
         stdout_capture = _BoundedCapture(self.max_output_bytes)
         stderr_capture = _BoundedCapture(self.max_output_bytes)
@@ -179,7 +185,7 @@ class ProcessRunner:
                 for stream in streams:
                     os.set_blocking(stream.fileno(), False)
             timed_out = not self._collect_output(
-                process, streams, start_time + timeout_seconds, supervisor
+                process, streams, start_time + timeout_seconds, supervisor, cancellation
             )
             if timed_out or supervisor is not None:
                 if supervisor is not None:
@@ -196,19 +202,31 @@ class ProcessRunner:
                     )
         except BaseException:
             # Includes user cancellation; re-raise after terminating owned work.
-            if supervisor is not None:
-                error = supervisor.cleanup(lambda: self._drain_output(streams))
-                deadline = time.monotonic() + 0.25
-                while not error and streams and time.monotonic() < deadline:
-                    self._drain_output(streams)
+            try:
+                if supervisor is not None:
+                    error = supervisor.cleanup(lambda: self._drain_output(streams))
+                    diagnostics = supervisor.diagnostics
+                    deadline = time.monotonic() + 0.25
+                    while not error and streams and time.monotonic() < deadline:
+                        self._drain_output(streams)
+                        if streams:
+                            time.sleep(0.01)
                     if streams:
-                        time.sleep(0.01)
-                if streams:
-                    error = error or "Output pipes remained open after cancellation."
-                self.last_cleanup_status = "unknown" if error else "confirmed"
-            else:
-                error = self._terminate_process_tree(process, diagnostics)
-                self.last_cleanup_status = "unknown" if error else "confirmed"
+                        error = error or "Output pipes remained open after cancellation."
+                    self.last_cleanup_status = "unknown" if error else "confirmed"
+                else:
+                    error = self._terminate_process_tree(process, diagnostics)
+                    self.last_cleanup_status = "unknown" if error else "confirmed"
+            except Exception as cleanup_failure:
+                error = f"Process cleanup failed ({type(cleanup_failure).__name__})."
+                self.last_cleanup_status = "unknown"
+            if cancellation is not None:
+                cancellation.record_cleanup(
+                    self.last_cleanup_status,
+                    pid=process.pid,
+                    error=error,
+                    diagnostics=list(diagnostics),
+                )
             raise
         finally:
             for stream in (process.stdout, process.stderr):
@@ -217,6 +235,13 @@ class ProcessRunner:
         self.last_cleanup_status = (
             "unknown" if cleanup_error else "confirmed" if timed_out or supervisor else "not_needed"
         )
+        if cancellation is not None:
+            cancellation.record_cleanup(
+                self.last_cleanup_status,
+                pid=process.pid,
+                error=cleanup_error,
+                diagnostics=list(diagnostics),
+            )
         return ProcessResult(
             exit_code=None if timed_out else process.returncode,
             stdout=stdout_capture.text(),
@@ -237,9 +262,13 @@ class ProcessRunner:
         )
 
     @classmethod
-    def _collect_output(cls, process, streams, deadline: float, supervisor=None) -> bool:
+    def _collect_output(
+        cls, process, streams, deadline: float, supervisor=None, cancellation=None
+    ) -> bool:
         """Poll both pipes and the leader under one deadline, without reader threads."""
         while streams or process.poll() is None:
+            if cancellation is not None:
+                cancellation.check()
             if supervisor is not None:
                 supervisor.refresh()
             if time.monotonic() >= deadline:

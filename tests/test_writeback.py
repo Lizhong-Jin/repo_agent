@@ -555,3 +555,20 @@ def test_cli_verification_config_precedence(
     monkeypatch.setattr("cli.application.run_interactive", lambda *a, **kw: None)
     cli.main()
     assert seen == [expected]
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"exit_code": 3},
+        {},
+        {"exit_code": 0, "timed_out": True},
+        {"exit_code": 0, "cleanup_error": "unconfirmed"},
+    ],
+)
+def test_shell_failures_prevent_automatic_writeback(session, data):
+    tool = next(tool for tool in session.tools() if tool.definition.name == "run_shell")
+    session.backend.result = ToolResult(True, data)
+    tool.execute({"script": "run-check", "check_id": "shell-check"})
+    assert not finish_writeback(session, completed(), "on-success")
+    assert (session.root / "a").read_text() == "before"

@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from agent import AgentRuntime
+from host_support.cancellation import RunCancelled, cancellation_scope, current_cancellation
 
 from .writeback import finish_writeback
 
@@ -19,9 +20,15 @@ class TaskRunner:
     sandbox: object = None
     writeback_mode: str = "manual"
     conversation: object = None
+    cancellation: object = None
 
     def run(self, task, *, history=()):
+        with cancellation_scope(self.cancellation, handle_sigint=True):
+            return self._run(task, history=history)
+
+    def _run(self, task, *, history=()):
         try:
+            current_cancellation().check()
             if task == "/compact":
                 self.write(self.conversation.compact())
                 return ("compact", None)
@@ -44,7 +51,9 @@ class TaskRunner:
                 self.write(result.notice or f"任务尚未正常完成：{result.status}")
             finish_writeback(self.sandbox, result, self.writeback_mode, emit=self.write)
             return ("result", result)
-        except KeyboardInterrupt:
-            return ("error", "当前任务已中断；已显示的输出可能不完整。")
+        except (RunCancelled, KeyboardInterrupt):
+            context = current_cancellation()
+            context.cancel()
+            return ("cancelled", RunCancelled(context))
         except Exception as error:
             return ("error", f"{type(error).__name__}: {error}")

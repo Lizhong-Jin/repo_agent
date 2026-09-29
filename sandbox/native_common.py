@@ -15,7 +15,13 @@ from tools._internal.base import ExecutionKind, ToolResult, execution_kind_of
 from tools._internal.file_access import FileAccess
 from tools._internal.file_policy import runtime_protected_paths
 from tools._internal.process_runner import ProcessRunner, _BoundedCapture
-from tools.execute import GetExecutionEnvironmentTool, RunCommandTool, RunPythonTool
+from tools.execute import (
+    PROCESS_EXECUTION_TOOLS,
+    GetExecutionEnvironmentTool,
+    RunCommandTool,
+    RunPythonTool,
+    RunShellTool,
+)
 from tools.factory import create_default_tools, create_file_tools
 
 from .project_python import select_python
@@ -463,16 +469,17 @@ class NativeBackendBase:
                 )
             return self._execute_file(file_tool, arguments)
         self._prepare_workspace()
-        if name in {"run_command", "run_python"}:
+        if name in PROCESS_EXECUTION_TOOLS:
             # Keep argument/path validation identical to worker tools, but collect
             # program output directly outside the worker's final JSON protocol.
             tool = (
-                RunCommandTool(
+                {"run_command": RunCommandTool, "run_shell": RunShellTool}[name](
                     self.workspace,
                     execution_allowed=True,
+                    default_timeout_seconds=min(60, self.command_timeout_seconds),
                     max_timeout_seconds=self.command_timeout_seconds,
                 )
-                if name == "run_command"
+                if name != "run_python"
                 else RunPythonTool(
                     self.workspace,
                     execution_allowed=True,

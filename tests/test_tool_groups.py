@@ -86,6 +86,7 @@ def test_local_loading_never_grants_execution(tmp_path):
     assert set(loaded["data"]["tools"]) == {"git_status", "git_diff"}
     unavailable = {
         "run_command",
+        "run_shell",
         "run_python",
         "get_symbols",
         "go_to_definition",

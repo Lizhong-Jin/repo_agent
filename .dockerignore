@@ -64,6 +64,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !cli/_bootstrap.py
 !cli/application.py
 !cli/arguments.py
+!cli/cancellation.py
 !cli/commands.py
 !cli/config_command.py
 !cli/conversation_help.py
@@ -100,6 +101,8 @@ agent/skills/builtin/gpu-kernel-development/**
 !dependencies/node/package.json
 !host_support/__init__.py
 !host_support/archives.py
+!host_support/async_bridge.py
+!host_support/cancellation.py
 !host_support/diagnostics.py
 !host_support/execution.py
 !host_support/filesystem.py

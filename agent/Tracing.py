@@ -13,6 +13,7 @@ from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
+from host_support.cancellation import RunCancelled
 from llm import Message, ToolCall, Usage
 
 
@@ -63,6 +64,7 @@ class RunStats:
     recoveries: list[dict[str, Any]] = field(default_factory=list)
     stop_reason: str | None = None
     compaction: dict[str, Any] = field(default_factory=dict)
+    cancellation: dict[str, Any] | None = None
 
     task_id: str = field(default_factory=lambda: uuid4().hex)
     trace_error: str | None = None
@@ -192,6 +194,8 @@ def format_event(event: str, stats: RunStats) -> str:
 
 
 def _failure_status(error: BaseException) -> str:
+    if isinstance(error, RunCancelled):
+        return "cancelled"
     return "interrupted" if isinstance(error, (KeyboardInterrupt, SystemExit)) else "failed"
 
 
@@ -247,6 +251,8 @@ class RunTrace:
         if error is not None:
             self.stats.status = _failure_status(error)
             self.stats.error_type = type(error).__name__
+            if isinstance(error, RunCancelled):
+                self.stats.cancellation = error.report
         self.stats.elapsed_seconds = perf_counter() - self.started
         self.emit("task_end")
 
@@ -441,6 +447,7 @@ class Tracer:
                 recoveries=stats.recoveries,
                 stop_reason=stats.stop_reason,
                 error_type=stats.error_type,
+                cancellation=stats.cancellation,
                 usage=_usage_summary(stats),
             )
             self._tasks.append(record)
@@ -459,7 +466,14 @@ class Tracer:
             }
         counts = {
             status: sum(task["status"] == status for task in self._tasks)
-            for status in ("completed", "max_steps", "stopped", "failed", "interrupted")
+            for status in (
+                "completed",
+                "max_steps",
+                "stopped",
+                "failed",
+                "interrupted",
+                "cancelled",
+            )
         }
         summary = {
             "event": "session_end",

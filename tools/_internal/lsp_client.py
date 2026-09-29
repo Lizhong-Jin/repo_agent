@@ -23,6 +23,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from host_support.cancellation import RunCancelled, checkpoint, current_cancellation
 from host_support.processes import kill_process_group, start_process
 
 logger = logging.getLogger(__name__)
@@ -129,6 +130,7 @@ class LspClient:
     def start(self) -> None:
         """Start and initialize once. A closed/failed client cannot be restarted."""
         with self._lock:
+            checkpoint()
             if self._closed:
                 raise LspError("Client is closed; create a new client")
             if self._ready:
@@ -354,13 +356,14 @@ class LspClient:
             try:
                 with self._condition:
                     while uri not in self._diagnostics:
+                        checkpoint()
                         self._check_failure()
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
                             raise LspTimeoutError("Timed out waiting for published diagnostics")
-                        self._condition.wait(remaining)
+                        self._condition.wait(min(remaining, 0.05))
                     return copy.deepcopy(self._diagnostics[uri])
-            except LspError:
+            except (LspError, RunCancelled):
                 self._dispose()
                 raise
 
@@ -370,6 +373,9 @@ class LspClient:
             if self._closed:
                 return
             try:
+                context = current_cancellation()
+                if context is not None and context.event.is_set():
+                    return
                 if self._ready and self._failure is None:
                     self._request("shutdown", None, timeout=min(self.timeout_seconds, 1))
                     self._notify("exit", None)
@@ -429,18 +435,19 @@ class LspClient:
                 self._responses[request_id] = None
                 self._send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
                 while self._responses[request_id] is None:
+                    checkpoint()
                     self._check_failure()
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise LspTimeoutError(f"Timed out waiting for {method}")
-                    self._condition.wait(remaining)
+                    self._condition.wait(min(remaining, 0.05))
                 response = self._responses[request_id]
             if "error" in response:
                 raise LspResponseError(response["error"])
             return response["result"]
         except LspResponseError:
             raise
-        except LspError:
+        except (LspError, RunCancelled):
             self._dispose()
             raise
         finally:
@@ -593,5 +600,13 @@ class LspClient:
             ):
                 if not thread.is_alive():
                     stream.close()
+        context = current_cancellation()
+        if context is not None and context.event.is_set() and process is not None:
+            # This legacy LSP lifecycle does not supervise escaped descendants.
+            context.record_cleanup(
+                "unknown",
+                pid=process.pid,
+                error="Language-server descendant cleanup is not guaranteed.",
+            )
         self._documents.clear()
         self._diagnostics.clear()

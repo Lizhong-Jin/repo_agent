@@ -18,6 +18,8 @@ from urllib.parse import urlsplit
 import httpcore
 import httpx
 
+from host_support.cancellation import cancellable, current_cancellation
+
 from .web_errors import WebError
 from .web_http import read_body
 from .web_pages import FETCH_NOTICE, WebPages
@@ -313,7 +315,8 @@ class WebBackend:
         deadline = time.monotonic() + self.timeout_seconds
         budget = (MAX_OUTPUT_CHARS - 1000) // len(targets)
         future = asyncio.run_coroutine_threadsafe(
-            self._fetch_batch(targets, deadline, budget), self._loop
+            cancellable(self._fetch_batch(targets, deadline, budget), current_cancellation()),
+            self._loop,
         )
         try:
             return {
@@ -386,7 +389,9 @@ class WebBackend:
             raise RuntimeError("Search backend is closed")
         deadline = time.monotonic() + self.timeout_seconds
         future = asyncio.run_coroutine_threadsafe(
-            self._batch(queries, domains, max_results, deadline),
+            cancellable(
+                self._batch(queries, domains, max_results, deadline), current_cancellation()
+            ),
             self._loop,
         )
         try:

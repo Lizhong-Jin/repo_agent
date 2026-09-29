@@ -1,8 +1,10 @@
 """A small terminal conversation loop; no model client or tool execution is duplicated here."""
 
 from agent import AgentRuntime, RunResult
+from host_support.cancellation import RunCancelled, cancellation_scope
 from llm import LLMError, Message
 
+from .cancellation import cancellation_notice
 from .conversation_help import HELP, RESET_NOTICE, describe_skills
 from .input import SessionInput
 from .sessions_command import new_name, ui_command
@@ -111,10 +113,11 @@ def run_interactive(
             continue
         if task == "/compact" and conversation:
             try:
-                print(conversation.compact())
+                with cancellation_scope(handle_sigint=True):
+                    print(conversation.compact())
             except (LLMError, ValueError, OSError) as error:
                 print(f"压缩未完成：{error}")
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, RunCancelled):
                 print("压缩已取消；原上下文保留。")
             history = conversation.history
             continue
@@ -170,17 +173,32 @@ def run_interactive(
                 conversation.start_task(task)
             if sandbox is not None and writeback == "on-success":
                 sandbox.begin_task()
-            result = runtime.run(task, history=history)
-        except KeyboardInterrupt:
+            with cancellation_scope(handle_sigint=True):
+                result = runtime.run(task, history=history)
+        except (KeyboardInterrupt, RunCancelled) as error:
             if sandbox is not None:
                 sandbox.guard.needs_review = True
-            history = conversation.fail_task() if conversation else ()
+            history = (
+                conversation.fail_task(
+                    cancellation=error.report if isinstance(error, RunCancelled) else None
+                )
+                if conversation
+                else ()
+            )
             if status:
                 status.reset_context()
             notice = (
                 "此前完整上下文已保留；继续前请检查文件现状。" if conversation else RESET_NOTICE
             )
-            print("\n当前任务已中断。" + notice)
+            print(
+                "\n"
+                + (
+                    cancellation_notice(error.report)
+                    if isinstance(error, RunCancelled)
+                    else "当前任务已中断。"
+                )
+                + notice
+            )
             continue
         except (LLMError, ValueError, OSError) as error:
             if sandbox is not None:

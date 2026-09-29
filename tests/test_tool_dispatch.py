@@ -96,6 +96,7 @@ def test_every_builtin_tool_has_concrete_metadata_and_unchanged_model_schema(tmp
     assert {name for name, kind in kinds.items() if kind is ExecutionKind.SANDBOXED_PROCESS} == {
         "get_execution_environment",
         "run_command",
+        "run_shell",
         "run_python",
         "git_status",
         "git_diff",

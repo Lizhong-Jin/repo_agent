@@ -305,7 +305,7 @@ def native_project(tmp_path):
 def test_native_edits_original_runs_tools_and_reports_actual_limits(native_project):
     root, backend = native_project
     tools = {tool.definition.name: tool for tool in backend.tools()}
-    assert {"run_command", "run_python", "get_symbols"} <= tools.keys()
+    assert {"run_command", "run_shell", "run_python", "get_symbols"} <= tools.keys()
     assert tools["write_file"].execute({"path": "test.txt", "content": "original"}).success
     assert (root / "test.txt").read_text() == "original"
     result = tools["run_python"].execute(
@@ -315,6 +315,8 @@ def test_native_edits_original_runs_tools_and_reports_actual_limits(native_proje
     assert (root / "test.txt").read_text() == "edited"
     result = tools["run_command"].execute({"command": ["/bin/echo", "ok"]})
     assert result.data["stdout"].strip() == "ok", result
+    result = tools["run_shell"].execute({"script": "printf native | cat"})
+    assert result.success and result.data["stdout"] == "native", result
     report = tools["get_execution_environment"].execute({})
     assert report.success, report
     assert report.data["execution"]["mode"] == "native"
@@ -513,3 +515,45 @@ def test_native_cli_records_mode_and_closes_backend(tmp_path, monkeypatch):
         assert store.data["mode"] == "native" and store.data["sandbox"] is None
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("cleanup_error", [None, "cleanup unconfirmed"])
+def test_shell_uses_supervised_native_output_path(bare_backend, monkeypatch, cleanup_error):
+    backend = bare_backend
+    calls = []
+    monkeypatch.setattr("tools.execute._bash_executable", lambda: "/bin/bash")
+
+    def run(command=None, **kwargs):
+        calls.append((command, kwargs))
+        backend.healthy = cleanup_error is None
+        return ProcessResult(
+            None,
+            "partial shell output",
+            "warning",
+            True,
+            cleanup_error,
+            1000,
+            False,
+            False,
+            status="timed_out",
+            cleanup_status="unknown" if cleanup_error else "confirmed",
+            output_complete=False,
+        )
+
+    monkeypatch.setattr(backend, "_run", run)
+    result = backend.execute(
+        backend.workspace, "run_shell", {"script": "printf hello | cat", "timeout_seconds": 1}
+    )
+    assert len(calls) == 1
+    command, options = calls[0]
+    assert command[0] == "/bin/bash" and command[-2] == "printf hello | cat"
+    assert options["timeout"] == 1 and "request" not in options
+    assert result.data["stdout"] == "partial shell output"
+    assert result.data["timed_out"] and not result.data["output_complete"]
+    assert result.success == (cleanup_error is None)
+    assert result.error_code == ("NATIVE_EXECUTION_FAILED" if cleanup_error else None)
+    backend.healthy = False
+    assert backend.execute(backend.workspace, "run_shell", {"script": "true"}).error_code == (
+        "NATIVE_UNHEALTHY"
+    )
+    assert len(calls) == 1

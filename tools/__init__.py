@@ -8,6 +8,7 @@ from .execute import (
     GetExecutionEnvironmentTool,
     RunCommandTool,
     RunPythonTool,
+    RunShellTool,
 )
 from .factory import create_default_tools
 from .filesystem import (
@@ -61,6 +62,7 @@ __all__ = [
     "GetExecutionEnvironmentTool",
     "RunCommandTool",
     "RunPythonTool",
+    "RunShellTool",
     # git tools
     "GitDiffTool",
     "GitStatusTool",

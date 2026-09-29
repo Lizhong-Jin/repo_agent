@@ -6,6 +6,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from host_support.cancellation import cancellation_scope, checkpoint
 from llm import LLM, InvalidResponseError, LLMError, LLMRequest, LLMResponse, Message, ToolCall
 from llm.token_estimation import estimate_context_tokens
 from tools import Tool, ToolResult
@@ -107,7 +108,7 @@ class AgentRuntime:
         self._task_number = 0
         self.on_model_event = None
         self.before_request = None
-        self.check_cancelled = lambda: None
+        self.check_cancelled = checkpoint
         self.thinking_settings = None
         self.dispatcher = ToolDispatcher()
         self._tools = self.dispatcher.tools
@@ -182,7 +183,11 @@ class AgentRuntime:
             messages.append(Message("system", self.system_prompt))
         return estimate_context_tokens(self._with_skills(messages), self._definitions)
 
-    def run(self, task: str, *, history: Sequence[Message] = ()) -> RunResult:
+    def run(self, task: str, *, history: Sequence[Message] = (), cancellation=None) -> RunResult:
+        with cancellation_scope(cancellation):
+            return self._run_task(task, history=history)
+
+    def _run_task(self, task: str, *, history: Sequence[Message] = ()) -> RunResult:
         """Run a task, optionally continuing history. Never mutate the caller's messages."""
         if not isinstance(task, str) or not task.strip():
             raise ValueError("task must be non-empty text")
@@ -238,6 +243,7 @@ class AgentRuntime:
         step = 0
         while self.max_steps == 0 or step < self.max_steps:
             step += 1
+            checkpoint()
             self.check_cancelled()
             if self.before_request is not None:
                 messages = list(self.before_request(messages, output_limit))
@@ -253,6 +259,7 @@ class AgentRuntime:
                     "任务尚未完成；已保留此前正文和有效上下文，可输入“继续”。",
                     resumable=True,
                 )
+            checkpoint()
             self.check_cancelled()
             responses.append(response)
             if response.finish_reason == "length":

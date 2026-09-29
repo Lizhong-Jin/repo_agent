@@ -15,7 +15,7 @@ FROM ${BASE_IMAGE}
 ARG SANDBOX_PROFILE=standard
 LABEL org.repo-agent.profile=${SANDBOX_PROFILE}
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git clangd clang build-essential ninja-build ca-certificates \
+    bash git clangd clang build-essential ninja-build ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=node_lsp /usr/local/bin/ /usr/local/bin/
 COPY --from=node_lsp /opt/lsp/ /opt/lsp/

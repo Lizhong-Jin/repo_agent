@@ -50,6 +50,7 @@ DEFAULT_TOOL_GROUPS = (
             "git_status",
             "git_diff",
             "run_command",
+            "run_shell",
             "run_python",
             "get_symbols",
             "go_to_definition",

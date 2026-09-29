@@ -7,6 +7,7 @@
 - [统一创建工具](#统一创建工具)
 - [按需加载工具组](#按需加载工具组)
 - [工具错误码](#工具错误码)
+- [run_shell 工具与平台行为](#run_shell-工具与平台行为)
 - [get_execution_environment 工具](#get_execution_environment-工具)
 - [read_file 工具](#read_file-工具)
 - [GetSymbols：读取多语言代码符号](#getsymbols读取多语言代码符号)
@@ -90,7 +91,7 @@ CLI 默认开启按需加载。工厂和 sandbox worker 仍提供当前执行环
 | 通用工作区工具 | `get_execution_environment`、`read_file`、`list_files`、`find_files`、`search_files`、`get_path_info` | 初始可见 |
 | 通用辅助能力 | `load_tool_group`、已注册的技能加载、历史搜索/读取、Web 搜索/读取 | 初始可见；Web 仍取决于配置 |
 | `file_editing` | `write_file`、`edit_file`、`apply_patch`、`make_directory`、`delete_file`、`move_file` | 按需加载；也适用于非代码文件修改 |
-| `coding` | `git_status`、`git_diff`、`run_command`、`run_python`、`get_symbols`、`go_to_definition`、`find_references`、`get_diagnostics`、`get_hover`、`search_workspace_symbols` | 按需加载；local 只提供其中的 Git 工具 |
+| `coding` | `git_status`、`git_diff`、`run_command`、`run_shell`、`run_python`、`get_symbols`、`go_to_definition`、`find_references`、`get_diagnostics`、`get_hover`、`search_workspace_symbols` | 按需加载；local 只提供其中的 Git 工具 |
 
 标准 CLI 初始发送 10 个工具定义，配置 Web 后至多 12 个。`load_tool_group` 的描述包含组目录、用途和当前环境可用的工具名称，不预先塞入专用工具的完整参数定义。
 
@@ -187,7 +188,7 @@ else:
 
 `run()` 返回独立的 `ProcessResult`，包含退出码、stdout/stderr、超时、清理错误、耗时和截断标志；非零退出码和超时通过结果返回。新增 `status`（`completed` / `timed_out`）、`cleanup_status`（`not_needed` / `confirmed` / `unknown`）、`output_complete`、`pid`、`process_group_id` 和 `cleanup_diagnostics`，将运行状态、清理状态及输出是否完整分开。`completed` 表示已退出，不代表退出码为零。超时或清理失败仍返回已收集的首尾输出，超时、截断或清理失败时 `output_complete=false`。非法调用参数抛出 `ValueError`，操作系统启动失败抛出 `ProcessStartError`，取消会在清理后继续向上传播。可重复使用同一个 runner，每次运行的进程和输出缓存独立。
 
-`ProcessRunner` 是受信任应用代码使用的底层接口，不直接暴露给模型，不应用文件保护策略。`RunCommandTool` / `RunPythonTool` 默认返回 `SANDBOX_REQUIRED`；只有受信任的隔离执行调用方显式启用 `execution_allowed=True`。该参数不在模型工具 schema 中，CLI 不提供本地绕过开关。`create_default_tools()` 默认不注册命令工具；Docker worker 显式启用；native 主进程复用命令工具的参数和路径校验，但将 runner 替换为始终通过平台沙箱（Seatbelt 或 Bubblewrap/seccomp）启动的执行器。这个开关本身不创建隔离环境。
+`ProcessRunner` 是受信任应用代码使用的底层接口，不直接暴露给模型，不应用文件保护策略。`RunCommandTool` / `RunPythonTool` / `RunShellTool` 默认返回 `SANDBOX_REQUIRED`；只有受信任的隔离执行调用方显式启用 `execution_allowed=True`。该参数不在模型工具 schema 中，CLI 不提供本地绕过开关。`create_default_tools()` 默认不注册命令工具；Docker worker 显式启用；native 主进程复用命令工具的参数和路径校验，但将 runner 替换为始终通过平台沙箱（Seatbelt 或 Bubblewrap/seccomp）启动的执行器。这个开关本身不创建隔离环境。
 
 超时覆盖运行和输出收集，不因持续输出自动续期，清理通常额外耗时最多约 3 秒；`cleanup_error` 表示清理未完成或无法确认，Windows 后代进程清理仍为尽力处理。native 使用 `supervise_tree=True`，由 `host_support/supervision.py` 在外层跟踪 PID 与内核启动时间、观察后代并执行 TERM → KILL → 核验，避免依赖沙箱 worker 内部的进程组探测。该选项支持 macOS/Linux，属于采样式监督，不能保证发现采样间迅速脱离的所有后代；不向模型暴露任意 PID 终止接口。native 仅在清理无法确认时暂停执行与写入，正常超时清理成功后继续工作，详见 [原生沙箱](native-sandbox.md#超时结果与恢复)。
 
@@ -213,6 +214,37 @@ no_match = tool_error("NO_MATCH", "old_text does not occur in the file.")
 通用类别包括参数校验、路径越界/保护、权限、不存在、文件/目录类型、符号链接、已有路径、编码、容量限制和基础读写失败。现有错误码字符串及 `ToolResult.to_message()` 的返回结构保持不变；例如 `PARENT_NOT_DIRECTORY`、`FILE_EXISTS` 与 `PATH_ALREADY_EXISTS` 继续保留原码，便于兼容既有调用方和日志。
 
 `LINE_OUT_OF_RANGE`、`NO_CHANGES`、`NO_MATCH`、`MULTIPLE_MATCHES`、`EDIT_RESULT_TOO_LARGE`、`SEARCH_ERROR`、`CREATE_DIRECTORY_ERROR` 和 `DELETE_FILE_ERROR` 等仍由相应工具定义。工具特有错误必须提供说明，不需要加入公共枚举。新增工具可直接复用上述公共入口。
+
+## run_shell 工具与平台行为
+
+`tools/execute.py` 的 `RunShellTool` 已加入 `coding` 按需组，仅在隔离执行工具集中注册。单个程序及原样参数使用 `run_command`；管道、重定向、循环和多行 Bash 源码使用 `run_shell`：
+
+```json
+{"script": "python build.py && python test.py 2>&1 | tee test.log", "cwd": ".", "timeout_seconds": 60}
+```
+
+参数为 `script`、可选的 `cwd` 和 `timeout_seconds`。脚本默认上限为 64 KiB UTF-8 字节，拒绝 NUL；超时与命令工具共用宿主上限，默认最多 60 秒，不因持续输出而延长。每次调用独立，目录、变量和函数不跨调用保存，无交互终端或持久后台服务。
+
+执行器从 `/bin/bash`、`/usr/bin/bash` 选择可执行的系统 Bash，不搜索工作区 PATH，不自动换成 `sh`。内部向共享 `ProcessRunner` 传入 argv，继续使用 `shell=False`。Bash 使用 `--noprofile --norc -p -o pipefail -c`：不读取登录/启动脚本，不导入环境中的 Bash 函数和 shell 选项；自定义环境中的 `BASH_ENV`、`ENV`、`SHELLOPTS`、`BASHOPTS` 和 `BASH_FUNC_*` 也会移除。`-p` 用于稳定启动行为，不构成隔离机制。
+
+默认启用 `pipefail`，未自动启用 `errexit`/`nounset`。管道任一成员失败可反映在管道退出状态，但 `false; true` 等脚本仍可能最终返回零；有依赖的步骤使用 `&&` 或显式错误检查。只报告脚本整体退出码，不推断所有内部命令是否通过。非零退出码通过正常 `ToolResult.data` 返回，回写检查据此阻止自动回写。
+
+结果沿用 `exit_code`、`stdout`、`stderr`、`timed_out`、截断标志、`cleanup_status`、`output_complete` 等字段，另附 `shell=bash` 和 `shell_executable`。超时仍保留已收集的首尾输出。shell runner 启用进程树监督，native 则复用外层监督执行器，避免 worker JSON 丢失部分输出。正常结束也清理已观察到的后台后代；监督仍有采样局限，不能保证发现采样间迅速脱离的进程，不应把此工具用于启动持久服务。清理未确认时保持现有阻止执行/写入/自动回写的处理。
+
+| 实际执行位置 | 行为 |
+| --- | --- |
+| macOS / Linux native | 两个工具均可用；缺少系统 Bash 时 `run_shell` 返回 `SHELL_UNAVAILABLE` |
+| Windows 宿主 + Linux Docker | 两个工具均在 Linux 容器执行，脚本使用 Bash 语法；宿主注册 schema 时不检查 Windows shell |
+| WSL2 中的 Linux native | 按 Linux 处理，仍需满足现有原生沙箱依赖 |
+| Windows local | 不注册 `run_command`、`run_shell`、`run_python`；加载 `coding` 不会授予执行权限 |
+| Windows native | 现有 native 后端拒绝启动，不回退到未隔离执行 |
+| 受信任代码在 Windows 直接启用工具类 | `run_shell` 返回 `SHELL_UNSUPPORTED_PLATFORM`，不启动进程、不自动使用 Git Bash、PowerShell 或 cmd；`run_command` 保持现有 argv 执行行为 |
+
+两个工具的名称和参数独立，同时注册没有冲突。Windows 的 `run_command` 不是 Linux 命令兼容层：程序必须在执行环境中存在，shell 内置命令需要显式调用解释器；`.bat`/`.cmd` 可能由系统 shell 解释，不能假定所有 argv 都按字面传递。底层 Windows 后代清理仍为尽力处理，本次不新增 Windows 原生沙箱。
+
+`get_execution_environment` 的 execution 节增加 `shell_execution_allowed` 和 `shell`（方言、系统路径、可用状态及原因），描述实际执行器。local/退化状态不启动 Bash 探测。
+
+命令、Python、shell 共用 `_ProcessTool` 的工作目录、超时、启动错误和结果转换。`PROCESS_EXECUTION_TOOLS` 集中维护需要退出码检查及 `check_id` 的执行工具集合，native 直接输出分支、Docker 代理和回写检查共同引用。新增其他执行工具时还需实现 native 对应的构造分支。`check_id` 只由 Docker 代理添加，验证失败后可用相同工具、目录与 ID 的成功重试解除；无 ID 时仍按精确操作匹配。
 
 ## get_execution_environment 工具
 

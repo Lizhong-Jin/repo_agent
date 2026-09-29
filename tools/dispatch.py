@@ -4,6 +4,8 @@ Only trusted application code may register implementations. This dispatcher is
 not an isolation boundary for third-party Python plugins already in the host.
 """
 
+from host_support.cancellation import checkpoint, current_cancellation, defer_cancellation
+
 from ._internal.base import ExecutionKind, ToolResult, execution_kind_of
 
 
@@ -30,6 +32,7 @@ class ToolDispatcher:
         self._kinds[name] = kind
 
     def execute(self, name, arguments):
+        checkpoint()
         tool = self.tools.get(name)
         if tool is None:
             return ToolResult(False, error_code="UNKNOWN_TOOL", error=f"Unknown tool: {name}")
@@ -42,7 +45,47 @@ class ToolDispatcher:
             ExecutionKind.TRUSTED_NETWORK: self._network,
             ExecutionKind.SANDBOXED_PROCESS: self._process,
         }
-        return handlers[kind](tool, arguments)
+        context = current_cancellation()
+        record = {"name": name, "status": "started", "effects": "unknown"}
+        if context is not None:
+            context.tools.append(record)
+        result = handlers[kind](tool, arguments)
+        record["status"] = "completed" if result.success else "failed"
+        # Preserve tool-reported effects only; do not infer subprocess changes.
+        record["result"] = {
+            key: value
+            for key, value in result.data.items()
+            if key
+            in {
+                "path",
+                "source",
+                "destination",
+                "created",
+                "deleted",
+                "moved",
+                "committed_files",
+                "committed",
+                "not_committed",
+                "files_changed",
+                "changes",
+                "bytes_written",
+                "sha256_before",
+                "sha256_after",
+                "cleanup_status",
+                "cleanup_error",
+            }
+        }
+        if name in {
+            "write_file",
+            "edit_file",
+            "apply_patch",
+            "make_directory",
+            "delete_file",
+            "move_file",
+        }:
+            record["effects"] = "reported"
+        checkpoint()
+        return result
 
     @staticmethod
     def _host(tool, arguments):
@@ -52,7 +95,8 @@ class ToolDispatcher:
     def _file(tool, arguments):
         # Native proxies use the descriptor-based file service; Docker proxies
         # retain their private workspace and writeback guard. Local keeps its API.
-        return tool.execute(arguments)
+        with defer_cancellation():
+            return tool.execute(arguments)
 
     @staticmethod
     def _network(tool, arguments):

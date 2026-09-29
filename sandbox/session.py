@@ -25,6 +25,7 @@ from host_support.filesystem import (
 from host_support.paths import find_windows_executable
 from tools._internal.base import ExecutionKind, ToolResult, execution_kind_of
 from tools._internal.file_policy import runtime_protected_paths
+from tools.execute import PROCESS_EXECUTION_TOOLS
 from tools.factory import create_default_tools
 
 from .docker import DockerBackend, SandboxBackend
@@ -90,7 +91,7 @@ class SandboxedTool:
             ExecutionKind.SANDBOXED_PROCESS,
         }:
             raise ValueError("Docker proxies only accept file/process tools")
-        if definition.name in {"run_command", "run_python"}:
+        if definition.name in PROCESS_EXECUTION_TOOLS:
             parameters = deepcopy(definition.parameters)
             parameters["properties"]["check_id"] = {
                 "type": "string",
@@ -116,7 +117,7 @@ class SandboxedTool:
     def execute(self, arguments: dict) -> ToolResult:
         try:
             execution_arguments = dict(arguments)
-            if self.definition.name in {"run_command", "run_python"} and "check_id" in arguments:
+            if self.definition.name in PROCESS_EXECUTION_TOOLS and "check_id" in arguments:
                 check_id = execution_arguments.pop("check_id")
                 if not isinstance(check_id, str) or not re.fullmatch(
                     r"[a-zA-Z0-9_-]{1,64}", check_id

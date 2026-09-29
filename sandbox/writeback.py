@@ -7,6 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from host_support.storage import atomic_write
+from tools.execute import PROCESS_EXECUTION_TOOLS
 
 
 def atomic_json(path: Path, value: dict) -> None:
@@ -29,9 +30,9 @@ class WritebackGuard:
     def record(self, name, arguments, result):
         # Named checks allow corrected validation code; other operations remain exact.
         normalized = {k: v for k, v in arguments.items() if k != "timeout_seconds"}
-        if name in {"run_command", "run_python", "git_diff", "git_status"}:
+        if name in (PROCESS_EXECUTION_TOOLS | {"git_diff", "git_status"}):
             normalized.setdefault("cwd", ".")
-        if name in {"run_command", "run_python"} and arguments.get("check_id"):
+        if name in PROCESS_EXECUTION_TOOLS and arguments.get("check_id"):
             normalized = {"check_id": arguments["check_id"], "cwd": arguments.get("cwd", ".")}
         key = hashlib.sha256(json.dumps([name, normalized], sort_keys=True).encode()).hexdigest()
         data = result.data
@@ -40,7 +41,7 @@ class WritebackGuard:
             or data.get("timed_out")
             or data.get("cleanup_error")
             or ("exit_code" in data and data["exit_code"] != 0)
-            or (name in {"run_command", "run_python"} and data.get("exit_code") != 0)
+            or (name in PROCESS_EXECUTION_TOOLS and data.get("exit_code") != 0)
         )
         if data.get("cleanup_error"):
             self.needs_review = True

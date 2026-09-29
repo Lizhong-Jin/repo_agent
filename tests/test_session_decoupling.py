@@ -165,7 +165,7 @@ def test_task_runner_cancellation_prevents_writeback_and_late_output():
         writeback_mode="on-success",
     )
     kind, message = runner.run("task", history=("prior message",))
-    assert kind == "error" and "中断" in message
+    assert kind == "cancelled" and message.report["status"] == "cancelled"
     # Sandbox intentionally has no writeback API: cancellation must stop before it.
     assert calls == ["begin"]
 

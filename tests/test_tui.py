@@ -128,7 +128,7 @@ def test_cancel_stream_clears_history_keeps_draft_and_waits(tmp_path):
             await until(lambda: not ui.busy)
             assert "已中断" in ui.transcript
             assert not ui.history and ui.editor.text == "draft"
-            assert runtime.last_stats.status == "interrupted"
+            assert runtime.last_stats.status == "cancelled"
             pipe.send_text("\x03")
             await until(lambda: not ui.editor.text)
             pipe.send_text("\x04")

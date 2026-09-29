@@ -16,11 +16,13 @@ repo-agent --max-steps 12 --max-output-tokens 8192 # 临时覆盖任务轮数和
 
 项目根目录默认为调用时的当前目录；`--root` 同时选择工作目录和项目 `.env`，不会切换到 Agent 安装目录。用户配置由各项目共用，项目 `.env` 可覆盖用户设置，完整优先级见[配置参考](configuration.md)。
 
-未登记安装模式时默认使用 native；已有安装沿用其记录，可用 `repo-agent --sandbox native` 显式选择，在 macOS / Linux 原生沙箱内运行本机工具并直接修改项目；见[原生沙箱说明](native-sandbox.md)。Linux 需要 bubblewrap、libseccomp 和可用的非特权 user namespace；Windows 请通过 WSL2 运行 Linux 后端。`--sandbox local` 提供文件/Git 和不启动子进程的基础环境查询，不提供命令、Python 或语言服务器工具。可选 Web 工具在主进程独立注册。需要工作副本及受控回写时，显式使用 `repo-agent --sandbox docker`。Docker/native 失败均不会自动切换为未隔离执行。
+未登记安装模式时默认使用 native；已有安装沿用其记录，可用 `repo-agent --sandbox native` 显式选择，在 macOS / Linux 原生沙箱内运行本机工具并直接修改项目；见[原生沙箱说明](native-sandbox.md)。Linux 需要 bubblewrap、libseccomp 和可用的非特权 user namespace；Windows 请通过 WSL2 运行 Linux 后端。`--sandbox local` 提供文件/Git 和不启动子进程的基础环境查询，不提供命令、Shell、Python 或语言服务器工具。可选 Web 工具在主进程独立注册。需要工作副本及受控回写时，显式使用 `repo-agent --sandbox docker`。Docker/native 失败均不会自动切换为未隔离执行。
 
 Linux / WSL2 native 默认自动检测 NVIDIA CUDA GPU：发现后启用全部 GPU，没有则使用普通环境；发现设备但驱动或 CUDA 自检失败时明确报错。`--sandbox-profile standard` 强制关闭 GPU，`--sandbox-profile cuda` 强制要求 GPU。Linux 可通过 `--sandbox-gpus` 指定索引或完整 GPU UUID 选择单卡，WSL2 仅支持 `all`。需要宿主机预装 NVIDIA 驱动和计算依赖，启动会实际执行 CUDA kernel 自检；详见[原生 GPU 说明](native-sandbox.md#linux--wsl2-原生-gpu)。
 
 local 的 `git_diff` / `git_status` 会拒绝配置了外部 clean/process 过滤器的仓库，并返回 `GIT_EXTERNAL_FILTER_REQUIRES_SANDBOX`；这类仓库请使用 native 或 Docker。Git 工具只报告子模块提交变化，不递归检查子模块内未提交的修改；需要内部状态或差异时，通过 `cwd` 明确选择子模块。
+
+执行工具中，`run_command` 接收程序参数数组，`run_shell` 接收 Bash 脚本。Windows 使用 Linux Docker 时两者均在容器中执行；Windows local 不开放执行工具，native 需在 WSL2 中运行。详见 [Shell 工具与平台行为](tools.md#run_shell-工具与平台行为)。
 
 ## 会话命令与快捷键
 
@@ -59,7 +61,7 @@ local 的 `git_diff` / `git_status` 会拒绝配置了外部 clean/process 过�
 
 界面按运行进程的操作系统自动选择提示（macOS / Windows / Linux，与 Intel 或 ARM 架构无关）。Mac 上的 Ctrl 指 **Control（⌃）**，不是 Command（⌘）。`Esc → Return` 和 `Esc → g` 表示先按 Esc，松开后再按 Return 或小写 g，两种顺序按键在其他平台也可用。Option+Return 需要终端将 Option 配置为 Meta，因此 Mac 默认提示 Esc → Return。Mac 的功能键若已设置为标准 F1、F2 等，可直接按 F2；外接键盘也可使用独立的 PgUp/PgDn 键。功能键及翻页键对应关系参见 [Apple 键盘快捷键说明](https://support.apple.com/zh-cn/102650)。通过 SSH 在远端运行时，自动识别的是远端操作系统。
 
-完整终端使用全屏界面；管道输入和单次任务使用普通文本输出。普通终端不提供全屏快捷键，但支持对应的会话命令。停止采用协作方式，需要等待当前网络读取或工具安全结束，已经执行的文件操作不会撤销。任务停止后可输入 `/exit`。
+完整终端使用全屏界面；管道输入和单次任务使用普通文本输出。普通终端不提供全屏快捷键，但支持对应的会话命令。停止采用每次任务独立的协作取消：默认模型请求、重试等待、Web 请求和命令等待会响应停止信号，界面等待请求释放及进程清理后再结束任务。文件工具允许当前调用在安全边界完成，已经执行的修改不会撤销，也不会自动回写 sandbox 副本。界面区分“用户主动停止”“执行失败”和“进程清理未确认”；清理未确认时应检查进程与文件现状。连续 Ctrl+C 不会跳过清理，任务停止后可输入 `/exit`。
 
 全屏界面内，将鼠标放在对话区，用滚轮或触控板查看历史；也可使用 PgUp/PgDn（Mac：fn+↑/fn+↓）按可见页面翻动，自动换行的长段落也可以逐行滚动。向上滚动会暂停自动跟随，后续流式输出不会把视图拉回底部，输入框仍可编辑草稿。状态栏显示“正在查看历史”；向下滚到末尾，或按 Ctrl+End（Mac：Esc → g），恢复跟随最新输出。滚动由应用处理，终端自身的滚动条不代表完整对话历史。
 

@@ -1,15 +1,16 @@
 """Full-screen interaction orchestration; screen state belongs to the UI loop."""
 
 import asyncio
-from threading import Event
 from time import perf_counter
 
 from prompt_toolkit.document import Document
 from prompt_toolkit.utils import get_cwidth
 
 from agent.transcript import Transcript
+from host_support.cancellation import CancellationContext
 from llm import LLMError
 
+from ..cancellation import cancellation_notice
 from ..conversation_help import HELP, RESET_NOTICE, describe_skills
 from ..model_picker import ModelPicker
 from ..output import LiveOutput
@@ -55,7 +56,8 @@ class ConversationUI:
         self.model_picker = None
         self.history = conversation.history if conversation else ()
         self.busy = False
-        self.cancelled = Event()
+        self.cancellation = CancellationContext()
+        self.cancelled = self.cancellation.event
         self.phase = "就绪"
         self.follow = True
         self.loop = None
@@ -329,7 +331,8 @@ class ConversationUI:
                 self.append(str(error) + "\n")
                 return
         self.busy = True
-        self.cancelled.clear()
+        self.cancellation = CancellationContext()
+        self.cancelled = self.cancellation.event
         self.phase = "开始执行…"
         self.worker = asyncio.create_task(self.execute(task))
 
@@ -365,12 +368,12 @@ class ConversationUI:
         self.app.invalidate()
 
     def check_cancelled(self):
-        if self.cancelled.is_set():
-            raise KeyboardInterrupt()
+        self.cancellation.check()
 
     def work(self, task):
         return TaskRunner(
             runtime=self.runtime,
+            cancellation=self.cancellation,
             check_cancelled=self.check_cancelled,
             write=self.write,
             write_model=self.write_model,
@@ -383,15 +386,20 @@ class ConversationUI:
         try:
             kind, value = await asyncio.to_thread(self.work, task)
             self.flush_text()
+            notice_text = cancellation_notice(value.report) if kind == "cancelled" else str(value)
             if task == "/compact":
                 self.history = self.conversation.history
-                if kind == "error":
-                    self.append(f"压缩未完成：{value}\n")
-            elif kind == "error":
+                if kind in {"error", "cancelled"}:
+                    self.append(f"压缩未完成：{notice_text}\n")
+            elif kind in {"error", "cancelled"}:
                 if self.sandbox:
                     self.sandbox.guard.needs_review = True
                 self.history = (
-                    self.conversation.fail_task(transcript=self.blocks, emit=self.append)
+                    self.conversation.fail_task(
+                        transcript=self.blocks,
+                        emit=self.append,
+                        cancellation=value.report if kind == "cancelled" else None,
+                    )
                     if self.conversation
                     else ()
                 )
@@ -402,7 +410,7 @@ class ConversationUI:
                     if self.conversation
                     else RESET_NOTICE
                 )
-                self.append("\n" + value + "\n" + notice + "\n")
+                self.append("\n" + notice_text + "\n" + notice + "\n")
             elif kind == "result":
                 reset = value.status == "stopped" and not value.resumable
                 self.history = (
@@ -413,8 +421,14 @@ class ConversationUI:
                 if reset and self.status:
                     self.status.reset_context()
             self.phase = "就绪"
-            if kind == "error":
-                self.phase = "任务未完成，可重新输入"
+            if kind == "cancelled":
+                self.phase = (
+                    "已停止；进程清理未确认"
+                    if value.report["cleanup_status"] == "unknown"
+                    else "用户已停止，可重新输入"
+                )
+            elif kind == "error":
+                self.phase = "任务执行失败，可重新输入"
             elif kind == "result" and value.status != "completed":
                 self.phase = "任务尚未完成，可输入“继续”" if value.resumable else "任务未完成"
         finally:

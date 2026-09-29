@@ -4,6 +4,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from agent.session import SessionStore
+from host_support.cancellation import RunCancelled, cancellation_scope
 from tools._internal.web_backend import WebBackend
 
 from .execution_environment import open_execution_environment
@@ -23,7 +24,14 @@ def run_single_task(args, session, sandbox):
         sandbox.begin_task()
     print(session.thinking.describe())
     session.conversation.start_task(args.task)
-    result = session.runtime.run(args.task, history=session.conversation.history)
+    try:
+        with cancellation_scope(handle_sigint=True):
+            result = session.runtime.run(args.task, history=session.conversation.history)
+    except RunCancelled as error:
+        if sandbox is not None:
+            sandbox.guard.needs_review = True
+        session.conversation.fail_task(cancellation=error.report)
+        raise
     display_result(result)
     print(session.status.describe())
     writeback_ok = finish_writeback(sandbox, result, args.sandbox_writeback)

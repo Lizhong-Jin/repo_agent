@@ -10,6 +10,7 @@ from .execute import (
     GetExecutionEnvironmentTool,
     RunCommandTool,
     RunPythonTool,
+    RunShellTool,
 )
 from .filesystem import (
     ApplyPatchTool,
@@ -87,6 +88,12 @@ def create_default_tools(
             *(
                 [
                     RunCommandTool(
+                        workspace_root,
+                        execution_allowed=True,
+                        default_timeout_seconds=min(60, command_timeout_seconds),
+                        max_timeout_seconds=command_timeout_seconds,
+                    ),
+                    RunShellTool(
                         workspace_root,
                         execution_allowed=True,
                         default_timeout_seconds=min(60, command_timeout_seconds),

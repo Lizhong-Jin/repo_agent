@@ -7,13 +7,14 @@ access performed by the command. This tool is not an OS sandbox.
 
 import json
 import math
+import os
 import platform
 import shutil
 import sys
 import time
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -150,6 +151,7 @@ class GetExecutionEnvironmentTool:
 
     def _execution(self) -> dict[str, Any]:
         allowed = self.execution_allowed
+        bash = _bash_executable() if allowed else None
         report = {
             "mode": "isolated" if allowed else "local",
             "network": "unknown" if allowed else "not_exposed_by_execution_tools",
@@ -167,6 +169,21 @@ class GetExecutionEnvironmentTool:
                 "working_directory": str(self.workspace_root),
                 "command_execution_allowed": allowed,
                 "python_execution_allowed": allowed,
+                "shell_execution_allowed": bool(bash),
+                "shell": {
+                    "dialect": "bash",
+                    "executable": bash,
+                    "status": "available" if bash else "unavailable",
+                    "reason": (
+                        None
+                        if bash
+                        else "execution_disabled"
+                        if not allowed
+                        else "unsupported_platform"
+                        if sys.platform not in {"linux", "darwin"}
+                        else "bash_missing"
+                    ),
+                },
                 "tool_limits": {
                     "command_default_timeout_seconds": (
                         min(60, self.command_timeout_seconds) if allowed else None
@@ -295,8 +312,81 @@ class GetExecutionEnvironmentTool:
         return report
 
 
+# These tools share validation-result and writeback semantics. Keep host-side
+# proxy handling in sync through this one trusted catalog, never model input.
+PROCESS_EXECUTION_TOOLS = frozenset({"run_command", "run_python", "run_shell"})
+
+
+def _bash_executable() -> str | None:
+    """Resolve system Bash in the executor, never through the workspace PATH."""
+    if sys.platform not in {"linux", "darwin"}:
+        return None
+    for path in ("/bin/bash", "/usr/bin/bash"):
+        if Path(path).is_file() and os.access(path, os.X_OK):
+            return path
+    return None
+
+
+class _ProcessTool:
+    """Common cwd/timeout validation, launch errors and bounded process results."""
+
+    def _run(self, command, arguments) -> ToolResult:
+        cwd = arguments.get("cwd", ".")
+        if not isinstance(cwd, str) or not cwd.strip() or "\x00" in cwd:
+            return tool_error(
+                ToolErrorCode.INVALID_ARGUMENTS,
+                "cwd must be a non-empty string without NUL characters.",
+            )
+        timeout_seconds = arguments.get("timeout_seconds", self.default_timeout_seconds)
+        if (
+            type(timeout_seconds) is not int
+            or timeout_seconds <= 0
+            or timeout_seconds > self.max_timeout_seconds
+        ):
+            return tool_error(
+                ToolErrorCode.INVALID_ARGUMENTS,
+                "timeout_seconds must be a positive integer not exceeding "
+                f"{self.max_timeout_seconds}.",
+            )
+
+        try:
+            target_cwd = (self.workspace_root / cwd).resolve()
+            if is_credential_path(self.workspace_root / cwd, target_cwd):
+                return tool_error(ToolErrorCode.PROTECTED_FILE)
+            if not target_cwd.is_relative_to(self.workspace_root):
+                return tool_error(ToolErrorCode.PATH_OUTSIDE_WORKSPACE)
+            if not target_cwd.is_dir():
+                return tool_error(ToolErrorCode.NOT_A_DIRECTORY, f"cwd '{cwd}' is not a directory.")
+        except FileNotFoundError:
+            return tool_error(ToolErrorCode.FILE_NOT_FOUND, f"cwd '{cwd}' does not exist.")
+        except (OSError, RuntimeError):
+            return tool_error(ToolErrorCode.READ_ERROR, "cwd does not exist.")
+
+        try:
+            result = self.runner.run(command, cwd=target_cwd, timeout_seconds=timeout_seconds)
+        except ProcessStartError as error:
+            if isinstance(error.cause, FileNotFoundError):
+                return tool_error(
+                    ToolErrorCode.FILE_NOT_FOUND, "Unable to find the requested executable."
+                )
+            if isinstance(error.cause, PermissionError):
+                return tool_error(
+                    ToolErrorCode.PERMISSION_DENIED,
+                    "The command cannot be executed with current permissions.",
+                )
+            return tool_error("PROCESS_START_ERROR", "Unable to start the command.")
+
+        return ToolResult(
+            True,
+            {
+                "cwd": target_cwd.relative_to(self.workspace_root).as_posix(),
+                **asdict(result),
+            },
+        )
+
+
 # RunCommandTool
-class RunCommandTool:
+class RunCommandTool(_ProcessTool):
     """Run bounded, non-interactive subprocesses and capture their output."""
 
     execution_kind = ExecutionKind.SANDBOXED_PROCESS
@@ -347,6 +437,9 @@ class RunCommandTool:
                 "Run a non-interactive command in a workspace directory. "
                 "Pass the command as an argv array; shell syntax, pipes, "
                 "redirection, and command chaining are not interpreted. "
+                "Use run_shell for Bash syntax on supported executors. "
+                "On Windows, shell built-ins require an explicit interpreter; .bat/.cmd files "
+                "may be interpreted by the OS shell, so argv does not guarantee literal arguments. "
                 "stdout and stderr are captured with bounded output. "
                 "A non-zero exit code is returned as a normal command result. "
                 "To verify an expected failure (such as invalid input), use run_python "
@@ -428,63 +521,14 @@ class RunCommandTool:
             return tool_error(
                 ToolErrorCode.INVALID_ARGUMENTS, "First argument must be a non-empty string."
             )
-        cwd = arguments.get("cwd", ".")
-        if not isinstance(cwd, str) or not cwd.strip() or "\x00" in cwd:
-            return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS,
-                "cwd must be a non-empty string without NUL characters.",
-            )
-        timeout_seconds = arguments.get("timeout_seconds", self.default_timeout_seconds)
-        if (
-            type(timeout_seconds) is not int
-            or timeout_seconds <= 0
-            or timeout_seconds > self.max_timeout_seconds
-        ):
-            return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS,
-                "timeout_seconds must be a positive integer not exceeding "
-                f"{self.max_timeout_seconds}.",
-            )
-
-        try:
-            target_cwd = (self.workspace_root / cwd).resolve()
-            if is_credential_path(self.workspace_root / cwd, target_cwd):
-                return tool_error(ToolErrorCode.PROTECTED_FILE)
-            if not target_cwd.is_relative_to(self.workspace_root):
-                return tool_error(ToolErrorCode.PATH_OUTSIDE_WORKSPACE)
-            if not target_cwd.is_dir():
-                return tool_error(ToolErrorCode.NOT_A_DIRECTORY, f"cwd '{cwd}' is not a directory.")
-        except FileNotFoundError:
-            return tool_error(ToolErrorCode.FILE_NOT_FOUND, f"cwd '{cwd}' does not exist.")
-        except (OSError, RuntimeError):
-            return tool_error(ToolErrorCode.READ_ERROR, "cwd does not exist.")
-
-        try:
-            result = self.runner.run(command, cwd=target_cwd, timeout_seconds=timeout_seconds)
-        except ProcessStartError as error:
-            if isinstance(error.cause, FileNotFoundError):
-                return tool_error(
-                    ToolErrorCode.FILE_NOT_FOUND, "Unable to find the requested executable."
-                )
-            if isinstance(error.cause, PermissionError):
-                return tool_error(
-                    ToolErrorCode.PERMISSION_DENIED,
-                    "The command cannot be executed with current permissions.",
-                )
-            return tool_error("PROCESS_START_ERROR", "Unable to start the command.")
-
-        return ToolResult(
-            success=True,
-            data={
-                "command": command,
-                "cwd": target_cwd.relative_to(self.workspace_root).as_posix(),
-                **asdict(result),
-            },
+        result = self._run(command, arguments)
+        return (
+            replace(result, data={"command": command, **result.data}) if result.success else result
         )
 
 
 # RunPythonTool
-class RunPythonTool:
+class RunPythonTool(_ProcessTool):
     """Run bounded Python snippets in a separate subprocess."""
 
     execution_kind = ExecutionKind.SANDBOXED_PROCESS
@@ -600,59 +644,126 @@ class RunPythonTool:
                 ToolErrorCode.INVALID_ARGUMENTS,
                 "code must not contain NUL characters.",
             )
-        cwd = arguments.get("cwd", ".")
-        if not isinstance(cwd, str) or not cwd.strip() or "\x00" in cwd:
+        return self._run([self.python_executable, "-u", "-c", code], arguments)
+
+
+class RunShellTool(RunCommandTool):
+    """A Bash frontend to the same bounded process execution contract."""
+
+    execution_kind = ExecutionKind.SANDBOXED_PROCESS
+
+    def __init__(
+        self,
+        workspace_root: str | Path,
+        *,
+        execution_allowed: bool = False,
+        default_timeout_seconds: int = 60,
+        max_timeout_seconds: int = 120,
+        max_output_bytes: int = 32 * 1024,
+        max_script_bytes: int = 64 * 1024,
+        base_env: Mapping[str, str] | None = None,
+    ) -> None:
+        super().__init__(
+            workspace_root,
+            execution_allowed=execution_allowed,
+            default_timeout_seconds=default_timeout_seconds,
+            max_timeout_seconds=max_timeout_seconds,
+            max_output_bytes=max_output_bytes,
+            base_env=base_env,
+        )
+        if type(max_script_bytes) is not int or max_script_bytes <= 0:
+            raise ValueError("max_script_bytes must be a positive integer")
+        self.max_script_bytes = max_script_bytes
+        # Native replaces the runner with its already-supervised sandbox adapter.
+        # Docker/direct isolated callers also clean up observed background children.
+        self.runner.supervise_tree = True
+        for name in list(self.base_env):
+            if name in {"BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS"} or name.startswith(
+                "BASH_FUNC_"
+            ):
+                self.base_env.pop(name)
+
+    @property
+    def definition(self) -> ToolDefinition:
+        parameters = deepcopy(super().definition.parameters)
+        del parameters["properties"]["command"]
+        parameters["properties"]["script"] = {
+            "type": "string",
+            "minLength": 1,
+            "description": f"Bash source, at most {self.max_script_bytes} UTF-8 bytes.",
+        }
+        parameters["required"] = ["script"]
+        return ToolDefinition(
+            name="run_shell",
+            description=(
+                "Run a non-interactive Bash script for pipelines, redirection, loops or multiline "
+                "commands. Use run_command for a single executable with literal argv arguments. "
+                "Each call is independent: cwd, variables and functions do not persist. "
+                "Uses system Bash on Linux/macOS, including Linux Docker on a Windows host. "
+                "Direct Windows execution is unsupported; never converts to PowerShell or cmd. "
+                "No login/profile/startup scripts or inherited Bash functions are loaded. "
+                "pipefail is enabled, but errexit and nounset are not: use && or explicit checks "
+                "when later steps depend on earlier success. The exit code is the script's final "
+                "status, not proof that every command succeeded. Do not launch detached services. "
+                "Timeout covers execution and output collection, at most "
+                f"{self.max_timeout_seconds} seconds, plus bounded cleanup. "
+                "Output does not extend the deadline. "
+                "Nonzero exits are normal results. Timeouts retain bounded stdout/stderr with "
+                "status=timed_out and output_complete=false; "
+                "cleanup_status reports cleanup separately."
+            ),
+            parameters=parameters,
+        )
+
+    def execute(self, arguments: dict[str, Any]) -> ToolResult:
+        if not isinstance(arguments, dict):
+            return tool_error(ToolErrorCode.INVALID_ARGUMENTS)
+        if not self.execution_allowed:
+            return tool_error("SANDBOX_REQUIRED", "Shell execution requires an isolated executor.")
+        if set(arguments) - {"script", "cwd", "timeout_seconds"}:
+            return tool_error(
+                ToolErrorCode.INVALID_ARGUMENTS, "Allowed arguments: script, cwd, timeout_seconds."
+            )
+        script = arguments.get("script")
+        if not isinstance(script, str) or not script.strip() or "\x00" in script:
             return tool_error(
                 ToolErrorCode.INVALID_ARGUMENTS,
-                "cwd must be a non-empty string without NUL characters.",
+                "script must be non-empty Bash source without NUL characters.",
             )
-        timeout_seconds = arguments.get("timeout_seconds", self.default_timeout_seconds)
-        if (
-            type(timeout_seconds) is not int
-            or timeout_seconds <= 0
-            or timeout_seconds > self.max_timeout_seconds
-        ):
+        try:
+            if len(script.encode("utf-8")) > self.max_script_bytes:
+                return tool_error(
+                    "SCRIPT_TOO_LARGE", f"Shell script exceeds {self.max_script_bytes} UTF-8 bytes."
+                )
+        except UnicodeEncodeError:
+            return tool_error(ToolErrorCode.UNSUPPORTED_ENCODING)
+        # Check at execution time, not registration: Windows hosts build Linux
+        # Docker tool schemas locally, but the worker selects the actual shell.
+        if sys.platform not in {"linux", "darwin"}:
             return tool_error(
-                ToolErrorCode.INVALID_ARGUMENTS,
-                "timeout_seconds must be a positive integer not exceeding "
-                f"{self.max_timeout_seconds}.",
+                "SHELL_UNSUPPORTED_PLATFORM",
+                "run_shell requires Linux/macOS Bash. On Windows use Linux Docker "
+                "or run_command with an explicitly chosen Windows executable.",
             )
-
-        try:
-            target_cwd = (self.workspace_root / cwd).resolve()
-            if is_credential_path(self.workspace_root / cwd, target_cwd):
-                return tool_error(ToolErrorCode.PROTECTED_FILE)
-            if not target_cwd.is_relative_to(self.workspace_root):
-                return tool_error(ToolErrorCode.PATH_OUTSIDE_WORKSPACE)
-            if not target_cwd.is_dir():
-                return tool_error(ToolErrorCode.NOT_A_DIRECTORY, f"cwd '{cwd}' is not a directory.")
-        except FileNotFoundError:
-            return tool_error(ToolErrorCode.FILE_NOT_FOUND, f"cwd '{cwd}' does not exist.")
-        except (OSError, RuntimeError):
-            return tool_error(ToolErrorCode.READ_ERROR, "cwd does not exist.")
-
-        try:
-            result = self.runner.run(
-                [self.python_executable, "-u", "-c", code],
-                cwd=target_cwd,
-                timeout_seconds=timeout_seconds,
-            )
-        except ProcessStartError as error:
-            if isinstance(error.cause, FileNotFoundError):
-                return tool_error(
-                    ToolErrorCode.FILE_NOT_FOUND, "Unable to find the requested executable."
-                )
-            if isinstance(error.cause, PermissionError):
-                return tool_error(
-                    ToolErrorCode.PERMISSION_DENIED,
-                    "The command cannot be executed with current permissions.",
-                )
-            return tool_error("PROCESS_START_ERROR", "Unable to start the command.")
-
-        return ToolResult(
-            success=True,
-            data={
-                "cwd": target_cwd.relative_to(self.workspace_root).as_posix(),
-                **asdict(result),
-            },
+        executable = _bash_executable()
+        if executable is None:
+            return tool_error("SHELL_UNAVAILABLE", "System Bash was not found in /bin or /usr/bin.")
+        # -p also suppresses BASH_ENV/functions/options if a sandbox adapter
+        # supplies its own environment. This flag does not establish isolation.
+        command = [
+            executable,
+            "--noprofile",
+            "--norc",
+            "-p",
+            "-o",
+            "pipefail",
+            "-c",
+            script,
+            "repo-agent-shell",
+        ]
+        result = self._run(command, arguments)
+        return (
+            replace(result, data={"shell": "bash", "shell_executable": executable, **result.data})
+            if result.success
+            else result
         )

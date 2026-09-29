@@ -3,10 +3,12 @@
 import subprocess
 import sys
 
+from host_support.cancellation import RunCancelled
 from llm import ConfigurationError, LLMError
 
 from .application import run_application
 from .arguments import parse_arguments, validate_execution_options
+from .cancellation import cancellation_notice
 from .commands import dispatch_command, review_sandbox
 from .startup import configuration_hint, prepare_model, startup_environment
 
@@ -30,6 +32,8 @@ def _main(argv=None) -> None:
     try:
         if not run_application(args, capabilities):
             parser.exit(1)
+    except RunCancelled as error:
+        parser.exit(130, cancellation_notice(error.report) + "\n")
     except ConfigurationError as error:
         parser.exit(1, f"模型配置不完整或无效：{error}\n{hint}\n")
     except (LLMError, ValueError, OSError, subprocess.SubprocessError) as error:

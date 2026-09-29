@@ -7,6 +7,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
+from host_support.cancellation import RunCancelled, current_cancellation
 from tools._internal.base import ToolResult
 from tools._internal.process_runner import ProcessRunner
 
@@ -131,15 +132,27 @@ class DockerBackend:
             finally:
                 # Killing the Docker client alone does not terminate its container.
                 self.healthy = False
-                cleanup = subprocess.run(
-                    [self.executable, "rm", "-f", container],
-                    capture_output=True,
-                    timeout=15,
-                    check=False,
-                )
-                if cleanup.returncode and b"No such container" not in cleanup.stderr:
-                    raise OSError("Sandbox 容器清理失败；停止会话，请检查 Docker。")
+                context = current_cancellation()
+                try:
+                    cleanup = subprocess.run(
+                        [self.executable, "rm", "-f", container],
+                        capture_output=True,
+                        timeout=15,
+                        check=False,
+                    )
+                    if cleanup.returncode and b"No such container" not in cleanup.stderr:
+                        raise OSError("Sandbox 容器清理失败；停止会话，请检查 Docker。")
+                except Exception as error:
+                    if context is not None:
+                        context.record_cleanup(
+                            "unknown", container=container, error=type(error).__name__
+                        )
+                        if context.event.is_set():
+                            raise RunCancelled(context) from error
+                    raise
                 self.healthy = True
+                if context is not None:
+                    context.record_cleanup("confirmed", container=container)
             if result.timed_out or result.exit_code != 0 or result.stdout_truncated:
                 return ToolResult(
                     False,

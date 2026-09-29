@@ -1,6 +1,7 @@
 """Coordinate a saved conversation with either terminal UI and the sandbox."""
 
 import hashlib
+import json
 from dataclasses import replace
 from uuid import uuid4
 
@@ -201,8 +202,11 @@ class SavedConversation:
         self.pending_task = None
         self.status.reset_context()
 
-    def fail_task(self, *, transcript=None, emit=print):
-        self._chat("[任务未完成；部分操作可能已经执行，请核实文件状态]\n")
+    def fail_task(self, *, transcript=None, emit=print, cancellation=None):
+        if cancellation is not None:
+            self._chat("[用户主动停止] " + json.dumps(cancellation, ensure_ascii=False) + "\n")
+        else:
+            self._chat("[任务未完成；部分操作可能已经执行，请核实文件状态]\n")
         self._interrupted()
         self.checkpoint(transcript=transcript, emit=emit)
         return self.history

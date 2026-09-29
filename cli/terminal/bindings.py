@@ -82,7 +82,7 @@ def create_bindings(ui):
             return
         if ui.busy:
             ui.cancelled.set()
-            ui.phase = "正在停止；等待当前网络读取或工具安全结束…"
+            ui.phase = "正在停止；正在取消请求并等待安全收尾…"
         else:
             ui.editor.text = ""
             ui.phase = "输入已清空；Ctrl+D 退出"

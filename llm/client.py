@@ -7,12 +7,15 @@ import math
 import os
 import random
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Self
 
 import httpx
+
+from host_support.async_bridge import AsyncBridge
+from host_support.cancellation import RunCancelled, cancellable, checkpoint, current_cancellation
 
 from .adapters import ADAPTERS
 from .errors import (
@@ -88,6 +91,7 @@ class _ClientCore:
         if not isinstance(api_key, str) or not api_key.strip():
             raise ConfigurationError(f"Set {self.provider.api_key_env} or pass api_key explicitly")
         api_key = api_key.strip()
+        self._request_config = replace(config, api_key=api_key)
         self.adapter = ADAPTERS[self.provider.api_format](self.provider.name, config.model)
         base = config.base_url if config.base_url is not None else self.provider.base_url
         try:
@@ -212,6 +216,9 @@ class LLMClient(_ClientCore):
     def __init__(self, config: LLMConfig, *, http_client: httpx.Client | None = None) -> None:
         super().__init__(config)
         self._owned = http_client is None
+        self._default_transport = http_client is None
+        self._async_bridge = None
+        self._async_client = None
         self._http = http_client if http_client is not None else httpx.Client()
         self._context_limit_loaded = False
         self._context_limit = None
@@ -239,8 +246,20 @@ class LLMClient(_ClientCore):
         return self.generate_with_events(request)
 
     def generate_with_events(self, request: LLMRequest, on_event=None) -> LLMResponse:
+        context = current_cancellation()
+        if context is not None and self._default_transport:
+            if self._async_bridge is None:
+                self._async_bridge = AsyncBridge()
+
+            async def generate():
+                if self._async_client is None:
+                    self._async_client = AsyncLLMClient(self._request_config)
+                return await self._async_client.generate_with_events(request, on_event)
+
+            return self._async_bridge.run(generate())
         events = RequestEvents(on_event)
         try:
+            checkpoint()
             result = self._generate(request, events)
             if not events.first_thinking and (
                 (result.usage and result.usage.reasoning_tokens)
@@ -257,6 +276,7 @@ class LLMClient(_ClientCore):
     def _generate(self, request: LLMRequest, events: RequestEvents) -> LLMResponse:
         body = self._body(request)
         for attempt in range(self.config.max_retries + 1):
+            checkpoint()
             try:
                 with self._http.stream(
                     "POST",
@@ -276,6 +296,7 @@ class LLMClient(_ClientCore):
                                 events.end_thinking,
                             )
                             for line in response.iter_lines():
+                                checkpoint()
                                 events.data()
                                 assembler.feed(line)
                                 if assembler.done:
@@ -295,12 +316,27 @@ class LLMClient(_ClientCore):
                 ) from None
             if not error.retryable or attempt == self.config.max_retries:
                 raise error
-            time.sleep(self._delay(response, attempt))
+            context = current_cancellation()
+            if context is None:
+                time.sleep(self._delay(response, attempt))
+            else:
+                context.wait(self._delay(response, attempt))
         raise AssertionError("unreachable")
 
     def close(self) -> None:
-        if self._owned:
-            self._http.close()
+        try:
+            if self._async_bridge is not None:
+
+                async def close_async():
+                    if self._async_client is not None:
+                        await self._async_client.aclose()
+
+                self._async_bridge.close(close_async())
+                self._async_bridge = None
+                self._async_client = None
+        finally:
+            if self._owned:
+                self._http.close()
 
     def __enter__(self) -> Self:
         return self
@@ -321,7 +357,7 @@ class AsyncLLMClient(_ClientCore):
     async def generate_with_events(self, request: LLMRequest, on_event=None) -> LLMResponse:
         events = RequestEvents(on_event)
         try:
-            result = await self._generate(request, events)
+            result = await cancellable(self._generate(request, events))
             if not events.first_thinking and (
                 (result.usage and result.usage.reasoning_tokens)
                 or has_thinking_state(self.provider.api_format, result.message.provider_state)
@@ -337,6 +373,7 @@ class AsyncLLMClient(_ClientCore):
     async def _generate(self, request: LLMRequest, events: RequestEvents) -> LLMResponse:
         body = self._body(request)
         for attempt in range(self.config.max_retries + 1):
+            checkpoint()
             try:
                 async with self._http.stream(
                     "POST",
@@ -364,6 +401,12 @@ class AsyncLLMClient(_ClientCore):
                         await response.aread()
                         events.data()
                         return self._decode(response, events)
+            except KeyboardInterrupt:
+                context = current_cancellation()
+                if context is None:
+                    raise
+                context.cancel()
+                raise RunCancelled(context) from None
             except httpx.TimeoutException as exc:
                 raise LLMTimeoutError(
                     f"Model {type(exc).__name__}: connection or data wait timed out; not retried",
