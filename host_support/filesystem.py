@@ -130,8 +130,11 @@ def current_file_access():
 class FileAccess:
     """Pin directories and refuse link traversal at actual I/O time."""
 
-    def __init__(self, root, *, policy, protected_paths=(), read_only_paths=()):
+    def __init__(
+        self, root, *, policy, protected_paths=(), read_only_paths=(), directory_backend=None
+    ):
         self.root = Path(root)
+        self.directory_backend = directory_backend
         self.protected_paths = tuple(protected_paths)
         self.read_only_paths = tuple(read_only_paths)
         self.policy = policy
@@ -160,6 +163,13 @@ class FileAccess:
     @contextmanager
     def directory(self, path):
         parts = self._parts(path)
+        if self.directory_backend is not None:
+            fd = self.directory_backend.directory(self.root_fd, parts)
+            try:
+                yield fd
+            finally:
+                os.close(fd)
+            return
         fd = os.dup(self.root_fd)
         try:
             for part in parts:
@@ -206,9 +216,14 @@ class FileAccess:
             raise PermissionError("Path changed to a symbolic link")
         return info
 
+    def _directory_names(self, fd):
+        if self.directory_backend is not None:
+            return self.directory_backend.names(fd)
+        return list_directory(fd)
+
     def iterdir(self, path):
         with self.directory(path) as fd:
-            names = list_directory(fd)
+            names = self._directory_names(fd)
         for name in names:
             yield Path(path) / name
 
@@ -229,12 +244,13 @@ class FileAccess:
             root = pending.pop()
             dirs, files = [], []
             try:
-                for entry in self.iterdir(root):
-                    try:
-                        info = self.stat(entry)
-                    except OSError:
-                        continue
-                    (dirs if stat.S_ISDIR(info.st_mode) else files).append(entry.name)
+                with self.read_directory(root) as directory:
+                    for name in directory.names():
+                        try:
+                            info = directory.stat(name)
+                        except OSError:
+                            continue
+                        (dirs if stat.S_ISDIR(info.st_mode) else files).append(name)
             except OSError:
                 continue
             yield root, dirs, files
@@ -265,23 +281,23 @@ class FileAccess:
             if part == "**":
                 pending.append((path, index + 1))
             try:
-                entries = list(self.iterdir(path))
+                with self.read_directory(path) as directory:
+                    for name in directory.names():
+                        entry = path / name
+                        try:
+                            info = directory.stat(name)
+                        except OSError:
+                            continue
+                        if part == "**":
+                            if stat.S_ISDIR(info.st_mode):
+                                pending.append((entry, index))
+                            elif index == len(parts) - 1 and sys.version_info >= (3, 13):
+                                pending.append((entry, index + 1))
+                        elif fnmatchcase(name, part):
+                            if index + 1 == len(parts) or stat.S_ISDIR(info.st_mode):
+                                pending.append((entry, index + 1))
             except OSError:
                 continue
-            for entry in entries:
-                try:
-                    info = self.stat(entry)
-                except OSError:
-                    continue
-                if part == "**":
-                    if stat.S_ISDIR(info.st_mode):
-                        pending.append((entry, index))
-                    elif index == len(parts) - 1 and sys.version_info >= (3, 13):
-                        # Match pathlib's Python 3.13+ terminal ** behaviour.
-                        pending.append((entry, index + 1))
-                elif fnmatchcase(entry.name, part):
-                    if index + 1 == len(parts) or stat.S_ISDIR(info.st_mode):
-                        pending.append((entry, index + 1))
 
     def mkdir(self, path, *, parents=False, exist_ok=False):
         parts = self._parts(path, write=True)
@@ -360,7 +376,7 @@ class _DescriptorDirectoryReader(DirectoryReader):
 
     def names(self):
         self._check()
-        return list_directory(self.fd)
+        return self.access._directory_names(self.fd)
 
     def stat(self, name):
         self._check(name)

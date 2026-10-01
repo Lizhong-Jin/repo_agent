@@ -15,6 +15,7 @@ include rust/Cargo.lock
 include rust/Cargo.toml
 include rust/README.md
 include rust/build.rs
+include rust/filesystem/mod.rs
 include rust/policy_scan/README.md
 include rust/policy_scan/src/engine.rs
 include rust/policy_scan/src/fs.rs

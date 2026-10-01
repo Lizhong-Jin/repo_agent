@@ -103,15 +103,14 @@ repo-agent --configure-model
 | `AGENT_WEB_SEARCH_PROVIDER` | `off` | `brave` 启用主进程 Web 搜索；命令沙箱继续断网，详见 [Web 搜索](web-search.md) |
 | `AGENT_WEB_FETCH_ENABLED` | `false` | `true` 独立启用公开网页读取及缓存分页，不需要搜索密钥；详见 [Web 页面读取](web-fetch.md) |
 | `BRAVE_SEARCH_API_KEY` | 空 | Brave Search API 密钥；配置查看时隐藏，使用 `config set BRAVE_SEARCH_API_KEY` 隐藏输入 |
-| `AGENT_NATIVE_SCANNER` | `python` | Linux native 策略扫描：`python` 或 `rust`；Rust 扩展须单独安装到 Agent 环境，显式选择失败不降级；不改变 macOS Seatbelt、Windows local 或 Docker 的实现 |
+| `AGENT_NATIVE_SCANNER` | `python` | Linux 策略扫描及 macOS 工作区检查、目录枚举、相对路径打开：`python` 或 `rust`；需安装对应扩展，显式失败不降级；Seatbelt 规则、Windows local 和 Docker 不变 |
 | `AGENT_SANDBOX_WRITEBACK` | `manual` | 仅 Docker：`manual` 手动回写；`on-success` 按检查结果自动回写；local/native 忽略此配置 |
-| `AGENT_NATIVE_SCANNER` | `python` | Linux native 隔离策略扫描后端：`python` / `rust`；选择 Rust 前确认可选扩展安装成功 |
 | `AGENT_SANDBOX_VERIFY_COMMAND` | 空 | on-success 回写前的最终验证命令，使用 JSON 参数数组 |
 | `LLM_EXTRA_JSON` | `{}` | 高级厂商原生请求参数，须为 JSON 对象，不允许覆盖统一字段或与显式思考配置冲突 |
 
 `AGENT_SYSTEM_PROMPT` 留空使用 [agent/prompt.py](../agent/prompt.py) 的通用提示词；非空只替换基础提示词，技能发现和按需加载仍可用。代码工作流程由内置 `coding` 技能提供，依赖加载及升级后的旧正文处理见 [Skills](skills.md#系统提示词与技能分工)。
 
-`AGENT_NATIVE_SCANNER` 在 Linux native 扫描器初始化时核验。目前配置命令尚未校验该项枚举，且未配置时 `config show` 显示为空，运行时仍默认使用 `python`；请按上表填写小写取值。`config validate` 也不验证可选扩展能否加载。扩展构建和验证见 [Rust 扫描器说明](../rust/policy_scan/README.md)。
+`AGENT_NATIVE_SCANNER` 在 Linux/macOS native 后端初始化时核验。目前配置命令尚未校验该项枚举，且未配置时 `config show` 显示为空，运行时仍默认使用 `python`；请按上表填写小写取值。`config validate` 也不验证可选扩展能否加载。扩展构建和验证见 [Rust 扫描器说明](../rust/policy_scan/README.md)。
 
 普通设置遵循上文优先级。例如下面的临时参数会覆盖项目及用户 `.env`：
 

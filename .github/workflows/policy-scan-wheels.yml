@@ -63,9 +63,9 @@ jobs:
         run: |
           python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
           python -m pip install --no-deps --no-index rust_wheels/*.whl
-          python -c 'import repo_agent_scan; assert repo_agent_scan.API_VERSION == 1'
+          python -c 'import repo_agent_scan; assert repo_agent_scan.API_VERSION == 1; assert repo_agent_scan.FILESYSTEM_API_VERSION == 1'
           python -c 'import sys, tomllib; from pathlib import Path; from scripts.rust_wheels import select_rust_wheel; version = tomllib.loads(Path("rust/pyproject.toml").read_text())["project"]["version"]; assert select_rust_wheel(Path("rust_wheels"), "${{ matrix.platform }}", sys.version.split()[0], version) is not None'
-          python -m pytest -q tests/test_rust_policy_scan.py tests/test_policy_scan_contract.py
+          python -m pytest -q tests/test_rust_policy_scan.py tests/test_policy_scan_contract.py tests/test_rust_filesystem.py tests/test_native_file_layer.py tests/test_rust_cross_build.py
       - uses: actions/upload-artifact@v4
         with:
           name: rust-scanner-${{ matrix.platform }}

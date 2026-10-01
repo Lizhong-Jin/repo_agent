@@ -83,9 +83,18 @@ class MacOSNativeBackend(NativeBackendBase):
     def _platform_setup(self):
         if sys.platform != "darwin":
             raise ValueError("native 沙箱仅支持 macOS/Linux；不会退回未隔离执行")
+        from host_support.rust_filesystem import select_directory_backend
+
+        self.directory_backend = select_directory_backend()
         self.executable = Path("/usr/bin/sandbox-exec")
         if not self.executable.is_file():
             raise ValueError("未找到 macOS sandbox-exec；不会退回未隔离执行")
+
+    def _check_workspace(self):
+        backend = getattr(self, "directory_backend", None)
+        if backend is None:
+            return super()._check_workspace()
+        backend.check_workspace(self.workspace)
 
     def _read_paths(self):
         paths = {

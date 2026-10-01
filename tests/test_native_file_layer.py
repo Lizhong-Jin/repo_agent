@@ -16,9 +16,20 @@ from tools._internal.process_runner import ProcessResult
 from tools.factory import create_file_tools
 
 
-@pytest.fixture(params=[NativeBackend, LinuxNativeBackend], ids=["macos", "linux"])
+@pytest.fixture(
+    params=[(NativeBackend, False), (LinuxNativeBackend, False), (NativeBackend, True)],
+    ids=["macos-python", "linux-python", "macos-rust"],
+)
 def backend(tmp_path, request, monkeypatch):
-    backend = object.__new__(request.param)
+    cls, rust = request.param
+    backend = object.__new__(cls)
+    if rust:
+        native = pytest.importorskip("repo_agent_scan")
+        if getattr(native, "FILESYSTEM_API_VERSION", None) != 1:
+            pytest.skip("Rebuild the filesystem extension")
+        from host_support.rust_filesystem import RustFilesystem
+
+        backend.directory_backend = RustFilesystem()
     backend.workspace = tmp_path / "project"
     backend.workspace.mkdir()
     backend.python = Path(sys.executable)
@@ -237,6 +248,19 @@ def test_read_rechecks_actual_opened_object(backend, monkeypatch, replacement):
         return original(path, flags, *args, **kwargs)
 
     monkeypatch.setattr(os, "open", race)
+    directory_backend = getattr(backend, "directory_backend", None)
+    if replacement == "parent_symlink" and directory_backend is not None:
+        original_directory = directory_backend.directory
+
+        def race_rust_directory(fd, parts):
+            nonlocal changed
+            if parts and not changed:
+                changed = True
+                target.parent.rename(root / "old-src")
+                (root / "src").symlink_to(outside, target_is_directory=True)
+            return original_directory(fd, parts)
+
+        monkeypatch.setattr(directory_backend, "directory", race_rust_directory)
     result = call(backend, "read_file", reads=[{"path": "src/file"}])
     assert changed and not result.success
     assert "SYNTHETIC_SECRET" not in str(result)
@@ -327,7 +351,7 @@ def test_directory_swap_never_enumerates_external_tree(backend, monkeypatch, nam
     outside = root.parent / "outside-dir"
     outside.mkdir()
     (outside / "SYNTHETIC_SECRET_NAME").write_text("SYNTHETIC_SECRET")
-    method = "read_directory" if name == "search_files" else "iterdir"
+    method = "iterdir" if name == "list_files" else "read_directory"
     original = getattr(FileAccess, method)
     changed = False
 
@@ -348,7 +372,7 @@ def test_directory_swap_never_enumerates_external_tree(backend, monkeypatch, nam
         with original(self, path) as reader:
             yield reader
 
-    monkeypatch.setattr(FileAccess, method, race_reader if name == "search_files" else race)
+    monkeypatch.setattr(FileAccess, method, race if name == "list_files" else race_reader)
     result = backend.execute(root, name, args)
     assert changed
     assert "SYNTHETIC_SECRET_NAME" not in str(result)

@@ -87,7 +87,7 @@ Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独
 
 安装时从内层归档（Windows 为已展开文件）部署共享运行时，再在最终路径创建 `.venv`，不搬迁已经创建的虚拟环境。构建输出目录与安装目录是两回事；安装后仍位于用户数据目录的 `repo-agent/versions/<版本>/`。
 
-Rust 源码统一位于 `rust/`。手工编译使用 `python scripts/build_rust.py build`，构建 wheel 使用 `python scripts/build_rust.py wheel`，最终产物默认写入 `rust_wheels/`；完整发行归档仍写入 `dist/`。详见 [Rust 构建入口](../rust/README.md)。
+Rust 源码统一位于 `rust/`。手工编译使用 `python scripts/build_rust.py build`，构建 wheel 使用 `python scripts/build_rust.py wheel`，两者默认尝试全部四种 Linux/macOS 目标，缺少工具链时提示安装并返回非零状态，`--target host` 可仅构建本机。最终产物默认写入 `rust_wheels/`；完整发行归档仍写入 `dist/`。详见 [Rust 构建入口](../rust/README.md)。
 
 可选 Rust 策略扫描器以独立的平台 wheel `repo-agent-policy-scan` 随完整发行包分发，主应用仍为通用 Python wheel。构建器优先从 `--rust-wheelhouse` 指定目录选择扩展；未指定时先搜索 `--wheelhouse`；随后搜索项目根目录 `rust_wheels/`。按扩展版本、目标平台和 CPython ABI3 筛选，Linux 只接受符合当前发行基线的 manylinux wheel，不接受依赖本机环境的 `linux_*` 标签。找到后复制到包内 `wheels/`，通过 `release.json` 的 `rust_wheel` 字段和文件哈希登记。
 

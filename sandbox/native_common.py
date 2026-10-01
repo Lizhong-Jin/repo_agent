@@ -397,7 +397,12 @@ class NativeBackendBase:
         )
         selected = getattr(self, "project_python", None)
         readonly = (*self.read_paths, *(selected.read_paths if selected else ()))
-        access = FileAccess(self.workspace, protected_paths=protected, read_only_paths=readonly)
+        access = FileAccess(
+            self.workspace,
+            protected_paths=protected,
+            read_only_paths=readonly,
+            directory_backend=getattr(self, "directory_backend", None),
+        )
         try:
             with access.activate():
                 result = tool.execute(arguments)

@@ -214,4 +214,4 @@ Runtime 负责同步任务循环、轮数限制和输出截断恢复。CLI 通�
 
 </details>
 
-Rust 编译：`python scripts/build_rust.py build`；wheel 打包：`python scripts/build_rust.py wheel`。构建与离线选项见 [Rust 构建入口](../rust/README.md)。
+Rust 编译：`python scripts/build_rust.py build`；wheel 打包：`python scripts/build_rust.py wheel`。默认构建全部四种目标，缺少工具链时提示安装；仅本机使用 `--target host`，环境检查使用 `--check`。构建与离线选项见 [Rust 构建入口](../rust/README.md)。

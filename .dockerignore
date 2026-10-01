@@ -30,6 +30,8 @@ cli/terminal/**
 dependencies/node/**
 !llm/adapters
 llm/adapters/**
+!rust/filesystem
+rust/filesystem/**
 !rust/policy_scan
 rust/policy_scan/**
 !tools/_internal
@@ -125,6 +127,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !host_support/probes.py
 !host_support/processes.py
 !host_support/python_environments.py
+!host_support/rust_filesystem.py
 !host_support/storage.py
 !host_support/supervision.py
 !host_support/windows_files.py
@@ -142,6 +145,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !installer/release_install.py
 !installer/release_manifest.py
 !installer/rust_extension.py
+!installer/rust_targets.py
 !installer/setup.py
 !installer/toolchains.py
 !installer/uninstall.py
@@ -175,6 +179,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !rust/Cargo.toml
 !rust/README.md
 !rust/build.rs
+!rust/filesystem/mod.rs
 !rust/policy_scan/README.md
 !rust/policy_scan/src/engine.rs
 !rust/policy_scan/src/fs.rs

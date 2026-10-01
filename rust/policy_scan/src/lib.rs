@@ -1,8 +1,10 @@
 //! Optional batch scanner. Python remains responsible for backend composition.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-compile_error!("The policy scanner supports Linux and macOS differential testing only");
+compile_error!("The native extension supports Linux and macOS only");
 
 mod engine;
+#[path = "../../filesystem/mod.rs"]
+mod filesystem;
 mod fs;
 
 use pyo3::exceptions::{PyOSError, PyValueError};
@@ -136,6 +138,7 @@ fn scan(py: Python<'_>, config: &Bound<'_, PyDict>) -> PyResult<Py<PyDict>> {
 
 #[pymodule]
 fn repo_agent_scan(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    filesystem::register(m)?;
     m.add("API_VERSION", 1)?;
     m.add_function(wrap_pyfunction!(scan, m)?)?;
     Ok(())

@@ -1,9 +1,10 @@
 # Optional Rust policy scanner
 
 This companion extension implements `PolicyScanner.scan(plan, request)` for Linux
-native isolation. macOS is supported for differential tests, not Linux isolation.
-The application's Python scanner remains the default. This does not replace text
-search or the `DirectoryReader` implementation.
+native isolation. The companion now also includes a macOS native filesystem
+backend in `rust/filesystem/`, described in [the build guide](../README.md).
+The application's Python scanner remains the default. Text matching stays in Python; macOS directory enumeration and path opening
+can use Rust under the existing scoped `DirectoryReader` contract.
 
 ## Build and select
 
@@ -31,8 +32,8 @@ Final artifacts are retained in `rust_wheels/`; temporary Cargo output is cleane
 To build manually from the repository root:
 
 ```sh
-python scripts/build_rust.py build
-python scripts/build_rust.py wheel
+python scripts/build_rust.py build --target host
+python scripts/build_rust.py wheel --target host
 # Use the exact wheel path printed above, with the Agent's Python interpreter:
 python -m pip install --no-deps rust_wheels/<generated-wheel-filename>.whl
 export AGENT_NATIVE_SCANNER=rust

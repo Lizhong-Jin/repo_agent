@@ -1,9 +1,11 @@
 """Optional Rust scanner builds and binary installation; bootstrap uses only stdlib."""
 
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 
 from host_support.paths import installed_python
@@ -12,8 +14,9 @@ from host_support.platforms import PlatformInfo
 from .install_network import run_download
 from .install_packages import source_flags
 from .release_manifest import digest
+from .rust_targets import RUST_TRIPLES
 
-RUST_TARGETS = {"linux-x86_64", "linux-arm64", "macos-x86_64", "macos-arm64"}
+RUST_TARGETS = set(RUST_TRIPLES)
 
 
 def _build_source(root):
@@ -39,11 +42,28 @@ def _publish(source, output):
     return destination
 
 
-def build_rust_library(root, python, output=None, *, offline=False):
-    """Compile the host extension without requiring pip or maturin."""
+def build_rust_library(root, python, output=None, *, offline=False, target=None, **wheel_options):
+    """Compile a library; host uses Cargo, cross targets reuse the wheel toolchain."""
     source = _build_source(root)
     host = PlatformInfo.detect()
+    selected = target or host.target
+    if selected not in RUST_TRIPLES:
+        raise ValueError(f"不支持的 Rust 平台：{selected}")
     output = Path(output) if output is not None else Path(root) / "rust_wheels"
+    if selected != host.target:
+        # Maturin manages target linkers/ABI configuration; retain only the library for build.
+        with tempfile.TemporaryDirectory(prefix="repo-agent-cross-library-") as temporary:
+            wheel = build_rust_wheel(
+                root, python, temporary, offline=offline, target=selected, **wheel_options
+            )
+            with zipfile.ZipFile(wheel) as archive:
+                libraries = [name for name in archive.namelist() if name.endswith(".so")]
+                if len(libraries) != 1:
+                    raise ValueError("Rust wheel 未包含唯一扩展动态库")
+                suffix = "dylib" if selected.startswith("macos-") else "so"
+                library = Path(temporary) / f"librepo_agent_scan.{suffix}"
+                library.write_bytes(archive.read(libraries[0]))
+            return _publish(library, output / selected)
     with tempfile.TemporaryDirectory(prefix="repo-agent-rust-") as temporary:
         target = Path(temporary) / "target"
         command = [
@@ -61,12 +81,7 @@ def build_rust_library(root, python, output=None, *, offline=False):
             command.append("--offline")
         env = {**os.environ, "CARGO_TARGET_DIR": str(target), "PYO3_PYTHON": str(python)}
         # Specify the host explicitly so user Cargo cross-target defaults cannot mislabel output.
-        triple = {
-            "linux-x86_64": "x86_64-unknown-linux-gnu",
-            "linux-arm64": "aarch64-unknown-linux-gnu",
-            "macos-x86_64": "x86_64-apple-darwin",
-            "macos-arm64": "aarch64-apple-darwin",
-        }[host.target]
+        triple = RUST_TRIPLES[selected]
         command.extend(["--target", triple])
         subprocess.run(command, env=env, cwd=temporary, check=True)
         suffix = "dylib" if host.target.startswith("macos-") else "so"
@@ -83,6 +98,7 @@ def build_rust_wheel(
     wheelhouse=None,
     compatibility=None,
     build_isolation=True,
+    target=None,
 ):
     """Build outside the workspace; publish only this invocation's completed wheel."""
     source = _build_source(root)
@@ -98,8 +114,25 @@ def build_rust_wheel(
         env = {**os.environ, "CARGO_TARGET_DIR": str(Path(temporary) / "target")}
         if offline:
             env["CARGO_NET_OFFLINE"] = "true"
+        arguments = ["--locked"]
+        if target is not None:
+            if target not in RUST_TRIPLES:
+                raise ValueError(f"不支持的 Rust 平台：{target}")
+            arguments.extend(["--target", RUST_TRIPLES[target]])
+            if target != PlatformInfo.detect().target:
+                env["PYO3_CROSS"] = "1"
+                env["PYO3_NO_PYTHON"] = "1"
+                if target.startswith("linux-"):
+                    arguments.append("--zig")
+                    env.setdefault("CARGO_ZIGBUILD_CACHE_DIR", str(Path(temporary) / "zig-tools"))
+                    env.setdefault("ZIG_GLOBAL_CACHE_DIR", str(Path(temporary) / "zig-cache"))
+            if target.startswith("macos-"):
+                env["MACOSX_DEPLOYMENT_TARGET"] = "11.0" if target.endswith("arm64") else "10.15"
+            elif compatibility is None:
+                compatibility = "manylinux_2_28"
         if compatibility is not None:
-            env["MATURIN_PEP517_ARGS"] = f"--locked --compatibility {compatibility}"
+            arguments.extend(["--compatibility", compatibility])
+        env["MATURIN_PEP517_ARGS"] = shlex.join(arguments)
         run_download(
             [
                 str(python),
@@ -169,7 +202,8 @@ def install_rust_extension(root, *, release=None, offline=False, wheelhouse=None
                     "-c",
                     "import repo_agent_scan; "
                     "assert repo_agent_scan.API_VERSION == 1; "
-                    "assert callable(repo_agent_scan.scan)",
+                    "assert callable(repo_agent_scan.scan); "
+                    "assert repo_agent_scan.FILESYSTEM_API_VERSION == 1",
                 ],
                 cwd=temporary,
                 check=True,

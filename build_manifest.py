@@ -39,6 +39,7 @@ NATIVE_SOURCES = ("rust/README.md", "scripts/build_rust.py") + tuple(
         "policy_scan/src/lib.rs",
         "policy_scan/src/fs.rs",
         "policy_scan/src/engine.rs",
+        "filesystem/mod.rs",
     )
 )
 INSTALL_SCRIPTS = (
