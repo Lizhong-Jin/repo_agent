@@ -87,20 +87,20 @@ Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独
 
 安装时从内层归档（Windows 为已展开文件）部署共享运行时，再在最终路径创建 `.venv`，不搬迁已经创建的虚拟环境。构建输出目录与安装目录是两回事；安装后仍位于用户数据目录的 `repo-agent/versions/<版本>/`。
 
-Rust 源码统一位于 `rust/`。手工编译使用 `python scripts/build_rust.py build`，构建 wheel 使用 `python scripts/build_rust.py wheel`，两者默认尝试全部四种 Linux/macOS 目标，缺少工具链时提示安装并返回非零状态，`--target host` 可仅构建本机。最终产物默认写入 `rust_wheels/`；完整发行归档仍写入 `dist/`。详见 [Rust 构建入口](../rust/README.md)。
+Rust 源码统一位于 `rust/`。手工编译使用 `python scripts/build_rust.py build`，构建 wheel 使用 `python scripts/build_rust.py wheel`，两者默认尝试全部四种 Linux/macOS 目标，缺少工具链时提示安装并返回非零状态，`--target host` 可仅构建本机。最终产物默认写入 `rust_wheels/<版本>/`；完整发行归档仍写入 `dist/`。详见 [Rust 构建入口](../rust/README.md)。
 
-可选 Rust 策略扫描器以独立的平台 wheel `repo-agent-policy-scan` 随完整发行包分发，主应用仍为通用 Python wheel。构建器优先从 `--rust-wheelhouse` 指定目录选择扩展；未指定时先搜索 `--wheelhouse`；随后搜索项目根目录 `rust_wheels/`。按扩展版本、目标平台和 CPython ABI3 筛选，Linux 只接受符合当前发行基线的 manylinux wheel，不接受依赖本机环境的 `linux_*` 标签。找到后复制到包内 `wheels/`，通过 `release.json` 的 `rust_wheel` 字段和文件哈希登记。
+可选 Rust 策略扫描器以独立的平台 wheel `rust-backend` 随完整发行包分发，主应用仍为通用 Python wheel。构建器优先从 `--rust-wheelhouse` 指定目录选择扩展；未指定时先搜索 `--wheelhouse`；随后搜索项目 `rust_wheels/<当前版本>/`。显式目录支持版本子目录结构或平铺的 wheelhouse。按扩展版本、目标平台和 CPython ABI3 筛选，Linux 只接受符合当前发行基线的 manylinux wheel，不接受依赖本机环境的 `linux_*` 标签。找到后复制到包内 `wheels/`，通过 `release.json` 的 `rust_wheel` 字段和文件哈希登记。
 
-没有匹配的预编译 wheel 时，只对与构建机相同的平台尝试本机编译，生成的 wheel 保存在 `rust_wheels/`；其他平台需要预先提供 wheel，不会自动跨平台编译。缺少编译器、构建失败或没有兼容产物时，默认提示并生成仅含 Python 扫描器的包。正式发布可使用 `--require-rust`，确保全部 Linux/macOS 目标含 Rust 扩展；任一缺失都会在替换发行归档前失败。Windows 当前不支持此扩展，不要求也不附带它。
+没有匹配的预编译 wheel 时，只对与构建机相同的平台尝试本机编译，生成的 wheel 保存在 `rust_wheels/<版本>/`；其他平台需要预先提供 wheel，不会自动跨平台编译。缺少编译器、构建失败或没有兼容产物时，默认提示并生成仅含 Python 扫描器的包。正式发布可使用 `--require-rust`，确保全部 Linux/macOS 目标含 Rust 扩展；任一缺失都会在替换发行归档前失败。Windows 当前不支持此扩展，不要求也不附带它。
 
 ```bash
-# 将 CI 产出的各平台 Rust wheel 汇总到项目 rust_wheels/ 后打包
+# 将 CI 产出的各平台 Rust wheel 汇总到项目 rust_wheels/<版本>/ 后打包
 .venv/bin/python scripts/build_release.py --require-rust
 # 只构建一个平台，同样可使用预编译 wheel，无需本机安装 Rust 编译器
 .venv/bin/python scripts/build_release.py --target linux-arm64 --rust-wheelhouse /path/to/rust_wheels --require-rust
 ```
 
-工作流 `.github/workflows/policy-scan-wheels.yml` 构建 Linux/macOS 的 x86_64、arm64 四种 wheel，执行加载及差分测试后保存为工作流产物；不自动发布。Linux 使用 manylinux 2.28，macOS 最低版本为 x86_64 的 10.15 和 arm64 的 11.0。源码归档仍包含构建输入。构建细节见 [Rust 扫描器说明](../rust/policy_scan/README.md)。
+工作流 `.github/workflows/policy-scan-wheels.yml` 构建 Linux/macOS 的 x86_64、arm64 四种 wheel，执行加载及差分测试后保存为工作流产物；不自动发布。Linux 使用 manylinux 2.28，macOS 最低版本为 x86_64 的 10.15 和 arm64 的 11.0。源码归档仍包含构建输入。构建细节见 [Rust 扫描器说明](../rust/docs/policy-scan.md)。
 
 发行包安装直接安装已登记并校验的 Rust wheel，不下载、不编译，也不需要用户安装 Rust/Cargo/maturin。扩展为可选组件，安装或加载失败不会撤销核心安装；旧发行包没有 `rust_wheel` 字段时继续按 Python 扫描器安装。默认扫描器仍为 `python`，安装成功后可显式选择 `rust`。
 

@@ -70,6 +70,7 @@ def test_prerequisite_diagnostics_do_not_install_tools(monkeypatch, tmp_path):
 def test_cross_wheel_uses_target_and_abi3_without_host_python(monkeypatch, tmp_path, target, flag):
     (tmp_path / "rust").mkdir()
     (tmp_path / "rust/Cargo.toml").touch()
+    (tmp_path / "rust/pyproject.toml").write_text('[project]\nversion="0.1.0"\n')
     monkeypatch.setattr(PlatformInfo, "detect", lambda: PlatformInfo("macos", "arm64"))
     monkeypatch.setattr(rust_extension.shutil, "which", lambda name: name)
 
@@ -82,7 +83,7 @@ def test_cross_wheel_uses_target_and_abi3_without_host_python(monkeypatch, tmp_p
         else:
             assert env["MACOSX_DEPLOYMENT_TARGET"] == "10.15"
         output = Path(command[command.index("--wheel-dir") + 1])
-        (output / "repo_agent_policy_scan-0.1.0-cp311-abi3-test.whl").write_bytes(b"wheel")
+        (output / "rust_backend-0.1.0-cp311-abi3-test.whl").write_bytes(b"wheel")
 
     monkeypatch.setattr(rust_extension, "run_download", build)
     assert (

@@ -24,6 +24,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - name: Read backend version
+        run: python -c 'from pathlib import Path; from installer.rust_extension import rust_version; print("RUST_BACKEND_VERSION=" + rust_version(Path.cwd()))' >> "$GITHUB_ENV"
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --component clippy --component rustfmt
       - name: Prepare Python tools
@@ -39,7 +41,7 @@ jobs:
       - name: Build and install platform wheel
         run: |
           python scripts/build_rust.py wheel --target host --no-build-isolation --compatibility linux
-          python -m pip install rust_wheels/*.whl
-          python -c 'import repo_agent_scan; assert repo_agent_scan.API_VERSION == 1; assert repo_agent_scan.FILESYSTEM_API_VERSION == 1'
+          python -m pip install rust_wheels/${{ env.RUST_BACKEND_VERSION }}/rust_backend-*.whl
+          python -c 'import rust_backend; assert rust_backend.API_VERSION == 1; assert rust_backend.FILESYSTEM_API_VERSION == 1'
       - name: Differential and integration contracts
         run: python -m pytest -q -ra tests/test_rust_policy_scan.py tests/test_policy_scan_contract.py tests/test_rust_filesystem.py tests/test_native_file_layer.py tests/test_rust_cross_build.py tests/test_linux_policy_scan.py tests/test_linux_merged_preflight.py tests/test_wsl_drivers.py

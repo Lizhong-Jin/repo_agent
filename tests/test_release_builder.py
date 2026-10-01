@@ -206,7 +206,7 @@ def test_release_embeds_matching_rust_binary_in_integrity_manifest(
     from installer.paths import extract_files
 
     root, output, _ = build_inputs
-    wheel = tmp_path / "repo_agent_policy_scan-0.1.0-cp311-abi3-manylinux_2_28_x86_64.whl"
+    wheel = tmp_path / "rust_backend-0.1.0-cp311-abi3-manylinux_2_28_x86_64.whl"
     wheel.write_bytes(b"platform-binary")
     monkeypatch.setattr(builder, "prepare_rust_wheels", lambda *a, **kw: {"linux-x86_64": wheel})
     archive = builder.build(root, output, "uv", target="linux-x86_64", require_rust=True)[0]
@@ -224,7 +224,7 @@ def test_release_embeds_matching_rust_binary_in_integrity_manifest(
 
 @pytest.mark.parametrize(
     "name",
-    ["../other.whl", "wheels/not-the-scanner.whl", "wheels/repo_agent_policy_scan-missing.whl"],
+    ["../other.whl", "wheels/not-the-scanner.whl", "wheels/rust_backend-missing.whl"],
 )
 def test_release_rejects_untracked_or_invalid_rust_wheel(builder, build_inputs, tmp_path, name):
     from installer.paths import extract_files

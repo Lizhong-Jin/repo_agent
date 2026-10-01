@@ -13,7 +13,7 @@ from tools._internal.file_access import FileAccess
 
 @pytest.fixture
 def native():
-    extension = pytest.importorskip("repo_agent_scan")
+    extension = pytest.importorskip("rust_backend")
     if getattr(extension, "FILESYSTEM_API_VERSION", None) != 1:
         pytest.skip("Rebuild the filesystem extension")
     return RustFilesystem()
@@ -112,7 +112,7 @@ def test_selection_is_explicit_and_rejects_old_extension(monkeypatch):
         select_directory_backend()
     monkeypatch.setenv("AGENT_NATIVE_SCANNER", "rust")
     monkeypatch.setitem(
-        __import__("sys").modules, "repo_agent_scan", SimpleNamespace(API_VERSION=1)
+        __import__("sys").modules, "rust_backend", SimpleNamespace(API_VERSION=1)
     )
     with pytest.raises(RuntimeError, match="版本"):
         select_directory_backend()

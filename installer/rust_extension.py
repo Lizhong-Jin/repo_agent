@@ -1,10 +1,12 @@
 """Optional Rust scanner builds and binary installation; bootstrap uses only stdlib."""
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import zipfile
 from pathlib import Path
 
@@ -17,6 +19,19 @@ from .release_manifest import digest
 from .rust_targets import RUST_TRIPLES
 
 RUST_TARGETS = set(RUST_TRIPLES)
+
+
+def rust_version(root):
+    """Read the extension version once; it must be a safe directory component."""
+    version = tomllib.loads((Path(root) / "rust/pyproject.toml").read_text())["project"]["version"]
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9][A-Za-z0-9.!+_-]*", version):
+        raise ValueError("Rust 扩展版本不是有效的目录名")
+    return version
+
+
+def artifact_directory(root, output=None):
+    base = Path(output) if output is not None else Path(root) / "rust_wheels"
+    return base / rust_version(root)
 
 
 def _build_source(root):
@@ -49,7 +64,7 @@ def build_rust_library(root, python, output=None, *, offline=False, target=None,
     selected = target or host.target
     if selected not in RUST_TRIPLES:
         raise ValueError(f"不支持的 Rust 平台：{selected}")
-    output = Path(output) if output is not None else Path(root) / "rust_wheels"
+    output = artifact_directory(root, output)
     if selected != host.target:
         # Maturin manages target linkers/ABI configuration; retain only the library for build.
         with tempfile.TemporaryDirectory(prefix="repo-agent-cross-library-") as temporary:
@@ -61,7 +76,7 @@ def build_rust_library(root, python, output=None, *, offline=False, target=None,
                 if len(libraries) != 1:
                     raise ValueError("Rust wheel 未包含唯一扩展动态库")
                 suffix = "dylib" if selected.startswith("macos-") else "so"
-                library = Path(temporary) / f"librepo_agent_scan.{suffix}"
+                library = Path(temporary) / f"librust_backend.{suffix}"
                 library.write_bytes(archive.read(libraries[0]))
             return _publish(library, output / selected)
     with tempfile.TemporaryDirectory(prefix="repo-agent-rust-") as temporary:
@@ -85,7 +100,7 @@ def build_rust_library(root, python, output=None, *, offline=False, target=None,
         command.extend(["--target", triple])
         subprocess.run(command, env=env, cwd=temporary, check=True)
         suffix = "dylib" if host.target.startswith("macos-") else "so"
-        library = target / triple / "release" / f"librepo_agent_scan.{suffix}"
+        library = target / triple / "release" / f"librust_backend.{suffix}"
         return _publish(library, output / host.target)
 
 
@@ -102,7 +117,7 @@ def build_rust_wheel(
 ):
     """Build outside the workspace; publish only this invocation's completed wheel."""
     source = _build_source(root)
-    output = Path(output) if output is not None else Path(root) / "rust_wheels"
+    output = artifact_directory(root, output)
     flags = (
         ["--no-index"]
         if offline and not build_isolation and wheelhouse is None
@@ -152,7 +167,7 @@ def build_rust_wheel(
             env=env,
             cwd=temporary,
         )
-        wheels = list(staged.glob("repo_agent_policy_scan-*.whl"))
+        wheels = list(staged.glob(f"rust_backend-{output.name}-*.whl"))
         if len(wheels) != 1:
             raise ValueError("Rust 构建未生成唯一的扩展 wheel")
         return _publish(wheels[0], output)
@@ -200,10 +215,10 @@ def install_rust_extension(root, *, release=None, offline=False, wheelhouse=None
                     str(python),
                     "-I",
                     "-c",
-                    "import repo_agent_scan; "
-                    "assert repo_agent_scan.API_VERSION == 1; "
-                    "assert callable(repo_agent_scan.scan); "
-                    "assert repo_agent_scan.FILESYSTEM_API_VERSION == 1",
+                    "import rust_backend; "
+                    "assert rust_backend.API_VERSION == 1; "
+                    "assert callable(rust_backend.scan); "
+                    "assert rust_backend.FILESYSTEM_API_VERSION == 1",
                 ],
                 cwd=temporary,
                 check=True,

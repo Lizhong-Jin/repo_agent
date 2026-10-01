@@ -18,15 +18,15 @@ class RustPolicyScanner:
         if sys.platform not in {"linux", "darwin"}:
             raise ValueError("Rust policy scanner supports Linux and macOS testing only")
         try:
-            import repo_agent_scan
+            import rust_backend
         except ImportError as error:
             raise RuntimeError(
                 "Rust 扫描扩展未安装或无法加载；请先构建并安装 rust/ 下的扩展，"
                 "或显式选择 AGENT_NATIVE_SCANNER=python"
             ) from error
-        if repo_agent_scan.API_VERSION != 1:
+        if rust_backend.API_VERSION != 1:
             raise RuntimeError("Rust 扫描扩展接口版本不兼容，请重新构建 rust/ 下的扩展")
-        self._native = repo_agent_scan
+        self._native = rust_backend
 
     def scan(self, plan: PolicyPlan, request: ScanRequest) -> ScanResult:
         table = MountTable(request.mount_snapshot)

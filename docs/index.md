@@ -42,7 +42,7 @@
 | [模型目录](model-catalog.md) | 模型字段、能力匹配、上下文回退和独立请求策略 |
 | [代码组织](code-organization.md) | 目录归属、依赖方向、安装兼容入口与验证 |
 | [Rust 编译与打包](../rust/README.md) | 统一构建命令、rust_wheels 产物目录、离线构建和发行集成 |
-| [可选 Rust 策略扫描器](../rust/policy_scan/README.md) | 独立扩展构建、Linux 后端选择、等价性测试与分发边界 |
+| [可选 Rust 策略扫描器](../rust/docs/policy-scan.md) | 独立扩展构建、Linux 后端选择、等价性测试与分发边界 |
 | [构建与分发](distribution.md) | 全平台完整包、版本与平台目录、离线构建、产物校验与安装验收 |
 
 ## 文档维护约定

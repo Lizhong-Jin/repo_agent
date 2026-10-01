@@ -49,25 +49,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - name: Read backend version
+        run: python -c 'from pathlib import Path; from installer.rust_extension import rust_version; print("RUST_BACKEND_VERSION=" + rust_version(Path.cwd()))' >> "$GITHUB_ENV"
       - name: Build ABI3 platform wheel
         uses: PyO3/maturin-action@v1
         with:
           command: build
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
-          args: --manifest-path rust/Cargo.toml --release --locked --out rust_wheels
+          args: --manifest-path rust/Cargo.toml --release --locked --out rust_wheels/${{ env.RUST_BACKEND_VERSION }}
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/policy-scan-target
           MACOSX_DEPLOYMENT_TARGET: ${{ startsWith(matrix.platform, 'macos-arm') && '11.0' || '10.15' }}
       - name: Verify wheel selection and native import
         run: |
           python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
-          python -m pip install --no-deps --no-index rust_wheels/*.whl
-          python -c 'import repo_agent_scan; assert repo_agent_scan.API_VERSION == 1; assert repo_agent_scan.FILESYSTEM_API_VERSION == 1'
+          python -m pip install --no-deps --no-index rust_wheels/${{ env.RUST_BACKEND_VERSION }}/rust_backend-*.whl
+          python -c 'import rust_backend; assert rust_backend.API_VERSION == 1; assert rust_backend.FILESYSTEM_API_VERSION == 1'
           python -c 'import sys, tomllib; from pathlib import Path; from scripts.rust_wheels import select_rust_wheel; version = tomllib.loads(Path("rust/pyproject.toml").read_text())["project"]["version"]; assert select_rust_wheel(Path("rust_wheels"), "${{ matrix.platform }}", sys.version.split()[0], version) is not None'
           python -m pytest -q tests/test_rust_policy_scan.py tests/test_policy_scan_contract.py tests/test_rust_filesystem.py tests/test_native_file_layer.py tests/test_rust_cross_build.py
       - uses: actions/upload-artifact@v4
         with:
-          name: rust-scanner-${{ matrix.platform }}
-          path: rust_wheels/*.whl
+          name: rust-backend-${{ env.RUST_BACKEND_VERSION }}-${{ matrix.platform }}
+          path: rust_wheels/
           if-no-files-found: error

@@ -61,7 +61,7 @@ python3 -m venv .venv
 | GPU | [算子验证](gpu-operators.md#验证边界) | Docker / native 各有开关，必须有实际 NVIDIA GPU 和所需依赖 |
 | 发行安装 | [安装验收](distribution.md#校验失败处理与安装验收) | 显式提供当前平台完整包，使用受管 Python 离线安装；测试以模拟 Docker 验证构建入口 |
 | Windows 文件与安装契约 | [Windows 文件服务](platform-adaptation.md#windows-文件服务) | 共享文件契约可跨平台运行；Windows 内核用例只能在 Windows 运行 |
-| 可选 Rust 扫描器（源码位于 `rust/`，产物位于 `rust_wheels/`） | [构建与差分验证](../rust/policy_scan/README.md#verify) | 单独安装扩展后运行差分测试；未安装时相关用例会跳过，主包不要求 Rust 编译器 |
+| 可选 Rust 扫描器（源码位于 `rust/`，产物位于 `rust_wheels/<版本>/`） | [构建与差分验证](../rust/docs/policy-scan.md#verify) | 单独安装扩展后运行差分测试；未安装时相关用例会跳过，主包不要求 Rust 编译器 |
 | Windows ZIP 实装 | [ZIP 验收](distribution.md#校验失败处理与安装验收) | Windows x86_64、PowerShell 5.1+，设置 `REPO_AGENT_WINDOWS_ARCHIVE` |
 | Windows Docker 回写 | [真实容器往返](platform-adaptation.md#windows-文件服务) | `RUN_WINDOWS_DOCKER_TESTS=1`；Git for Windows、Docker Desktop Linux 容器模式及本地镜像 |
 

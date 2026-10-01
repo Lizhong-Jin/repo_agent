@@ -1,12 +1,11 @@
 [package]
-name = "repo-agent-policy-scan"
+name = "rust-backend"
 version = "0.2.0"
 edition = "2021"
 rust-version = "1.85"
 
 [lib]
-path = "policy_scan/src/lib.rs"
-name = "repo_agent_scan"
+name = "rust_backend"
 crate-type = ["cdylib", "rlib"]
 
 [features]

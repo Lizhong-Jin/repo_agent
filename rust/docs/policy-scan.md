@@ -2,15 +2,15 @@
 
 This companion extension implements `PolicyScanner.scan(plan, request)` for Linux
 native isolation. The companion now also includes a macOS native filesystem
-backend in `rust/filesystem/`, described in [the build guide](../README.md).
+backend in `rust/src/filesystem/`, described in [the build guide](../README.md).
 The application's Python scanner remains the default. Text matching stays in Python; macOS directory enumeration and path opening
 can use Rust under the existing scoped `DirectoryReader` contract.
 
 ## Build and select
 
 The crate and Python packaging root is `rust/`: `Cargo.toml`, `Cargo.lock`,
-`build.rs`, and `pyproject.toml` live there. This directory contains scanner
-source and documentation; `[lib].path` points to `policy_scan/src/lib.rs`.
+`build.rs`, and `pyproject.toml` live there. The shared crate entry is `src/lib.rs`; scanner bindings and implementation
+live in `src/policy_scan/`, and shared errors live in `src/error.rs`.
 
 Source installation automatically attempts to build and install this extension
 after the core installation commits. It requires Rust >= 1.85 (`cargo` and
@@ -27,7 +27,7 @@ It never invokes a compiler. Missing or unloadable optional wheels do not undo t
 core installation. Legacy releases without a wheel remain supported.
 
 Shared build entry points and offline options are documented in [rust/README.md](../README.md).
-Final artifacts are retained in `rust_wheels/`; temporary Cargo output is cleaned.
+Final artifacts are retained in `rust_wheels/<version>/`; temporary Cargo output is cleaned.
 
 To build manually from the repository root:
 
@@ -35,7 +35,7 @@ To build manually from the repository root:
 python scripts/build_rust.py build --target host
 python scripts/build_rust.py wheel --target host
 # Use the exact wheel path printed above, with the Agent's Python interpreter:
-python -m pip install --no-deps rust_wheels/<generated-wheel-filename>.whl
+python -m pip install --no-deps rust_wheels/<version>/<generated-wheel-filename>.whl
 export AGENT_NATIVE_SCANNER=rust
 ```
 
@@ -48,7 +48,7 @@ Use an external build directory: Cargo can create hardlinked artifacts, which th
 existing native workspace validator deliberately rejects. Do not relax workspace
 validation or exclude build trees to work around this.
 
-The extension is a separate platform wheel (`repo-agent-policy-scan`), with PyO3
+The extension is a separate platform wheel (`rust-backend`), with PyO3
 abi3 for CPython >= 3.11. Install it into the Agent's own Python environment.
 The main application's universal wheel remains separate from the native binary.
 Source archives include this directory. Do not copy a macOS wheel to WSL/Linux.

@@ -110,7 +110,7 @@ repo-agent --configure-model
 
 `AGENT_SYSTEM_PROMPT` 留空使用 [agent/prompt.py](../agent/prompt.py) 的通用提示词；非空只替换基础提示词，技能发现和按需加载仍可用。代码工作流程由内置 `coding` 技能提供，依赖加载及升级后的旧正文处理见 [Skills](skills.md#系统提示词与技能分工)。
 
-`AGENT_NATIVE_SCANNER` 在 Linux/macOS native 后端初始化时核验。目前配置命令尚未校验该项枚举，且未配置时 `config show` 显示为空，运行时仍默认使用 `python`；请按上表填写小写取值。`config validate` 也不验证可选扩展能否加载。扩展构建和验证见 [Rust 扫描器说明](../rust/policy_scan/README.md)。
+`AGENT_NATIVE_SCANNER` 在 Linux/macOS native 后端初始化时核验。目前配置命令尚未校验该项枚举，且未配置时 `config show` 显示为空，运行时仍默认使用 `python`；请按上表填写小写取值。`config validate` 也不验证可选扩展能否加载。扩展构建和验证见 [Rust 扫描器说明](../rust/docs/policy-scan.md)。
 
 普通设置遵循上文优先级。例如下面的临时参数会覆盖项目及用户 `.env`：
 

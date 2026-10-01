@@ -111,9 +111,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --
 
 源码安装创建专用 `.venv`，自动安装开发依赖 pytest、Ruff 和构建工具，将模板复制到用户配置，并把 `repo-agent`、`repo-agent-build-sandbox` 安装到 `~/.local/bin`。默认补充 Bash / Zsh 的 PATH；打开新终端或执行安装结尾打印的命令。其他 shell 自行配置 PATH。源码和安装目录需要保留，命令依赖其中的虚拟环境。
 
-Linux/macOS 源码安装在核心安装成功后自动尝试编译并安装 Rust 策略扫描扩展。需要已有 Rust >= 1.85（cargo/rustc）和 C 链接器，安装器不会自动安装编译器；maturin 构建依赖在隔离环境中准备，Cargo 中间产物写入项目外的临时目录，最终 wheel 保留到源码根目录 `rust_wheels/`。手工编译和打包入口见 [Rust 构建说明](../rust/README.md)。缺少工具、下载或编译失败、取消该可选步骤均只提示，不撤销核心安装。离线编译需要本地 maturin wheel 和已缓存的 Cargo 依赖，准备不足时跳过扩展。
+Linux/macOS 源码安装在核心安装成功后自动尝试编译并安装 Rust 策略扫描扩展。需要已有 Rust >= 1.85（cargo/rustc）和 C 链接器，安装器不会自动安装编译器；maturin 构建依赖在隔离环境中准备，Cargo 中间产物写入项目外的临时目录，最终 wheel 保留到源码根目录 `rust_wheels/<版本>/`。手工编译和打包入口见 [Rust 构建说明](../rust/README.md)。缺少工具、下载或编译失败、取消该可选步骤均只提示，不撤销核心安装。离线编译需要本地 maturin wheel 和已缓存的 Cargo 依赖，准备不足时跳过扩展。
 
-附带预编译扩展的发行包会直接安装并验证包内 Rust wheel，安装机不需要 Rust 编译器，也不联网编译。Windows 当前不支持此扩展。安装扩展不会修改扫描器配置，默认仍为 `AGENT_NATIVE_SCANNER=python`；Linux/macOS 用户可改为 `rust` 启用，macOS 文件系统后端需要 0.2.0 或更新扩展。若旧配置显式选择了 `rust` 而本次扩展安装失败，应改回 `python` 或补装扩展后再运行。详情见 [Rust 扫描器说明](../rust/policy_scan/README.md)。
+附带预编译扩展的发行包会直接安装并验证包内 Rust wheel，安装机不需要 Rust 编译器，也不联网编译。Windows 当前不支持此扩展。安装扩展不会修改扫描器配置，默认仍为 `AGENT_NATIVE_SCANNER=python`；Linux/macOS 用户可改为 `rust` 启用，macOS 文件系统后端需要 0.2.0 或更新扩展。若旧配置显式选择了 `rust` 而本次扩展安装失败，应改回 `python` 或补装扩展后再运行。详情见 [Rust 扫描器说明](../rust/docs/policy-scan.md)。
 
 首次在目标项目运行 `repo-agent` 时，若缺少模型或 Key，交互终端会引导设置；也可先运行 `repo-agent config model`。安装本身无需模型信息。已有用户配置会按新模板重建，保留仍有效的旧值（含显式空值），补充新增项，丢弃模板已移除的项；替换前自动备份。新模板与内置默认值的区别见[配置参考](configuration.md#模板与内置默认值)。
 

@@ -262,7 +262,7 @@ def main():
     parser.add_argument(
         "--rust-wheelhouse",
         type=Path,
-        help="预编译 Rust wheel 目录；未指定时搜索 --wheelhouse，随后搜索项目 rust_wheels/",
+        help="Rust wheel 根目录或版本目录；未指定时搜索 --wheelhouse，随后搜索 rust_wheels/<版本>/",
     )
     parser.add_argument(
         "--require-rust",

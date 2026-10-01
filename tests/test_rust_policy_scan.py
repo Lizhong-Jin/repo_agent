@@ -23,7 +23,7 @@ from tools._internal.file_policy import PROTECTED_NAME_RULES
 
 @pytest.fixture
 def engines():
-    pytest.importorskip("repo_agent_scan")
+    pytest.importorskip("rust_backend")
     return PythonPolicyScanner(), RustPolicyScanner()
 
 
@@ -330,9 +330,9 @@ def test_cancel_during_native_scan_and_no_descriptor_leak(engines, tmp_path):
 def test_missing_or_incompatible_extension_is_not_a_silent_fallback(monkeypatch):
     from types import SimpleNamespace
 
-    monkeypatch.setitem(sys.modules, "repo_agent_scan", None)
+    monkeypatch.setitem(sys.modules, "rust_backend", None)
     with pytest.raises(RuntimeError, match="未安装或无法加载"):
         create_policy_scanner("rust")
-    monkeypatch.setitem(sys.modules, "repo_agent_scan", SimpleNamespace(API_VERSION=-1))
+    monkeypatch.setitem(sys.modules, "rust_backend", SimpleNamespace(API_VERSION=-1))
     with pytest.raises(RuntimeError, match="接口版本"):
         create_policy_scanner("rust")

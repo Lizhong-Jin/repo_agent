@@ -24,7 +24,7 @@ def backend(tmp_path, request, monkeypatch):
     cls, rust = request.param
     backend = object.__new__(cls)
     if rust:
-        native = pytest.importorskip("repo_agent_scan")
+        native = pytest.importorskip("rust_backend")
         if getattr(native, "FILESYSTEM_API_VERSION", None) != 1:
             pytest.skip("Rebuild the filesystem extension")
         from host_support.rust_filesystem import RustFilesystem

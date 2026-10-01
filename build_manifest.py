@@ -35,11 +35,13 @@ NATIVE_SOURCES = ("rust/README.md", "scripts/build_rust.py") + tuple(
         "Cargo.lock",
         "build.rs",
         "pyproject.toml",
-        "policy_scan/README.md",
-        "policy_scan/src/lib.rs",
-        "policy_scan/src/fs.rs",
-        "policy_scan/src/engine.rs",
-        "filesystem/mod.rs",
+        "docs/policy-scan.md",
+        "src/lib.rs",
+        "src/error.rs",
+        "src/policy_scan/mod.rs",
+        "src/policy_scan/directory.rs",
+        "src/policy_scan/engine.rs",
+        "src/filesystem/mod.rs",
     )
 )
 INSTALL_SCRIPTS = (

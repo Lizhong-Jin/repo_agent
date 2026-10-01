@@ -3,14 +3,13 @@
 import shutil
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 from packaging.tags import cpython_tags
 from packaging.utils import parse_wheel_filename
 
 from host_support.platforms import PlatformInfo, release_target
-from installer.rust_extension import RUST_TARGETS, build_rust_wheel
+from installer.rust_extension import RUST_TARGETS, build_rust_wheel, rust_version
 
 
 def select_rust_wheel(directory, target, python_version, version):
@@ -25,9 +24,13 @@ def select_rust_wheel(directory, target, python_version, version):
         if tag.abi == "abi3"
     }
     candidates = []
-    for wheel in sorted(Path(directory).glob("repo_agent_policy_scan-*.whl")):
+    # Accept a versioned artifact root or an explicitly supplied flat wheelhouse.
+    directory = Path(directory)
+    wheels = set(directory.glob("rust_backend-*.whl"))
+    wheels.update((directory / version).glob("rust_backend-*.whl"))
+    for wheel in sorted(wheels):
         name, candidate_version, _, tags = parse_wheel_filename(wheel.name)
-        if name != "repo-agent-policy-scan" or str(candidate_version) != version:
+        if name != "rust-backend" or str(candidate_version) != version:
             continue
         matching = tags & supported.keys()
         if matching:
@@ -37,7 +40,7 @@ def select_rust_wheel(directory, target, python_version, version):
 
 def prepare_rust_wheels(root, records, output, *, wheelhouse=None, offline=False, required=False):
     """Use prebuilt wheels first; only attempt a local build for the actual host target."""
-    version = tomllib.loads((root / "rust/pyproject.toml").read_text())["project"]["version"]
+    version = rust_version(root)
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     selected = {}

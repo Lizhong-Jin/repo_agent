@@ -1,10 +1,8 @@
 # Rust 基础能力
 
 项目的 Rust 构建根目录统一为 `rust/`，Cargo 和 Python 打包配置集中放在这里。
-当前只有一个 PyO3 扩展 crate，`policy_scan/` 保留策略扫描源码和模块说明，
-通过 `Cargo.toml` 的 `[lib].path` 指向 `policy_scan/src/lib.rs`。
-后续同一扩展的目录扫描和文件系统基础能力可按职责增加源码模块，共用根目录构建配置。
-如果未来需要多个独立 crate，再引入 Cargo workspace；各独立 crate 仍需自己的包清单。
+当前只有一个 PyO3 扩展 crate，标准入口为 `src/lib.rs`。入口只负责注册各能力模块，
+共享错误转换、文件系统原语和策略扫描实现各自独立组织：
 
 ```text
 rust/
@@ -13,17 +11,22 @@ rust/
 ├── build.rs
 ├── pyproject.toml
 ├── README.md
-├── filesystem/mod.rs  # macOS 工作区检查、fd 相对路径遍历与目录枚举
-└── policy_scan/
-    ├── README.md
-    └── src/
-        ├── lib.rs
-        ├── fs.rs
-        └── engine.rs
+├── docs/policy-scan.md
+└── src/
+    ├── lib.rs                # Python 模块入口
+    ├── error.rs              # 共享错误与 Python 异常转换
+    ├── filesystem/mod.rs     # fd 操作、枚举、macOS 工作区检查
+    └── policy_scan/
+        ├── mod.rs            # 策略扫描绑定、输入转换与名称规则
+        ├── directory.rs      # 策略扫描所需的目录事实读取
+        └── engine.rs         # Linux 策略扫描引擎
 ```
 
-迁移只调整源码路径，不改变发行包名 `repo-agent-policy-scan`、模块名
-`repo_agent_scan` 或扫描器的语义。目前不支持 Windows。
+Cargo/Python 发行包名统一为 **`rust-backend`**，Python 模块名为 **`rust_backend`**。
+wheel 文件按 Python 规范使用下划线，例如 `rust_backend-0.2.0-…whl`；动态库名称为
+`librust_backend.so`（Linux）或 `librust_backend.dylib`（macOS）。
+旧 `repo-agent-policy-scan`/`repo_agent_scan` 二进制不能仅改文件名继续使用，需重新构建
+并安装新包。扫描 API 与行为保持不变。目前不支持 Windows。
 
 ## 编译和打包
 
@@ -37,12 +40,17 @@ python scripts/build_rust.py build
 python scripts/build_rust.py wheel
 ```
 
-默认产物目录如下，已加入 Git 忽略规则；`--output DIR` 可覆盖：
+默认产物按扩展版本归档。版本读取自 `rust/pyproject.toml`，须与 Cargo 包版本一致；
+与主应用版本独立。`--output DIR` 覆盖根目录，仍写入 `DIR/<版本>/`：
 
 ```text
 rust_wheels/
-├── macos-arm64/librepo_agent_scan.dylib  # build：按本机平台分目录
-└── repo_agent_policy_scan-0.2.0-cp311-abi3-<platform>.whl  # wheel
+├── 0.1.0/                    # 历史版本（保留原名称）
+└── 0.2.0/
+    ├── rust_backend-0.2.0-cp311-abi3-macosx_11_0_arm64.whl
+    ├── rust_backend-0.2.0-cp311-abi3-manylinux_2_28_x86_64.whl
+    ├── macos-arm64/librust_backend.dylib
+    └── linux-x86_64/librust_backend.so
 ```
 
 Linux 动态库后缀为 `.so`。原始动态库用于编译验证；安装和分发应使用 wheel。
@@ -54,7 +62,7 @@ Cargo 下载缓存仍可复用。已有的其他平台/版本 wheel 会保留；
 安装时将下面的文件名替换为本次命令输出的确切路径，使用 Agent 环境的 Python：
 
 ```sh
-python -m pip install --no-deps rust_wheels/<本次生成的文件名>.whl
+python -m pip install --no-deps rust_wheels/<版本>/<本次生成的文件名>.whl
 ```
 
 同目录可存放多平台 wheel，不要用 `*.whl` 一次安装全部平台文件。
@@ -106,7 +114,7 @@ python scripts/build_rust.py build --target host
 安装 0.2.0 或更新的本机扩展并设置 `AGENT_NATIVE_SCANNER=rust`，重启 native 后端。
 默认仍为 Python；缺少扩展、文件系统 API 不兼容或扫描失败时显式报错，不静默回退。
 
-macOS 接入 `filesystem/mod.rs`：执行命令前检查完整工作区中的普通文件硬链接，
+macOS 接入 `src/filesystem/mod.rs`：执行命令前检查完整工作区中的普通文件硬链接，
 文件工具通过 Rust 进行目录枚举和逐组件 `openat` 路径遍历。工作区 `.venv` 等依赖目录
 仍受检查，不扫描 Seatbelt 已通过规则保护的整个系统/Conda 目录。
 Seatbelt 的内核隔离策略保持原样，glob 匹配、路径保护判断、文本解码、匹配和预算仍由 Python 负责。
@@ -118,13 +126,14 @@ Seatbelt 的内核隔离策略保持原样，glob 匹配、路径保护判断、
 原有 `DirectoryReader` 的元数据和实际文件读取校验继续有效，不以枚举结果代替读取授权。
 
 源码安装、手工命令和发行构建共用 `installer/rust_extension.py`。源码安装在核心
-安装成功后尝试构建并安装扩展，保留生成的 wheel 到源码根目录 `rust_wheels/`。
+安装成功后尝试构建并安装扩展，保留生成的 wheel 到源码根目录 `rust_wheels/<版本>/`。
 发行构建先查找 `--rust-wheelhouse`（未指定则使用 `--wheelhouse`），再查找项目
-`rust_wheels/`；均无匹配文件时，仅为本机平台尝试构建，产物也保存在此目录。
-选择依然校验扩展版本、Python ABI 和平台，显式目录优先。
+`rust_wheels/<当前版本>/`；均无匹配文件时，仅为本机平台尝试构建，产物也保存在此目录。
+选择依然校验包名、扩展版本、Python ABI 和平台，显式目录优先。`--rust-wheelhouse`
+可指定包含版本子目录的根目录，或直接指定某版本目录/平铺 wheelhouse；不会递归搜索其他版本。
 
 ```sh
-# 先将所需平台的 CI wheel 汇总到 rust_wheels/，再构建完整发行包
+# 先将所需平台的 CI wheel 汇总到 rust_wheels/<版本>/，再构建完整发行包
 python scripts/build_release.py --require-rust
 # 或只构建一个平台
 python scripts/build_release.py --target macos-arm64 --require-rust
@@ -133,4 +142,4 @@ python scripts/build_release.py --target macos-arm64 --require-rust
 完整发行归档仍输出到 `dist/`。最终用户安装发行包时仅安装经哈希校验的预编译扩展，
 不运行编译器。未显式设置 `AGENT_NATIVE_SCANNER=rust` 时仍使用 Python。
 
-扫描契约和测试方式见 [policy_scan](policy_scan/README.md)。
+扫描契约和测试方式见 [policy_scan](docs/policy-scan.md)。

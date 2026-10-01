@@ -20,7 +20,12 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("build", "wheel"):
         command = commands.add_parser(name, help="编译动态库" if name == "build" else "构建 wheel")
-        command.add_argument("--output", type=Path, default=ROOT / "rust_wheels")
+        command.add_argument(
+            "--output",
+            type=Path,
+            default=ROOT / "rust_wheels",
+            help="产物根目录，实际保存到 <目录>/<Rust版本>/",
+        )
         command.add_argument("--offline", action="store_true", help="仅使用本地依赖")
         command.add_argument(
             "--target",

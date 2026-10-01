@@ -20,6 +20,7 @@ def test_missing_compiler_keeps_core_install(tmp_path, monkeypatch, linux_host, 
     source = tmp_path / "rust"
     source.mkdir(parents=True)
     (source / "Cargo.toml").touch()
+    (source / "pyproject.toml").write_text('[project]\nversion="0.1.0"\n')
     marker = tmp_path / "core-installed"
     marker.write_text("keep")
     monkeypatch.setattr(rust_extension.shutil, "which", lambda _: None)
@@ -54,6 +55,7 @@ def test_source_build_uses_external_directory_and_respects_offline(tmp_path, mon
     source = tmp_path / "rust"
     source.mkdir(parents=True)
     (source / "Cargo.toml").touch()
+    (source / "pyproject.toml").write_text('[project]\nversion="0.1.0"\n')
     output = tmp_path / "wheels"
     calls = []
     monkeypatch.setattr(rust_extension.shutil, "which", lambda name: "/bin/" + name)
@@ -61,7 +63,7 @@ def test_source_build_uses_external_directory_and_respects_offline(tmp_path, mon
     def build(command, **kwargs):
         calls.append((command, kwargs))
         staged = Path(command[command.index("--wheel-dir") + 1])
-        wheel = staged / "repo_agent_policy_scan-0.1.0-cp311-abi3-linux_x86_64.whl"
+        wheel = staged / "rust_backend-0.1.0-cp311-abi3-linux_x86_64.whl"
         wheel.write_bytes(b"built")
 
     monkeypatch.setattr(rust_extension, "run_download", build)
@@ -85,7 +87,7 @@ def test_source_build_uses_external_directory_and_respects_offline(tmp_path, mon
 
 
 def release_with_wheel(root):
-    wheel = root / "wheels/repo_agent_policy_scan-0.1.0-cp311-abi3-manylinux_2_28_x86_64.whl"
+    wheel = root / "wheels/rust_backend-0.1.0-cp311-abi3-manylinux_2_28_x86_64.whl"
     wheel.parent.mkdir()
     wheel.write_bytes(b"precompiled")
     name = wheel.relative_to(root).as_posix()
@@ -105,7 +107,7 @@ def test_release_installs_offline_without_rust_compiler(tmp_path, monkeypatch, l
     assert "--no-index" in calls[0] and "--no-deps" in calls[0]
     assert str(wheel) in calls[0]
     assert calls[0][0] == str(tmp_path / ".venv/bin/python")
-    assert "repo_agent_scan.API_VERSION == 1" in calls[1][-1]
+    assert "rust_backend.API_VERSION == 1" in calls[1][-1]
 
 
 def test_corrupt_release_wheel_is_not_installed(tmp_path, monkeypatch, linux_host):
@@ -155,7 +157,7 @@ def test_windows_skips_unsupported_scanner(tmp_path, monkeypatch):
     ],
 )
 def test_release_selects_matching_platform_and_abi(tmp_path, target, tag):
-    name = "repo_agent_policy_scan-0.1.0-cp311-abi3-" + tag + ".whl"
+    name = "rust_backend-0.1.0-cp311-abi3-" + tag + ".whl"
     wheel = tmp_path / name
     wheel.touch()
     assert rust_wheels.select_rust_wheel(tmp_path, target, "3.13.15", "0.1.0") == wheel
@@ -175,7 +177,7 @@ def test_release_selects_matching_platform_and_abi(tmp_path, target, tag):
     ],
 )
 def test_release_rejects_wrong_platform_or_compatibility_floor(tmp_path, tag):
-    (tmp_path / ("repo_agent_policy_scan-0.1.0-" + tag + ".whl")).touch()
+    (tmp_path / ("rust_backend-0.1.0-" + tag + ".whl")).touch()
     assert rust_wheels.select_rust_wheel(tmp_path, "linux-x86_64", "3.13.15", "0.1.0") is None
 
 
@@ -192,7 +194,7 @@ def test_cross_platform_release_uses_prebuilt_and_never_cross_compiles(tmp_path,
     assert rust_wheels.prepare_rust_wheels(root, records, tmp_path / "empty") == {}
     with pytest.raises(ValueError, match="linux-x86_64"):
         rust_wheels.prepare_rust_wheels(root, records, tmp_path / "required", required=True)
-    wheel = tmp_path / "repo_agent_policy_scan-0.1.0-cp311-abi3-manylinux_2_28_x86_64.whl"
+    wheel = tmp_path / "rust_backend-0.1.0-cp311-abi3-manylinux_2_28_x86_64.whl"
     wheel.write_bytes(b"prebuilt")
     selected = rust_wheels.prepare_rust_wheels(
         root, records, tmp_path / "prepared", wheelhouse=tmp_path, required=True, offline=True
@@ -209,7 +211,7 @@ def test_local_release_build_requires_portable_linux_wheel(tmp_path, monkeypatch
     def build(root, python, output, **kwargs):
         assert kwargs["compatibility"] == "manylinux_2_28"
         output.mkdir()
-        wheel = output / "repo_agent_policy_scan-0.1.0-cp311-abi3-manylinux_2_28_x86_64.whl"
+        wheel = output / "rust_backend-0.1.0-cp311-abi3-manylinux_2_28_x86_64.whl"
         wheel.write_bytes(b"compiled")
         return wheel
 
@@ -225,12 +227,13 @@ def test_build_publishes_only_complete_current_wheel(tmp_path, monkeypatch, prod
     source = tmp_path / "rust"
     source.mkdir(parents=True)
     (source / "Cargo.toml").touch()
-    output = tmp_path / "rust_wheels"
-    output.mkdir()
-    name = "repo_agent_policy_scan-0.1.0-cp311-abi3-linux_x86_64.whl"
+    (source / "pyproject.toml").write_text('[project]\nversion="0.1.0"\n')
+    output = tmp_path / "rust_wheels/0.1.0"
+    output.mkdir(parents=True)
+    name = "rust_backend-0.1.0-cp311-abi3-linux_x86_64.whl"
     old = output / name
     old.write_bytes(b"previous")
-    other = output / "repo_agent_policy_scan-0.1.0-cp311-abi3-macosx_11_0_arm64.whl"
+    other = output / "rust_backend-0.1.0-cp311-abi3-macosx_11_0_arm64.whl"
     other.write_bytes(b"other-platform")
     monkeypatch.setattr(rust_extension.shutil, "which", lambda name: "/bin/" + name)
 
@@ -263,9 +266,9 @@ def test_release_uses_default_artifacts_without_compiler(tmp_path, monkeypatch, 
     source = tmp_path / "rust"
     source.mkdir(parents=True)
     (source / "pyproject.toml").write_text('[project]\nversion="0.1.0"\n')
-    output = tmp_path / "rust_wheels"
-    output.mkdir()
-    name = "repo_agent_policy_scan-0.1.0-cp311-abi3-manylinux_2_28_x86_64.whl"
+    output = tmp_path / "rust_wheels/0.1.0"
+    output.mkdir(parents=True)
+    name = "rust_backend-0.1.0-cp311-abi3-manylinux_2_28_x86_64.whl"
     (output / name).write_bytes(b"default")
     explicit = tmp_path / "explicit"
     explicit.mkdir()
@@ -296,6 +299,7 @@ def test_compile_library_exports_copy_and_cleans_target(
     source = tmp_path / "rust"
     source.mkdir(parents=True)
     (source / "Cargo.toml").touch()
+    (source / "pyproject.toml").write_text('[project]\nversion="0.1.0"\n')
     monkeypatch.setattr(PlatformInfo, "detect", lambda: host)
     monkeypatch.setattr(rust_extension.shutil, "which", lambda name: "/bin/" + name)
     targets = []
@@ -308,13 +312,60 @@ def test_compile_library_exports_copy_and_cleans_target(
         target = Path(env["CARGO_TARGET_DIR"])
         assert not target.is_relative_to(tmp_path)
         targets.append(target)
-        binary = target / triple / "release" / f"librepo_agent_scan.{suffix}"
+        binary = target / triple / "release" / f"librust_backend.{suffix}"
         binary.parent.mkdir(parents=True)
         binary.write_bytes(b"library")
         binary.with_name("hardlinked").hardlink_to(binary)
 
     monkeypatch.setattr(rust_extension.subprocess, "run", compile)
     artifact = rust_extension.build_rust_library(tmp_path, "/agent/python", offline=True)
-    assert artifact == tmp_path / "rust_wheels" / host.target / f"librepo_agent_scan.{suffix}"
+    assert artifact == tmp_path / "rust_wheels/0.1.0" / host.target / f"librust_backend.{suffix}"
     assert artifact.read_bytes() == b"library" and artifact.stat().st_nlink == 1
     assert not targets[0].parent.exists()
+
+
+def test_versioned_wheel_selection_ignores_other_versions_and_old_package(tmp_path):
+    for version in ("0.1.0", "0.2.0"):
+        directory = tmp_path / version
+        directory.mkdir()
+        (directory / f"rust_backend-{version}-cp311-abi3-manylinux_2_28_x86_64.whl").touch()
+    # An old package with the requested version must not be mistaken for the renamed backend.
+    (tmp_path / "0.2.0/repo_agent_policy_scan-0.2.0-cp311-abi3-manylinux_2_28_x86_64.whl").touch()
+    wheel = rust_wheels.select_rust_wheel(tmp_path, "linux-x86_64", "3.13.15", "0.2.0")
+    assert wheel.parent == tmp_path / "0.2.0"
+    assert wheel.name.startswith("rust_backend-0.2.0-")
+    assert rust_wheels.select_rust_wheel(tmp_path, "linux-x86_64", "3.13.15", "0.3.0") is None
+    assert rust_wheels.select_rust_wheel(wheel.parent, "linux-x86_64", "3.13.15", "0.2.0") == wheel
+
+
+def test_build_versions_coexist_under_custom_output(tmp_path, monkeypatch):
+    source = tmp_path / "rust"
+    source.mkdir()
+    (source / "Cargo.toml").touch()
+    metadata = source / "pyproject.toml"
+    monkeypatch.setattr(rust_extension.shutil, "which", lambda name: name)
+
+    def build(command, **kwargs):
+        version = rust_extension.rust_version(tmp_path)
+        staged = Path(command[command.index("--wheel-dir") + 1])
+        (staged / f"rust_backend-{version}-cp311-abi3-macosx_11_0_arm64.whl").write_bytes(
+            version.encode()
+        )
+
+    monkeypatch.setattr(rust_extension, "run_download", build)
+    artifacts = []
+    for version in ("0.1.0", "0.2.0"):
+        metadata.write_text(f'[project]\nversion="{version}"\n')
+        wheel = rust_extension.build_rust_wheel(tmp_path, "python", tmp_path / "custom")
+        assert wheel.parent == tmp_path / "custom" / version
+        artifacts.append(wheel)
+    assert [path.read_bytes() for path in artifacts] == [b"0.1.0", b"0.2.0"]
+
+
+@pytest.mark.parametrize("version", ["../outside", "/absolute", "", "a/b"])
+def test_artifact_version_cannot_escape_output_root(tmp_path, version):
+    source = tmp_path / "rust"
+    source.mkdir()
+    (source / "pyproject.toml").write_text(f'[project]\nversion="{version}"\n')
+    with pytest.raises(ValueError, match="版本"):
+        rust_extension.artifact_directory(tmp_path)

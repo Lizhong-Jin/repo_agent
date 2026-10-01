@@ -12,7 +12,7 @@
 | `installer/` | 安装/卸载、依赖准备、资源定位、发行校验和安装事务 | `setup.py`、`uninstall.py`、`release_install.py` |
 | `configuration/` | 配置环境加载、保存、备份与恢复 | `environment.py`、`storage.py` |
 | `agent/` | Agent 循环、会话持久化与协调、压缩、Skills、追踪 | `runtime.py`、`session.py`、`conversation.py` |
-| `rust/` | Rust 基础能力源码；当前包含策略扫描扩展，根目录统一管理构建配置，子目录按职责组织源码 | `policy_scan/`、`../scripts/build_rust.py` |
+| `rust/` | Rust 基础能力源码；当前包含策略扫描扩展，根目录统一管理构建配置，子目录按职责组织源码 | `src/lib.rs`、`src/policy_scan/`、`src/filesystem/` |
 | `host_support/` | 标准库实现的宿主文件、锁、路径与进程机制 | `filesystem.py`、`locking.py`、`storage.py` |
 
 模型协议、具体工具、执行隔离仍分别归属 `llm/`、`tools/`、`sandbox/`。不要把业务策略为了“共享”而继续下沉到 `host_support`。
@@ -145,16 +145,16 @@ Linux 隔离策略通过 `sandbox/policy_scan.py` 的 `PolicyScanner.scan(plan, 
 文本搜索的路径筛选、内容解码、预算和结果格式仍由工具层负责。
 
 `sandbox/rust_policy.py` 提供可选 Rust 适配器，策略源码位于
-`rust/policy_scan/`，构建配置位于 `rust/`。`policy_scanners.py` 根据 `AGENT_NATIVE_SCANNER=python|rust`
+`rust/src/policy_scan/`，构建配置位于 `rust/`。`policy_scanners.py` 根据 `AGENT_NATIVE_SCANNER=python|rust`
 装配后端，默认 Python，显式 Rust 失败不降级。扩展按平台单独构建安装，主包不强制依赖
 Rust 编译器。批量调用传入路径字节及规则数据，返回保护路径、Git 路径和指标；取消及
 失败仍通过 `ScanFailure` 保留 Python 异常。
 
 ASCII 名称匹配在 Rust 执行，非 ASCII 名称通过当前解释器的文件系统解码和 Unicode
 小写转换保持兼容。Rust 扫描释放 GIL，并周期检查信号及应用取消状态。Python 参考实现
-保留用于差分验证。详见 [Rust 扫描器构建与验证](../rust/policy_scan/README.md)。
+保留用于差分验证。详见 [Rust 扫描器构建与验证](../rust/docs/policy-scan.md)。
 
-macOS native 通过 `host_support/rust_filesystem.py` 接入 `rust/filesystem/mod.rs`，实现工作区硬链接检查、目录枚举和 fd 相对路径打开。`DirectoryReader` 保留 Python 策略与元数据/读取校验。文本匹配仍由 Python 实现：搜索在目录作用域内复用已打开的父目录，并从同一打开文件获取内容与元数据；`tools/_internal/text_search.py` 逐行迭代，避免另建完整行列表。名称、路径保护、读取预算和结果语义仍由原工具负责，Rust 不改变 Seatbelt 规则，也不接管文本匹配。`FileAccess.walk/glob` 的逐项分类在同一个目录作用域内读取元数据，避免逐文件重开父目录。
+macOS native 通过 `host_support/rust_filesystem.py` 接入 `rust/src/filesystem/mod.rs`，实现工作区硬链接检查、目录枚举和 fd 相对路径打开。`DirectoryReader` 保留 Python 策略与元数据/读取校验。文本匹配仍由 Python 实现：搜索在目录作用域内复用已打开的父目录，并从同一打开文件获取内容与元数据；`tools/_internal/text_search.py` 逐行迭代，避免另建完整行列表。名称、路径保护、读取预算和结果语义仍由原工具负责，Rust 不改变 Seatbelt 规则，也不接管文本匹配。`FileAccess.walk/glob` 的逐项分类在同一个目录作用域内读取元数据，避免逐文件重开父目录。
 
 ## 安装兼容与打包
 

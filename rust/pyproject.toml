@@ -3,14 +3,14 @@ requires = ["maturin>=1.9,<2"]
 build-backend = "maturin"
 
 [project]
-name = "repo-agent-policy-scan"
+name = "rust-backend"
 version = "0.2.0"
 requires-python = ">=3.11"
 description = "Rust policy and descriptor filesystem backend for repo-agent (Linux/macOS)"
 
 [tool.maturin]
 bindings = "pyo3"
-module-name = "repo_agent_scan"
+module-name = "rust_backend"
 features = ["extension-module"]
 locked = true
 profile = "release"

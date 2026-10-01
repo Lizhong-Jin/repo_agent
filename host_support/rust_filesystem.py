@@ -8,12 +8,12 @@ from .cancellation import current_cancellation
 class RustFilesystem:
     def __init__(self):
         try:
-            import repo_agent_scan
+            import rust_backend
         except ImportError as error:
             raise RuntimeError("Rust 文件扫描扩展未安装；请构建并安装 rust/ 扩展") from error
-        if getattr(repo_agent_scan, "FILESYSTEM_API_VERSION", None) != 1:
+        if getattr(rust_backend, "FILESYSTEM_API_VERSION", None) != 1:
             raise RuntimeError("Rust 文件扫描接口版本不兼容；请重新构建并安装扩展")
-        self.native = repo_agent_scan
+        self.native = rust_backend
 
     def directory(self, fd, parts):
         return self.native.open_directory_at(fd, [os.fsencode(part) for part in parts])

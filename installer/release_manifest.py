@@ -136,7 +136,7 @@ def read_release(root, *, verify=True):
     if rust_wheel is not None and (
         target not in {"linux-x86_64", "linux-arm64", "macos-x86_64", "macos-arm64"}
         or not isinstance(rust_wheel, str)
-        or not re.fullmatch(r"wheels/repo_agent_policy_scan-[A-Za-z0-9_.+-]+\.whl", rust_wheel)
+        or not re.fullmatch(r"wheels/rust_backend-[A-Za-z0-9_.+-]+\.whl", rust_wheel)
         or rust_wheel not in data["files"]
     ):
         raise ValueError("发行包 Rust 扩展记录无效")

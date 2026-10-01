@@ -1,4 +1,5 @@
-use crate::{fs::Directory, lower, Error, Result};
+use super::{directory::Directory, lower};
+use crate::{Error, Result};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use std::collections::{HashMap, HashSet};
