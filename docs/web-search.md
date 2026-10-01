@@ -2,7 +2,7 @@
 
 [文档首页](index.md) · [项目首页](../README.md)
 
-`web_search` 用于查找公开文档、错误说明和版本变化。第一版接入 Brave Search API，返回标题、URL、搜索摘要和来源域名，不自动打开搜索结果网页，也不生成网页全文摘要。
+`web_search` 用于查找公开文档、错误说明和版本变化。当前接入 Brave Search API，返回标题、URL、搜索摘要和来源域名，不自动打开搜索结果网页，也不生成网页全文摘要。
 
 ## 启用
 
@@ -73,7 +73,7 @@ repo-agent config set AGENT_WEB_SEARCH_PROVIDER brave
 
 ## 边界与架构
 
-- 在 `cli/main.py` 主进程组装完执行后端工具后，追加 `create_web_tools(web_backend)`；`create_default_tools()` 和 sandbox worker 不注册 Web 工具。
+- 在 `cli/runtime_setup.py` 主进程组装完执行后端工具后，追加 `create_web_tools(web_backend)`；`create_default_tools()` 和 sandbox worker 不注册 Web 工具。
 - `WebBackend` 管理批量处理、共享并发上限、总超时及结果预算；`BraveSearchAdapter` 适配供应商请求和结果；`WebSearchTool` 只负责参数与 `ToolResult`。
 - 每个后端最多同时执行 3 个请求，每条查询从提交起最多等待 20 秒，包含排队、DNS 和响应读取。超时取消异步请求并关闭响应；操作系统已开始的 DNS 解析可能稍后结束，但不会恢复该请求或推迟工具返回。
 - 单响应在线传输和解压后的大小均最多 5 MiB；流式处理并限制 gzip 解压输出。只接受 JSON 响应和 identity/gzip 编码。

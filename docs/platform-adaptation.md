@@ -19,7 +19,7 @@ Windows ARM64 未列为发行目标；WSL2 属于 Linux 执行环境。表中列
 | `platforms` | 操作系统/架构规范化、显式发行目标、wheel 标签与归档后缀 | 指定构建宿主、发行目标或执行环境，不能混用 |
 | `paths` | XDG 用户目录、安装命令与 Python 环境布局 | 配置优先级、资源归属、创建/删除时机 |
 | `python_environments` | 按原优先级选择项目解释器，不执行项目代码 | `sandbox/project_python.py` 决定允许读取的目录并拒绝过宽授权 |
-| `filesystem` | 无链接跟随的描述符操作、目录遍历和文件服务机制 | 工具路径策略、文件类型/大小检查、回写冲突与备份 |
+| `filesystem`、`file_scan`、`path_rules` | 无链接跟随的描述符操作、作用域内目录读取、元数据快照与名称匹配机制 | 工具路径策略、文件类型/大小检查、回写冲突与备份 |
 | `windows_install` | Windows 用户命令 `.exe` 及归属记录、HKCU PATH 比较后更新/恢复 | 与共用安装事务和卸载归属检查配合，不修改系统 PATH |
 | `windows_files` | Windows 句柄相对操作、重解析点防护、目录枚举、重命名与锁 | Windows 文件名限制、平台验收；不能降级为先检查路径再按绝对路径写入 |
 | `locking`、`storage` | 文件描述符锁、同目录暂存与原子替换 | 锁持有期限、序列化、刷新要求、多文件事务和恢复 |
@@ -52,7 +52,7 @@ CLI 使用 `create_native_backend()`。旧 `NativeBackend` 构造入口及 `seat
 
 无 Python 时的 Shell 引导仍独立运行，继续读取 `runtime/python.lock`。不要为了统一 Python 代码，让准备 Python 的步骤反过来依赖 Python。
 
-源码的 `install.sh` / `uninstall.sh` 与发行入口 `install-release.sh` 都委托给 `scripts/installer-entry.sh`，统一选择引导解释器。发行 schema 2 仅保留后一个顶层入口，并通过 `--uninstall` 提供备用卸载；Windows schema 3 ZIP 仅保留 `install_release.ps1`，使用同一套 Python 安装/卸载事务和用户布局，首次默认 local；具体操作见[安装与卸载](installation.md#卸载)。
+源码的 `install.sh` / `uninstall.sh` 与发行入口 `install-release.sh` 都委托给 `scripts/installer-entry.sh`，统一选择引导解释器。当前两类发行包均使用 schema 4。macOS/Linux 仅保留后一个顶层入口，并通过 `--uninstall` 提供备用卸载；Windows ZIP 仅保留 `install_release.ps1`，使用同一套 Python 安装/卸载事务和用户布局，首次默认 local；具体操作见[安装与卸载](installation.md#卸载)。
 
 开发安装新增顶层包后，需要在已准备依赖的环境中刷新 editable 登记：
 
@@ -85,9 +85,11 @@ CLI 使用 `create_native_backend()`。旧 `NativeBackend` 构造入口及 `seat
 python -m pytest -q tests/test_host_file_contracts.py tests/test_windows_files.py
 ```
 
-`.github/workflows/host-files.yml` 配置了 Windows/macOS/Linux × Python 3.11/3.13 的六组契约测试，运行 `test_architecture_boundaries.py`、`test_host_file_contracts.py`、`test_windows_files.py`、`test_windows_release.py`。另有 Windows Python 3.13 作业构建 ZIP、设置归档变量后执行真实安装生命周期，并上传测试产物。Windows 文件测试包含 junction 场景、只读文件原子替换和全部 local 文件工具；非 Windows 环境跳过 Windows 内核用例。
+`.github/workflows/host-files.yml` 配置了 Windows/macOS/Linux × Python 3.11/3.13 的六组契约测试，运行 `test_architecture_boundaries.py`、`test_host_file_contracts.py`、`test_windows_files.py`、`test_windows_release.py`、`test_cancellation.py` 五份模块。另有 Windows Python 3.13 作业构建 ZIP、设置归档变量后执行真实安装生命周期，并上传测试产物。Windows 文件测试包含 junction 场景、只读文件原子替换和全部 local 文件工具；非 Windows 环境跳过 Windows 内核用例。
 
-工作流还配置了 Linux/macOS × Python 3.11/3.13 的四组默认全量回归，准备仓库 `.venv` 和安装入口后运行整个 `tests/` 目录。默认全量仍按平台、依赖和开关跳过真实环境用例；Windows 仍限定为上述契约及发行安装测试。当前 CI 未配置 Ruff 或真实 Docker Desktop 回写测试；Windows Docker 回写需下面的独立开关与镜像。
+工作流还配置了 Linux/macOS × Python 3.11/3.13 的四组默认全量回归，准备仓库 `.venv` 和安装入口后运行整个 `tests/` 目录。默认全量仍按平台、依赖和开关跳过真实环境用例；Windows 仍限定为上述契约及发行安装测试。另有独立 Ruff 检查与格式检查作业；lint 和默认回归安装锁定的开发依赖。CI 未配置真实 Docker Desktop 回写测试，Windows Docker 回写需下面的独立开关与镜像。
+
+可选扫描器还有 `.github/workflows/policy-scan-rust.yml`：Linux/macOS × Python 3.11/3.13，检查 Rust 格式、Clippy 和单元测试，构建并导入扩展后运行 Python/Rust 差分与策略集成契约。macOS 在这里用于扫描器等价性验证，Seatbelt 后端仍使用自身策略；该作业不提供 Windows Rust 后端或真实 Linux 隔离验收。
 
 工作流配置不等于运行成功。发布前应检查对应提交的实际作业结果，而非将本地模拟测试或上传配置当作实机证据。
 

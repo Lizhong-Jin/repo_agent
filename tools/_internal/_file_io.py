@@ -8,9 +8,25 @@ from functools import cached_property
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+from host_support.file_scan import DirectoryReader
+
 from .base import ToolResult
 from .errors import ToolErrorCode, tool_error
 from .file_access import current_file_access
+
+
+def snapshot_stat(path: Path, *, follow_symlinks: bool = False) -> os.stat_result:
+    """Use the same metadata backend as the subsequent descriptor read.
+
+    On Windows, path stat's ctime can mean creation time while handle stat's
+    ctime means change time. Never mix those versions in a snapshot signature.
+    """
+    access = current_file_access()
+    return (
+        access.stat(path, follow_symlinks=follow_symlinks)
+        if access
+        else path.stat(follow_symlinks=follow_symlinks)
+    )
 
 
 def file_signature(info: os.stat_result) -> tuple[int, ...]:
@@ -51,6 +67,7 @@ def read_snapshot(
     *,
     verify_identity: bool = False,
     size_message: str | None = None,
+    directory: DirectoryReader | None = None,
 ) -> FileSnapshot | ToolResult:
     """Caller checks path policy and regular-file type, and maps I/O exceptions.
 
@@ -60,8 +77,11 @@ def read_snapshot(
     if info.st_size > max_bytes:
         return tool_error(ToolErrorCode.FILE_TOO_LARGE, size_message)
     access = current_file_access()
+    if directory is not None and (access is None or directory.path != target.parent):
+        raise ValueError("Directory reader must belong to the native target's parent")
     if access:
-        with access.open_read(target) as source:
+        opened = directory.open_read(target.name) if directory else access.open_read(target)
+        with opened as source:
             before = os.fstat(source.fileno())
             if file_signature(before) != file_signature(info):
                 return tool_error(ToolErrorCode.FILE_CHANGED)

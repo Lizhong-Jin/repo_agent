@@ -11,6 +11,16 @@ include requirements-build.lock
 include requirements-core.lock
 include requirements-dev.lock
 include requirements-lsp.lock
+include rust/Cargo.lock
+include rust/Cargo.toml
+include rust/README.md
+include rust/build.rs
+include rust/policy_scan/README.md
+include rust/policy_scan/src/engine.rs
+include rust/policy_scan/src/fs.rs
+include rust/policy_scan/src/lib.rs
+include rust/pyproject.toml
+include scripts/build_rust.py
 include uv.lock
 recursive-include agent *.py
 recursive-include cli *.py

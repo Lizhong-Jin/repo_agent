@@ -8,6 +8,7 @@ import pytest
 
 from agent.Tracing import RunStats
 from cli.interactive import finish_writeback, run_interactive
+from configuration.environment import read_config
 from sandbox import SandboxSession
 from tools._internal.base import ToolResult
 
@@ -180,9 +181,9 @@ def test_user_template_preserves_writeback_setting_on_reinstall(tmp_path, monkey
     config = configure_user(root)
     assert config.read_bytes() == (root / ".env.example").read_bytes()
     config.write_text("AGENT_SANDBOX_WRITEBACK=on-success\n# user's settings\n")
-    before = config.read_bytes()
     configure_user(root)
-    assert config.read_bytes() == before
+    assert read_config(config)["AGENT_SANDBOX_WRITEBACK"] == "on-success"
+    assert "AGENT_SANDBOX_VERIFY_COMMAND" in read_config(config)
 
 
 @pytest.mark.parametrize(

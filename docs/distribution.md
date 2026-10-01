@@ -11,13 +11,17 @@
 每次发布先更新 `pyproject.toml` 的版本号，再同步依赖锁文件：
 
 ```bash
-# 重新解析并更新 Python 依赖版本及带哈希的 pip 清单（默认升级）
+# 同步 Python 锁文件及带哈希的 pip 清单，默认保留已有依赖版本
 .venv/bin/python scripts/lock_dependencies.py
+# 主动升级允许范围内的 Python 依赖版本，并同步 pip 清单
+.venv/bin/python scripts/lock_dependencies.py --upgrade
 # 仅检查 pyproject、uv.lock 与四个 pip 清单是否一致
 .venv/bin/python scripts/lock_dependencies.py --check
 # 修改 dependencies/node/package.json 后更新 npm 锁文件
 npm install --package-lock-only --ignore-scripts --prefix dependencies/node
 ```
+
+默认模式运行 `uv lock`，优先沿用 `uv.lock` 中已有的版本；新增依赖或修改约束时，仍可能调整相关版本。只有显式传入 `--upgrade` 才主动升级依赖，建议将依赖升级与普通版本发布分开进行并验证。`--check` 只检查一致性，不修改锁文件，不能与 `--upgrade` 同时使用。上述命令均不安装或更新当前 `.venv` 中的包。
 
 ### 默认构建全部平台
 
@@ -55,33 +59,50 @@ macOS/Linux 发行包仅提供顶层 `install-release.sh`，安装、恢复和�
 
 Windows ZIP 同样使用 schema 4（旧版为 schema 3），记录 `windows-x86_64` 目标并仅提供顶层 `install_release.ps1`；同一脚本通过 `--uninstall`、`--check`、`--recover` 完成维护，不附带另一份卸载入口或 POSIX Shell 安装脚本。共用 Python 安装事务、配置保留和归属检查。
 
-默认输出到 `dist/<版本>/<平台>/`；`--output` 仅替换 `dist` 这一层，版本来自 `pyproject.toml`。例如：
+默认输出到 `dist/<版本>/<平台>/`；`--output` 仅替换 `dist` 这一层，版本来自 `pyproject.toml`。以下以源码当前版本 0.1.3 演示目录，不表示已有产物与未提交修改同步：
 
 ```text
 dist/
-└── 0.1.2/
+└── 0.1.3/
     ├── macos-arm64/
-    │   ├── repo-agent-0.1.2-macos-arm64.tar.gz
-    │   └── repo-agent-0.1.2-macos-arm64.tar.gz.sha256
+    │   ├── repo-agent-0.1.3-macos-arm64.tar.gz
+    │   └── repo-agent-0.1.3-macos-arm64.tar.gz.sha256
     ├── macos-x86_64/
-    │   ├── repo-agent-0.1.2-macos-x86_64.tar.gz
-    │   └── repo-agent-0.1.2-macos-x86_64.tar.gz.sha256
+    │   ├── repo-agent-0.1.3-macos-x86_64.tar.gz
+    │   └── repo-agent-0.1.3-macos-x86_64.tar.gz.sha256
     ├── linux-arm64/
-    │   ├── repo-agent-0.1.2-linux-arm64.tar.gz
-    │   └── repo-agent-0.1.2-linux-arm64.tar.gz.sha256
+    │   ├── repo-agent-0.1.3-linux-arm64.tar.gz
+    │   └── repo-agent-0.1.3-linux-arm64.tar.gz.sha256
     ├── linux-x86_64/
-    │   ├── repo-agent-0.1.2-linux-x86_64.tar.gz
-    │   └── repo-agent-0.1.2-linux-x86_64.tar.gz.sha256
+    │   ├── repo-agent-0.1.3-linux-x86_64.tar.gz
+    │   └── repo-agent-0.1.3-linux-x86_64.tar.gz.sha256
     └── windows-x86_64/
-        ├── repo-agent-0.1.2-windows-x86_64.zip
-        └── repo-agent-0.1.2-windows-x86_64.zip.sha256
+        ├── repo-agent-0.1.3-windows-x86_64.zip
+        └── repo-agent-0.1.3-windows-x86_64.zip.sha256
 ```
 
-Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独输出到发布目录。每个压缩包只有一个 `repo-agent-<版本>-<平台>/` 顶层文件夹，内含运行时锁文件、平台标记和 `wheelhouse/`。macOS/Linux 内含固定的 `runtime/python.tar.gz`；Windows 上游 tar.gz 经固定 SHA256 校验后在构建阶段展开为 `runtime/python/python.exe` 等文件，避免安装引导依赖系统 Python 或 tar。Windows 只收集 local/Docker 核心依赖，并按 Windows 目标评估锁文件的平台条件，不携带 native 语言服务依赖。完整包不包含项目的 PyTorch/CUDA 依赖、系统工具链或开发用 pytest/Ruff；后者通过源码开发材料准备。
+Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独输出到发布目录。每个压缩包只有一个 `repo-agent-<版本>-<平台>/` 顶层文件夹，内含运行时锁文件、平台标记和 `wheelhouse/`。macOS/Linux 内含固定的 `runtime/python.tar.gz`；Windows 上游 tar.gz 经固定 SHA256 校验后在构建阶段展开为 `runtime/python/python.exe` 等文件，避免安装引导依赖系统 Python 或 tar。当前构建器会移除有对应源码的 `.pyc`，遇到无源码字节码则拒绝构建；Windows 维护入口也校验和清理运行时缓存，具体边界见[安装说明](installation.md#windows-x86_64-zip-安装)。Windows 只收集 local/Docker 核心依赖，并按 Windows 目标评估锁文件的平台条件，不携带 native 语言服务依赖。完整包不包含项目的 PyTorch/CUDA 依赖、系统工具链或开发用 pytest/Ruff；后者通过源码开发材料准备。
 
-发行包通过明确的文件清单收集源码、默认模板和资源，不复制构建机器的 `.venv`、`.git`、项目 `.env`、日志或缓存。wheel 内置用于重建 Docker 镜像的源码资源。`release.json` 记录版本、wheel 和各文件 SHA256，安装前逐项校验。上游 Python 内部的链接保留在固定哈希校验的内层归档中，外层归档仍只接受普通文件/目录。
+发行包通过明确的文件清单收集源码、默认模板和资源，不复制构建机器的 `.venv`、`.git`、项目 `.env`、日志或缓存。wheel 内置用于重建 Docker 镜像的源码资源。`release.json` 记录版本、wheel 和各文件 SHA256，安装前逐项校验。macOS/Linux 的上游 Python 内部链接保留在固定哈希校验的内层归档中；Windows 展开步骤拒绝链接。外层发行归档只接受普通文件/目录。
 
 安装时从内层归档（Windows 为已展开文件）部署共享运行时，再在最终路径创建 `.venv`，不搬迁已经创建的虚拟环境。构建输出目录与安装目录是两回事；安装后仍位于用户数据目录的 `repo-agent/versions/<版本>/`。
+
+Rust 源码统一位于 `rust/`。手工编译使用 `python scripts/build_rust.py build`，构建 wheel 使用 `python scripts/build_rust.py wheel`，最终产物默认写入 `rust_wheels/`；完整发行归档仍写入 `dist/`。详见 [Rust 构建入口](../rust/README.md)。
+
+可选 Rust 策略扫描器以独立的平台 wheel `repo-agent-policy-scan` 随完整发行包分发，主应用仍为通用 Python wheel。构建器优先从 `--rust-wheelhouse` 指定目录选择扩展；未指定时先搜索 `--wheelhouse`；随后搜索项目根目录 `rust_wheels/`。按扩展版本、目标平台和 CPython ABI3 筛选，Linux 只接受符合当前发行基线的 manylinux wheel，不接受依赖本机环境的 `linux_*` 标签。找到后复制到包内 `wheels/`，通过 `release.json` 的 `rust_wheel` 字段和文件哈希登记。
+
+没有匹配的预编译 wheel 时，只对与构建机相同的平台尝试本机编译，生成的 wheel 保存在 `rust_wheels/`；其他平台需要预先提供 wheel，不会自动跨平台编译。缺少编译器、构建失败或没有兼容产物时，默认提示并生成仅含 Python 扫描器的包。正式发布可使用 `--require-rust`，确保全部 Linux/macOS 目标含 Rust 扩展；任一缺失都会在替换发行归档前失败。Windows 当前不支持此扩展，不要求也不附带它。
+
+```bash
+# 将 CI 产出的各平台 Rust wheel 汇总到项目 rust_wheels/ 后打包
+.venv/bin/python scripts/build_release.py --require-rust
+# 只构建一个平台，同样可使用预编译 wheel，无需本机安装 Rust 编译器
+.venv/bin/python scripts/build_release.py --target linux-arm64 --rust-wheelhouse /path/to/rust_wheels --require-rust
+```
+
+工作流 `.github/workflows/policy-scan-wheels.yml` 构建 Linux/macOS 的 x86_64、arm64 四种 wheel，执行加载及差分测试后保存为工作流产物；不自动发布。Linux 使用 manylinux 2.28，macOS 最低版本为 x86_64 的 10.15 和 arm64 的 11.0。源码归档仍包含构建输入。构建细节见 [Rust 扫描器说明](../rust/policy_scan/README.md)。
+
+发行包安装直接安装已登记并校验的 Rust wheel，不下载、不编译，也不需要用户安装 Rust/Cargo/maturin。扩展为可选组件，安装或加载失败不会撤销核心安装；旧发行包没有 `rust_wheel` 字段时继续按 Python 扫描器安装。默认扫描器仍为 `python`，安装成功后可显式选择 `rust`。
 
 ## 离线构建
 
@@ -127,18 +148,18 @@ Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独
 真实安装验收选择与当前机器匹配的完整包。以下示例使用临时用户目录和受管 Python 离线安装，删除下载目录后检查启动、配置恢复、doctor、Docker 构建上下文和卸载；Docker 入口使用模拟程序，不构建真实镜像、不调用模型 API：
 
 ```bash
-REPO_AGENT_TEST_ARCHIVE="$PWD/dist/0.1.2/macos-arm64/repo-agent-0.1.2-macos-arm64.tar.gz" \
+REPO_AGENT_TEST_ARCHIVE="$PWD/dist/0.1.3/macos-arm64/repo-agent-0.1.3-macos-arm64.tar.gz" \
   .venv/bin/python -m pytest -q tests/test_release_distribution.py
 ```
 
 Windows 在真实 Windows 主机上执行以下验收，覆盖 PowerShell 5.1 引导、离线安装、删除下载目录后运行 `.exe`、重装保留配置、恢复与卸载：
 
 ```powershell
-$env:REPO_AGENT_WINDOWS_ARCHIVE = (Resolve-Path 'dist/0.1.2/windows-x86_64/repo-agent-0.1.2-windows-x86_64.zip').Path
+$env:REPO_AGENT_WINDOWS_ARCHIVE = (Resolve-Path 'dist/0.1.3/windows-x86_64/repo-agent-0.1.3-windows-x86_64.zip').Path
 python -m pytest -q tests/test_windows_release.py
 ```
 
-`.github/workflows/host-files.yml` 新增 Windows ZIP 构建与上述实际生命周期验收，并保存 ZIP 与校验文件。非 Windows 测试仅覆盖格式、命令归属与事务契约，真实 Windows 用例会跳过，不能代替 Windows 验收。
+`.github/workflows/host-files.yml` 配置了 Windows ZIP 构建与上述实际生命周期验收，前序步骤成功后上传 ZIP 与校验文件。非 Windows 测试仅覆盖格式、命令归属与事务契约，真实 Windows 用例会跳过，不能代替 Windows 验收。
 
 上述验收使用 local 模式验证安装生命周期。macOS native、Linux native、WSL GPU 仍须分别进行[真实沙箱验证](native-sandbox.md#验证)，不能以打包成功替代。
 

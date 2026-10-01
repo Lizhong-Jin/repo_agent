@@ -15,6 +15,63 @@ from host_support.storage import atomic_write
 from tools._internal.file_access import FileAccess
 
 
+@pytest.mark.parametrize("suffix", [".txt", ".bat", ".exe"])
+def test_snapshot_tools_use_handle_metadata(tmp_path, monkeypatch, suffix):
+    from pathlib import Path
+
+    from tools.factory import create_file_tools
+
+    path = tmp_path / ("source" + suffix)
+    path.write_text("before\n", encoding="utf-8")
+    original = Path.stat
+
+    def path_stat(candidate, *args, **kwargs):
+        info = original(candidate, *args, **kwargs)
+        if candidate == path:
+            values = {key: getattr(info, key) for key in dir(info) if key.startswith("st_")}
+            values["st_ctime_ns"] += 10_000_000
+            return SimpleNamespace(**values)
+        return info
+
+    monkeypatch.setattr(Path, "stat", path_stat)
+    tools = {tool.definition.name: tool for tool in create_file_tools(tmp_path)}
+    operations = [
+        ("read_file", {"reads": [{"path": path.name}]}),
+        ("edit_file", {"path": path.name, "edits": [{"old_text": "before", "new_text": "middle"}]}),
+        (
+            "apply_patch",
+            {
+                "patch": f"*** Begin Patch\n*** Update File: {path.name}\n"
+                "@@\n-middle\n+after\n*** End Patch\n"
+            },
+        ),
+        ("search_files", {"query": "after"}),
+    ]
+    with FileAccess(tmp_path).activate():
+        for name, arguments in operations:
+            result = tools[name].execute(arguments)
+            assert result.success, (name, result.error_code, result.error, result.data)
+    assert path.read_text() == "after\n"
+
+
+def test_snapshot_still_rejects_handle_metadata_changes(tmp_path, monkeypatch):
+    from tools._internal._file_io import read_snapshot, snapshot_stat
+
+    path = tmp_path / "file.txt"
+    path.write_bytes(b"before")
+    with FileAccess(tmp_path).activate() as access:
+        info = snapshot_stat(path)
+        original = access.open_read
+
+        def replaced(target):
+            target.write_bytes(b"changed content")
+            return original(target)
+
+        monkeypatch.setattr(access, "open_read", replaced)
+        result = read_snapshot(path, path, info, 100)
+        assert result.error_code == "FILE_CHANGED"
+
+
 def test_relative_io_stage_move_delete_and_prunable_walk(tmp_path):
     with FileAccess(tmp_path).activate() as access:
         access.mkdir(tmp_path / "nested/深层", parents=True)

@@ -408,14 +408,62 @@ def test_full_tui_preserves_partial_text_and_history_after_recovery_limit():
             await until(lambda: ui.app.is_running)
             pipe.send_text("task\r")
             await until(lambda: len(model.requests) == 1 and not ui.busy)
-            assert "尚未完成" in ui.transcript and "上下文已清空" not in ui.transcript
+            await ui.worker  # Surface worker exceptions instead of a missing-text symptom.
+            assert "尚未完成" in ui.transcript and "上下文已清空" not in ui.transcript, {
+                "phase": ui.phase,
+                "transcript": ui.transcript,
+                "pending": ui.pending_text,
+                "history": ui.history,
+            }
             assert ui.history and ui.phase == "任务尚未完成，可输入“继续”"
             pipe.send_text("继续\r")
             await until(lambda: len(model.requests) == 2 and not ui.busy)
+            await ui.worker
             assert any(m.content == "partial" for m in model.requests[-1].messages)
             assert ui.transcript.count("partial") == ui.transcript.count("continued") == 1
             pipe.send_text("/exit\r")
             await asyncio.wait_for(task, 3)
+
+    asyncio.run(run())
+
+
+def test_tui_completion_drains_output_before_delayed_ui_wakeups():
+    from types import SimpleNamespace
+
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    from cli.terminal.application import ConversationUI
+
+    async def run():
+        model = ScriptedLLM([reply("partial", finish="length"), reply("continued")])
+        runtime = AgentRuntime(model, max_recoveries=0)
+        delayed = []
+        with create_pipe_input() as pipe:
+            ui = ConversationUI(runtime, terminal_input=pipe, terminal_output=DummyOutput())
+            ui.loop = SimpleNamespace(
+                call_soon_threadsafe=lambda callback, *args: delayed.append((callback, args)),
+                call_later=asyncio.get_running_loop().call_later,
+            )
+            # Progress can be queued after the worker future is already done.
+            # It must not overwrite the terminal phase when the wakeup runs late.
+            runtime.on_event = lambda name, stats: ui.dispatch(
+                ui.progress, "模型 #1 · 等待响应…", ""
+            )
+            ui.busy = True
+            await ui.execute("task")
+            assert not ui.busy and ui.history
+            assert "尚未完成" in ui.transcript and ui.transcript.count("partial") == 1
+            assert ui.phase == "任务尚未完成，可输入“继续”"
+            ui.busy = True
+            await ui.execute("继续")
+            assert any(m.content == "partial" for m in model.requests[-1].messages)
+            for callback, args in delayed:
+                callback(*args)
+            ui.flush_text()
+            assert ui.transcript.count("partial") == ui.transcript.count("continued") == 1
+            assert ui.phase == "就绪"
+            assert not ui.pending_text and ui.worker_events.empty()
 
     asyncio.run(run())
 

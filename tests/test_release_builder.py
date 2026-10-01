@@ -61,6 +61,7 @@ def build_inputs(builder, tmp_path, monkeypatch):
     monkeypatch.setattr(builder, "export_locks", lambda *a, **kw: None)
     monkeypatch.setattr(builder, "verify_wheel", lambda *a: None)
     monkeypatch.setattr(builder, "prepare", prepare)
+    monkeypatch.setattr(builder, "prepare_rust_wheels", lambda *a, **kw: {})
     return root, tmp_path / "dist", calls
 
 
@@ -197,3 +198,46 @@ def test_incomplete_installer_fails_before_replacing_archive(builder, build_inpu
         builder.build(root, output, "uv", target="macos-arm64")
     assert archive.read_bytes() == before
     assert archive.with_name(archive.name + ".sha256").read_bytes() == checksum
+
+
+def test_release_embeds_matching_rust_binary_in_integrity_manifest(
+    builder, build_inputs, monkeypatch, tmp_path
+):
+    from installer.paths import extract_files
+
+    root, output, _ = build_inputs
+    wheel = tmp_path / "repo_agent_policy_scan-0.1.0-cp311-abi3-manylinux_2_28_x86_64.whl"
+    wheel.write_bytes(b"platform-binary")
+    monkeypatch.setattr(builder, "prepare_rust_wheels", lambda *a, **kw: {"linux-x86_64": wheel})
+    archive = builder.build(root, output, "uv", target="linux-x86_64", require_rust=True)[0]
+    extracted = tmp_path / "extracted"
+    extracted.mkdir()
+    extract_files(archive, extracted)
+    bundle = next(extracted.iterdir())
+    manifest = read_release(bundle)
+    assert manifest["rust_wheel"] == "wheels/" + wheel.name
+    assert manifest["files"][manifest["rust_wheel"]] == digest(wheel)
+    (bundle / manifest["rust_wheel"]).write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="校验失败"):
+        read_release(bundle)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["../other.whl", "wheels/not-the-scanner.whl", "wheels/repo_agent_policy_scan-missing.whl"],
+)
+def test_release_rejects_untracked_or_invalid_rust_wheel(builder, build_inputs, tmp_path, name):
+    from installer.paths import extract_files
+
+    root, output, _ = build_inputs
+    archive = builder.build(root, output, "uv", target="linux-x86_64")[0]
+    extracted = tmp_path / "extracted"
+    extracted.mkdir()
+    extract_files(archive, extracted)
+    bundle = next(extracted.iterdir())
+    path = bundle / "release.json"
+    manifest = json.loads(path.read_text())
+    manifest["rust_wheel"] = name
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="Rust"):
+        read_release(bundle)

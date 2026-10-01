@@ -69,14 +69,18 @@ def test_cross_build_evaluates_markers_for_windows(tmp_path):
     assert "--hash=sha256:abc" in output
 
 
-@pytest.mark.parametrize("name", ["../escape", "C:stream", "file.", "NUL", "a\\b"])
+@pytest.mark.parametrize("name", ["../escape", "C:stream", "file.", "NUL", "a\\b", "a\0b", "a\\b/"])
 def test_zip_paths_rejected_before_writing(tmp_path, name):
     from installer.paths import extract_files
 
     archive = tmp_path / "bad.zip"
     with zipfile.ZipFile(archive, "w") as output:
         output.writestr("safe", b"safe")
-        output.writestr(name, b"bad")
+        output.writestr("x" * len(name), b"bad")
+    # Patch both local and central headers without ZipInfo sanitizing the name.
+    archive.write_bytes(archive.read_bytes().replace(b"x" * len(name), name.encode("ascii")))
+    with zipfile.ZipFile(archive) as source:
+        assert source.infolist()[1].orig_filename == name
     destination = tmp_path / "out"
     destination.mkdir()
     with pytest.raises(ValueError):
@@ -121,6 +125,44 @@ def test_windows_defaults_local_and_preserves_recorded_mode(tmp_path, monkeypatc
         encoding="utf-8",
     )
     assert dependencies.available_mode(tmp_path) == "docker"
+
+
+def test_runtime_bytecode_filter_preserves_sources_and_rejects_sourceless(tmp_path):
+    from scripts.prepare_python_bundle import strip_runtime_bytecode
+
+    source = tmp_path / "module.py"
+    source.write_bytes(b"answer = 42\n")
+    cache = tmp_path / "__pycache__/module.cpython-313.pyc"
+    cache.parent.mkdir()
+    cache.write_bytes(b"regenerable")
+    legacy = tmp_path / "module.pyc"
+    legacy.write_bytes(b"regenerable")
+    orphan = tmp_path / "orphan.pyc"
+    orphan.write_bytes(b"only implementation")
+    with pytest.raises(ValueError, match="sourceless"):
+        strip_runtime_bytecode(tmp_path)
+    assert cache.exists() and legacy.exists() and orphan.exists()
+    orphan.unlink()
+    strip_runtime_bytecode(tmp_path)
+    assert source.read_bytes() == b"answer = 42\n"
+    assert not list(tmp_path.rglob("*.pyc"))
+
+
+def test_zip_raw_backslash_rejected_under_windows_normalization(tmp_path, monkeypatch):
+    # Exercise ZipInfo's Windows normalization without changing pathlib's OS.
+    monkeypatch.setattr(zipfile, "os", SimpleNamespace(**(vars(os) | {"sep": "\\", "altsep": "/"})))
+    test_zip_paths_rejected_before_writing(tmp_path, "a\\b")
+
+
+def test_zip_forward_slash_remains_valid(tmp_path):
+    from installer.paths import extract_files
+
+    archive = tmp_path / "valid.zip"
+    with zipfile.ZipFile(archive, "w") as output:
+        output.writestr("folder/", b"")
+        output.writestr("folder/file.txt", b"content")
+    extract_files(archive, tmp_path / "out")
+    assert (tmp_path / "out/folder/file.txt").read_bytes() == b"content"
 
 
 @pytest.fixture
@@ -264,6 +306,12 @@ def test_real_windows_release_survives_download_removal_and_uninstalls(tmp_path)
     extract_files(archive, download)
     bundle = locate_release_root(download)
     manifest = read_release(bundle)
+    runtime_files = {
+        name.removeprefix("runtime/"): expected
+        for name, expected in manifest["files"].items()
+        if name.startswith("runtime/python/")
+    }
+    assert runtime_files and not any(name.endswith(".pyc") for name in runtime_files)
     env = {
         key: value
         for key, value in os.environ.items()
@@ -301,14 +349,43 @@ def test_real_windows_release_survives_download_removal_and_uninstalls(tmp_path)
 
     run(script(bundle, "--check", "--mode", "local", "--bin-dir", bins))
     assert not (tmp_path / "data").exists() and not (tmp_path / "runtime").exists()
+    record = next(
+        line.split()
+        for line in (bundle / "runtime/python.lock").read_text().splitlines()
+        if line.startswith("windows-x86_64 ")
+    )
+    legacy = tmp_path / "runtime" / f"{record[1]}-windows-x86_64-{record[2][:12]}"
+    old_cache = legacy / "python/Lib/__pycache__/__future__.cpython-313.pyc"
+    old_cache.parent.mkdir(parents=True)
+    old_cache.write_bytes(b"old runtime must remain available for rollback")
     run(script(bundle, "--mode", "local", "--offline", "--no-path", "--bin-dir", bins))
+    assert old_cache.read_bytes() == b"old runtime must remain available for rollback"
     root = tmp_path / "data/repo-agent/versions" / manifest["version"]
+
+    def verify_runtime_sources():
+        from installer.release_manifest import digest
+
+        caches = [p.parent for p in (tmp_path / "runtime").glob("*/.verified")]
+        assert len(caches) == 1
+        for base in [root / "runtime", *caches]:
+            for name, expected in runtime_files.items():
+                assert digest(base / name) == expected, str(base / name)
+        return caches[0]
+
+    cache = verify_runtime_sources()
     config = tmp_path / "config/repo-agent/.env"
     config.write_text("LLM_MODEL=keep\n", encoding="utf-8")
     shutil.rmtree(download)
     info = json.loads(run([bins / "repo-agent.exe", "version"]))
     assert info["installation"] == str(root) and info["kind"] == "release"
+    verify_runtime_sources()
+    # An unlisted bytecode file must be removed before a later bootstrap runs.
+    stale = cache / "python/Lib/__pycache__/untrusted.cpython-313.pyc"
+    stale.parent.mkdir(exist_ok=True)
+    stale.write_bytes(b"unverified old cache")
     run(script(root, "--offline", "--no-path", "--bin-dir", bins))
+    assert not stale.exists()
+    verify_runtime_sources()
     assert config.read_text(encoding="utf-8") == "LLM_MODEL=keep\n"
     run(script(root, "--recover"))
     run(script(root, "--uninstall", "--dry-run"))
@@ -318,3 +395,10 @@ def test_real_windows_release_survives_download_removal_and_uninstalls(tmp_path)
     assert not (bins / "repo-agent.exe").exists()
     run(script(root, "--uninstall", "--purge"))
     assert not config.exists()
+    source = root / "runtime/python/Lib/__future__.py"
+    source.write_bytes(source.read_bytes() + b"\n# changed\n")
+    rejected = subprocess.run(
+        [str(arg) for arg in script(root, "--check")], env=env, capture_output=True, timeout=30
+    )
+    assert rejected.returncode != 0
+    assert b"SHA256 mismatch" in rejected.stderr

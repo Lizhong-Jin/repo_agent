@@ -42,6 +42,15 @@ function Assert-FileHash([string]$Path, [string]$Hash) {
     }
 }
 
+function Remove-RuntimeBytecode([string]$Root) {
+    # Only called for source-only releases. Generated caches are never trusted
+    # by a later bootstrap, even if their embedded source timestamps still match.
+    foreach ($item in Get-ChildItem -LiteralPath $Root -Filter '*.pyc' -File -Recurse -Force) {
+        Assert-NoReparse $item.FullName
+        Remove-Item -LiteralPath $item.FullName -Force
+    }
+}
+
 try {
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or
         -not [Environment]::Is64BitOperatingSystem -or
@@ -97,6 +106,8 @@ try {
     $record = $records[0] -split '\s+'
     if ($record.Count -ne 4 -or $record[2] -cnotmatch '^[a-f0-9]{64}$') { throw 'Invalid Python lock.' }
     $agentPython = Join-Path $agentRoot 'runtime/python/python.exe'
+    $sourceOnly = @($runtimeFiles | Where-Object { $_.Name.EndsWith('.pyc') }).Count -eq 0
+    if ($sourceOnly) { Remove-RuntimeBytecode (Join-Path $agentRoot 'runtime/python') }
     if ($env:AGENT_PYTHON) {
         if ($env:AGENT_PYTHON -eq 'system') {
             $agentPython = (Get-Command python.exe -CommandType Application -ErrorAction Stop).Source
@@ -114,7 +125,10 @@ try {
         $cache = [IO.Path]::GetFullPath($cache)
         Assert-NoReparse $cache
         [IO.Directory]::CreateDirectory($cache) | Out-Null
-        $runtimeId = $record[1] + '-windows-x86_64-' + $record[2].Substring(0, 12)
+        # A different release manifest gets a fresh cache. Keep old runtimes
+        # available for the old venv and rollback instead of mutating them.
+        $releaseHash = (Get-FileHash -LiteralPath $manifestFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        $runtimeId = $record[1] + '-windows-x86_64-' + $record[2].Substring(0, 12) + '-' + $releaseHash.Substring(0, 16)
         $destination = Join-Path $cache $runtimeId
         Assert-NoReparse $destination
         Assert-NoReparse ($destination + '.lock')
@@ -144,6 +158,7 @@ try {
             foreach ($property in $runtimeFiles) {
                 Assert-FileHash (Join-Path $destination $property.Name.Substring('runtime/'.Length)) ([string]$property.Value)
             }
+            if ($sourceOnly) { Remove-RuntimeBytecode (Join-Path $destination 'python') }
             $agentPython = Join-Path $destination 'python/python.exe'
         } finally {
             if ($stage -and (Test-Path -LiteralPath $stage)) { Remove-Item -LiteralPath $stage -Recurse -Force }
@@ -154,6 +169,7 @@ try {
     # Single quotes survive Windows PowerShell 5.1 native argument marshalling.
     $probe = 'import sys,ssl,ctypes,venv,ensurepip; assert sys.platform == ''win32'' and sys.maxsize > 2**32 and sys.version_info >= (3,11)'
     $env:PYTHONUTF8 = '1'
+    $env:PYTHONDONTWRITEBYTECODE = '1'
     & $agentPython -X utf8 -I -B -c $probe
     if ($LASTEXITCODE -ne 0) { throw 'Python runtime check failed.' }
     Write-Output "Using Python: $agentPython"

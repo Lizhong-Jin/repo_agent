@@ -2,7 +2,7 @@
 
 [文档首页](index.md) · [项目首页](../README.md) · [Docker 沙箱](../sandbox/README.md)
 
-首次安装默认使用 `native`（已显式安装其他模式时，以安装记录为准）：文件工具通过受控的轻量文件服务直接修改原项目；Git 工具、命令、Python、环境探测和语言服务器通过 macOS Seatbelt 或 Linux Bubblewrap + seccomp 执行。首次默认的 `repo-agent` 等同于 `repo-agent --sandbox native`：
+macOS/Linux 首次安装默认使用 `native`（已显式安装其他模式时，以安装记录为准）：文件工具通过受控的轻量文件服务直接修改原项目；Git 工具、命令、Python、环境探测和语言服务器通过 macOS Seatbelt 或 Linux Bubblewrap + seccomp 执行。首次默认的 `repo-agent` 等同于 `repo-agent --sandbox native`：
 
 ```bash
 repo-agent
@@ -27,7 +27,13 @@ macOS 和 Linux native 共用以下分层，模型可见的工具参数不变：
 
 这是受信任文件代码的应用层边界，**不是任意代码的 OS 沙箱**。不得在文件工具中执行项目模块、插件、命令或语言服务器。目录句柄减少路径替换风险，但不承诺抵御拥有同一用户权限的恶意宿主进程持续移动目录、修改文件或攻击 Agent 本身；多文件 patch 也不是事务。需要独立工作副本及更强隔离时使用 Docker。
 
-启动时仍验证隔离与 GPU：Linux 将通用隔离自检和 CUDA 自检放在同一次沙箱启动中，由两个独立子进程分别执行，保留各自超时和失败诊断。选择单张 GPU 时仍先在沙箱内枚举设备，再收缩授权后执行合并自检。普通文件操作不承担全量扫描开销；Linux 隔离执行仍在每次调用前重新扫描，但现在会在单次策略生成内复用目录别名的扫描结果，并复用不包含文件状态的静态策略模板。策略实现见 [sandbox/linux_policy.py](../sandbox/linux_policy.py)，后端计时字段见下方说明。
+启动时仍验证隔离与 GPU：Linux 将通用隔离自检和 CUDA 自检放在同一次沙箱启动中，由两个独立子进程分别执行，保留各自超时和失败诊断。选择单张 GPU 时仍先在沙箱内枚举设备，再收缩授权后执行合并自检。普通文件操作不承担全量扫描开销；Linux 隔离执行仍在每次调用前重新扫描，但现在会在单次策略生成内复用目录别名的扫描结果，并复用不包含文件状态的静态策略模板。批量接口见 [sandbox/policy_scan.py](../sandbox/policy_scan.py)，默认由 [sandbox/linux_policy.py](../sandbox/linux_policy.py) 的 Python 实现执行，可显式选择 Rust 实现，后端计时字段见下方说明。
+
+文本搜索使用目录作用域读取接口：同一目录内复用父目录句柄与枚举元数据，逐文件打开后仍验证身份、类型、硬链接和读取前后签名。达到搜索预算或发生异常时立即关闭目录作用域。作用域固定的是目录身份，不是文件系统原子快照。无匹配的大小写敏感查询跳过逐行处理；其余匹配使用惰性行迭代，保持编码、换行、顺序和截断语义。可通过 `scripts/benchmark_search_files.py` 比较逐条目重开目录与目录作用域复用；该脚本仅测试轻量文件服务，不包含完整隔离启动。
+
+### Linux 策略扫描后端
+
+可选 Rust 策略扫描：源码安装自动尝试编译扩展，发行包安装直接使用包内匹配平台的预编译 wheel，无需安装端编译器。确认安装成功后设置 `AGENT_NATIVE_SCANNER=rust` 并重新启动；默认值仍为 `python`。扩展安装失败不影响核心安装。它只切换 Linux 隔离执行前的策略扫描，文本搜索和其他文件工具保持原实现；macOS 支持扫描差分测试，但其隔离仍使用 Seatbelt。显式选择 Rust 后，扩展缺失、版本不兼容或扫描失败仍会报错，不在运行时自动切换实现。缺少扩展的旧发行包可另行安装，见 [扩展构建说明](../rust/policy_scan/README.md)。
 
 ## Linux 实现、依赖与权限
 

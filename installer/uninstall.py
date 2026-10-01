@@ -341,6 +341,9 @@ def uninstall(root: Path, *, dry_run=False, purge=False, remove_image=False):
 
 
 def main(argv=None) -> None:
+    from .console import configure_output
+
+    configure_output()
     parser = argparse.ArgumentParser(description="卸载当前 Repo Agent 安装，默认保留配置和任务数据")
     parser.add_argument("--agent-home", type=Path, default=installation_root())
     parser.add_argument("--dry-run", action="store_true", help="只预览，不修改文件或镜像")

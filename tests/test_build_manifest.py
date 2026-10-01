@@ -45,6 +45,9 @@ def test_manifest_import_and_check_need_only_standard_library():
         "sandbox/Dockerfile",
         "cli/__init__.py",
         "host_support/__init__.py",
+        "rust/build.rs",
+        "rust/Cargo.lock",
+        "scripts/build_rust.py",
     ],
 )
 def test_missing_required_inputs_fail_early(source, name):
@@ -173,6 +176,11 @@ def test_real_wheel_and_sdist_keep_new_resource_and_drop_removed_module(source, 
     rebuilt = next(path for path in extracted.iterdir() if path.is_dir())
     assert (rebuilt / "agent/release_fixture.json").read_bytes() == resource.read_bytes()
     assert (rebuilt / "build_manifest.py").exists()
+    assert (rebuilt / "rust/build.rs").exists()
+    assert (rebuilt / "rust/Cargo.lock").exists()
+    assert (rebuilt / "scripts/build_rust.py").exists()
+    assert not (rebuilt / "native").exists()
+    assert not (rebuilt / "rust_wheels").exists()
     assert not (rebuilt / "cli/.env").exists()
     assert not (rebuilt / "cli/.private.py").exists()
     assert not (rebuilt / "cli/.venv/private.py").exists()

@@ -8,18 +8,20 @@ mount rules do not filter future filenames; see docs/native-sandbox.md.
 import json
 import os
 import shutil
-import stat
 import sys
 from pathlib import Path
 from time import perf_counter
 
 from host_support.languages import sandbox_environment
+from tools._internal.file_policy import PROTECTED_NAME_RULES
 
 from .linux_gpu import NativeGPU
 from .linux_mounts import MountTable
-from .linux_policy import PolicyPlan, PolicyScan
-from .linux_policy import outermost as _outermost
+from .linux_policy import validate_workspace_file
 from .native_common import NativeBackendBase
+from .policy_scan import PolicyPlan, PolicyScanner, ScanFailure, ScanRequest
+from .policy_scan import outermost as _outermost
+from .policy_scanners import create_policy_scanner
 from .wsl_drivers import WSLDriverStore
 
 
@@ -97,17 +99,21 @@ class LinuxNativeBackend(NativeBackendBase):
                 raise ValueError("Linux native 工作区与系统虚拟文件系统冲突")
 
     def _check_workspace_file(self, path: str, info: os.stat_result):
-        super()._check_workspace_file(path, info)
-        if not (stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)):
-            raise ValueError("Linux native 工作区含 socket/FIFO/设备等特殊文件，拒绝执行")
+        validate_workspace_file(path, info)
 
     def _policy_plan(self):
         # Only configuration is reusable across calls. Resolve aliases and inspect
         # existence/permissions again on every scan, including startup probes.
         key = (self.workspace, tuple(self.read_paths), tuple(self.protected_paths))
         plan = getattr(self, "_compiled_policy_plan", None)
-        if plan is None or (plan.workspace, plan.read_paths, plan.protected_paths) != key:
-            plan = self._compiled_policy_plan = PolicyPlan.compile(*key)
+        if (
+            plan is None
+            or (plan.workspace, plan.read_paths, plan.protected_paths) != key
+            or plan.name_rules != PROTECTED_NAME_RULES
+        ):
+            plan = self._compiled_policy_plan = PolicyPlan.compile(
+                *key, name_rules=PROTECTED_NAME_RULES
+            )
         return plan
 
     def _mount_policy(self, read_paths, *, git_read):
@@ -120,21 +126,28 @@ class LinuxNativeBackend(NativeBackendBase):
             roots = tuple(
                 view / package.name for view in views for package in self.wsl_drivers.packages
             )
-        scan = PolicyScan(
-            self._policy_plan(),
+        request = ScanRequest(
+            read_paths=tuple(read_paths),
             git_read=git_read,
-            mount_table=table,
-            pruned_paths=views,
-            extra_roots=roots,
-            check_workspace_file=self._check_workspace_file,
+            mount_snapshot=table.text,
+            pruned_paths=tuple(views),
+            extra_roots=tuple(roots),
         )
+        # Lazy composition also supports scanner-only benchmarks without launching
+        # a backend. The selected engine itself keeps no filesystem observations.
+        scanner = getattr(self, "_policy_scanner", None)
+        if scanner is None:
+            scanner = create_policy_scanner()
+            self._policy_scanner: PolicyScanner = scanner
         try:
-            result = scan.run(read_paths)
-            if self.wsl_drivers:
-                self.wsl_drivers.verify(table)
-            return result
-        finally:
-            self.last_policy_metrics = scan.metrics
+            result = scanner.scan(self._policy_plan(), request)
+        except ScanFailure as failure:
+            self.last_policy_metrics = failure.metrics
+            raise failure.error from None
+        self.last_policy_metrics = dict(result.metrics)
+        if self.wsl_drivers:
+            self.wsl_drivers.verify(table)
+        return list(result.masks), list(result.git_paths)
 
     def _sandbox_command(self, command, control, scratch, read_paths, *, git_read=False):
         masks, git_paths = self._mount_policy(read_paths, git_read=git_read)

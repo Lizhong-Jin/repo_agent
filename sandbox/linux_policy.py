@@ -4,13 +4,15 @@ import errno
 import os
 import stat
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 
-from tools._internal.file_policy import is_protected_leaf
+from host_support.cancellation import checkpoint
 
 from .linux_mounts import MountTable
+from .policy_scan import PolicyPlan as PolicyPlan
+from .policy_scan import ScanFailure, ScanRequest, ScanResult
+from .policy_scan import outermost as outermost
 
 
 @contextmanager
@@ -26,56 +28,6 @@ def open_directory(path):
         yield fd
     finally:
         os.close(fd)
-
-
-def outermost(paths):
-    """Prune lexical descendants, retaining aliases and deterministic mount order."""
-    result, selected = [], set()
-    for path in sorted(set(paths), key=lambda p: (len(p.parts), str(p))):
-        if not any(parent in selected for parent in path.parents):
-            result.append(path)
-            selected.add(path)
-    return result
-
-
-@dataclass(frozen=True)
-class PolicyPlan:
-    """Pure configuration only: never cache existence, link targets or permissions."""
-
-    workspace: Path
-    read_paths: tuple
-    protected_paths: tuple
-    mount_roots: tuple
-    scan_roots: tuple
-    protected_children: dict
-    protected_names: frozenset
-    guard_candidates: tuple
-
-    @classmethod
-    def compile(cls, workspace, read_paths, protected_paths):
-        children, guards = {}, set()
-        for path in protected_paths:
-            children.setdefault(str(path.parent), set()).add(path.name)
-        for path in (*protected_paths, *read_paths):
-            for parent in path.parents:
-                if parent == workspace or not parent.is_relative_to(workspace):
-                    break
-                guards.add(parent)
-        return cls(
-            workspace,
-            read_paths,
-            protected_paths,
-            tuple(outermost(read_paths)),
-            tuple(outermost((workspace, *read_paths))),
-            {parent: frozenset(names) for parent, names in children.items()},
-            frozenset(path.name for path in protected_paths),
-            tuple(sorted(guards, key=lambda p: (len(p.parts), str(p)))),
-        )
-
-    def roots(self, read_paths):
-        if tuple(read_paths) == self.read_paths:
-            return self.scan_roots
-        return outermost((self.workspace, *read_paths))
 
 
 class PolicyScan:
@@ -142,6 +94,7 @@ class PolicyScan:
             self.active_bucket[key] = self.active_bucket.get(key, 0) + value
 
     def _entries(self, directory, canonical, reuse):
+        checkpoint()
         if reuse and canonical in self.cache:
             started = perf_counter()
             if directory != self.active_root:
@@ -191,7 +144,7 @@ class PolicyScan:
         facts = []
         for entry in entries:
             name = entry.name
-            protected = is_protected_leaf(name)
+            protected = self.plan.name_rules.matches_leaf(name)
             is_directory = entry.is_dir(follow_symlinks=False)
             if is_directory or protected or name in self.plan.protected_names:
                 facts.append((name, is_directory, entry.is_symlink(), protected))
@@ -217,6 +170,7 @@ class PolicyScan:
             self.cache.clear()  # Never retain observations across tool calls.
 
     def _run(self, read_paths):
+        checkpoint()
         masks, git_paths, identities = [], [], []
         workspace = self.plan.workspace
         for root in (*self.plan.roots(read_paths), *self.extra_roots):
@@ -224,7 +178,7 @@ class PolicyScan:
             self.metrics["roots"] += 1
             fixed = any(root == p or root.is_relative_to(p) for p in self.plan.protected_paths)
             git = root.name.lower() == ".git" and self.git_read and not fixed
-            root_masked = fixed or (is_protected_leaf(root.name) and not git)
+            root_masked = fixed or (self.plan.name_rules.matches_leaf(root.name) and not git)
             if root_masked:
                 masks.append(root)
                 if not self._validates_workspace(str(root)):
@@ -308,5 +262,37 @@ class PolicyScan:
         for path in (*masks, *git_paths):
             if path.is_symlink():
                 raise ValueError(f"Linux native 受保护挂载点不能是符号链接：{path}")
+        checkpoint()
         self.metrics.update(masks=len(masks), git_paths=len(git_paths), complete=True)
         return masks, git_paths
+
+
+def validate_workspace_file(path: str, info: os.stat_result):
+    """Linux validation shared by the reference preflight and Python scanner."""
+    if stat.S_ISREG(info.st_mode) and info.st_nlink > 1:
+        raise ValueError(f"Native 工作区含硬链接，拒绝执行：{path}")
+    if not (stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)):
+        raise ValueError("Linux native 工作区含 socket/FIFO/设备等特殊文件，拒绝执行")
+
+
+class PythonPolicyScanner:
+    """Stateless implementation of PolicyScanner; each call owns its observations.
+
+    PolicyScan stays available as a Python implementation detail for diagnostic
+    probes. The public batch contract never accepts its per-file callback.
+    """
+
+    def scan(self, plan: PolicyPlan, request: ScanRequest) -> ScanResult:
+        scan = PolicyScan(
+            plan,
+            git_read=request.git_read,
+            mount_table=MountTable(request.mount_snapshot),
+            pruned_paths=request.pruned_paths,
+            extra_roots=request.extra_roots,
+            check_workspace_file=validate_workspace_file,
+        )
+        try:
+            masks, git_paths = scan.run(request.read_paths)
+        except BaseException as error:
+            raise ScanFailure(error, scan.metrics) from error
+        return ScanResult(tuple(masks), tuple(git_paths), scan.metrics)

@@ -352,7 +352,7 @@ class InstallTransaction:
                 + "; ".join(errors)
             )
         self.cleanup()
-        print("已恢复安装前的环境、命令和 PATH；已有用户配置及新建配置模板均保留。")
+        print("已恢复安装前的环境、命令和 PATH；用户配置及其备份保留。")
 
 
 def recover_install(root):

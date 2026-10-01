@@ -58,3 +58,7 @@ logs/
 *.swp
 *.swo
 *~
+
+# Rust scanner build outputs; Cargo.lock remains tracked
+/rust/**/target/
+/rust_wheels/

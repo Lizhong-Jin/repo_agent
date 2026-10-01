@@ -436,17 +436,24 @@ def test_bootstrap_confirms_once_before_creating_environment(installations, tmp_
     def run(command, **kwargs):
         for name in COMMANDS:
             assert (bins / name).resolve() == old / ".venv/bin" / name
-        if command[1:3] == ["-m", "venv"]:
+        if command[1:4] == ["-B", "-m", "venv"]:
             events.append("venv")
         else:
-            if command[1:3] != ["-m", "pip"] or command[3] == "check":
+            if command[1:4] != ["-B", "-m", "pip"] or command[4] == "check":
                 events.append("smoke")
                 return
             if "--require-hashes" in command:
                 assert str(new / "requirements-dev.lock") in command
                 events.append("locked")
                 return
-            assert command[:5] == [str(new / ".venv/bin/python"), "-m", "pip", "install", "-e"]
+            assert command[:6] == [
+                str(new / ".venv/bin/python"),
+                "-B",
+                "-m",
+                "pip",
+                "install",
+                "-e",
+            ]
             events.append("pip")
             (new / ".venv/bin").mkdir()
             for name in COMMANDS:

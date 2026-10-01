@@ -66,6 +66,12 @@ class _Document(HTMLParser):
         self.stack = [self.root]
         self.nodes = 0
 
+    def check_pending(self):
+        # Recent CPython patches defer fragments outside rawdata to avoid
+        # quadratic reparsing. Both buffers count toward our pending limit.
+        if len(self.rawdata) + getattr(self, "_pending_len", 0) > 65_536:
+            raise WebError("CONTENT_TOO_COMPLEX", "HTML token exceeds extraction limits.")
+
     def handle_starttag(self, tag, attrs):
         self.nodes += 1
         if self.nodes > 100_000 or len(self.stack) > 128:
@@ -309,9 +315,9 @@ async def extract_page(body: bytes, content_type: str, content_type_header: str,
         parser = _Document()
         for offset in range(0, len(text), 16_384):
             parser.feed(text[offset : offset + 16_384])
-            if len(parser.rawdata) > 65_536:
-                raise WebError("CONTENT_TOO_COMPLEX", "HTML token exceeds extraction limits.")
+            parser.check_pending()
             await asyncio.sleep(0)
+        parser.check_pending()
         parser.close()
         title = next((_text(node) for node in _walk(parser.root) if node.tag == "title"), "")
         renderer = _Markdown(final_url)

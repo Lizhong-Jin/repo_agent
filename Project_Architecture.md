@@ -28,6 +28,8 @@
 | Web 工具 | [tools/web_tools.py](tools/web_tools.py)、[tools/_internal/](tools/_internal/) | 主进程受控搜索、网页抓取和分页缓存，按配置启用 |
 | 系统提示词 | [agent/prompt.py](agent/prompt.py) | 通用任务规则；代码工作流程由 `coding` 等技能按需补充 |
 | 原生沙箱 | [sandbox/native.py](sandbox/native.py)、[sandbox/native_common.py](sandbox/native_common.py)、[sandbox/macos_native.py](sandbox/macos_native.py)、[sandbox/linux_native.py](sandbox/linux_native.py) | 显式选择后端、共享调用生命周期、各平台隔离策略与实际自检 |
+| 策略扫描 | [sandbox/policy_scan.py](sandbox/policy_scan.py)、[sandbox/policy_scanners.py](sandbox/policy_scanners.py)、[sandbox/rust_policy.py](sandbox/rust_policy.py) | Linux 策略扫描批量协议；默认 Python，可显式选择单独安装的 Rust 扩展；每次重新观察文件系统 |
+| 目录与文本扫描 | [host_support/file_scan.py](host_support/file_scan.py)、[host_support/path_rules.py](host_support/path_rules.py)、[tools/_internal/text_search.py](tools/_internal/text_search.py) | 目录作用域读取、名称匹配与惰性分行；工具层保留权限、预算和输出协议 |
 | 项目 Python | [sandbox/project_python.py](sandbox/project_python.py) | 选择项目解释器、构造读取范围和项目进程环境；可信 worker 继续使用 Agent Python |
 | Docker 沙箱 | [sandbox/session.py](sandbox/session.py)、[sandbox/docker.py](sandbox/docker.py)、[sandbox/writeback.py](sandbox/writeback.py) | 工作副本、容器、回写检查、备份与恢复 |
 | 追踪 | [agent/Tracing.py](agent/Tracing.py) | 模型/工具事件、计时、任务与运行片段统计 |
@@ -71,6 +73,8 @@ Runtime 按 `ExecutionKind` 调度工具。CLI 默认只向模型公开通用工
 平台公共服务集中在 `host_support`，不依赖 Agent、CLI、工具或沙箱业务模块。安装引导和恢复可在未加载第三方依赖时导入它；文件工具为共享文件机制注入工作区策略。会话、Skills、配置与 Docker 回写按需复用文件描述符、锁或原子替换机制，工具、LSP 和安装下载共享进程生命周期机制，并保留各自协议与环境策略。
 
 `sandbox/native.py` 的 `create_native_backend` 显式选择后端；macOS 与 Linux 共同继承 `native_common.NativeBackendBase`，Linux 不继承 macOS 策略。`macos_native.py` 保留 Seatbelt 实现，Linux 的挂载、seccomp、GPU 与 WSL 专用模块保持独立。平台识别和能力描述不授予执行权限，也不表示 Windows 原生执行已得到支持。详见[平台适配边界](docs/platform-adaptation.md)。
+
+取消使用每次任务独立的协作上下文，模型/网络等待和子进程清理响应同一停止请求；文件调用在安全边界完成，已提交修改不自动撤销。TUI 后台线程通过事件队列投递文本、思考和进度，UI 在任务结果收尾时排空队列后保存显示记录。队列用于界面通知，不是持久化任务队列；任务仍顺序执行。实现与清理状态含义见[取消协议](docs/development.md#每次任务的取消协议)。
 
 ## 上下文构造
 

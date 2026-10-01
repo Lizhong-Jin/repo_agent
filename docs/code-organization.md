@@ -12,6 +12,7 @@
 | `installer/` | 安装/卸载、依赖准备、资源定位、发行校验和安装事务 | `setup.py`、`uninstall.py`、`release_install.py` |
 | `configuration/` | 配置环境加载、保存、备份与恢复 | `environment.py`、`storage.py` |
 | `agent/` | Agent 循环、会话持久化与协调、压缩、Skills、追踪 | `runtime.py`、`session.py`、`conversation.py` |
+| `rust/` | Rust 基础能力源码；当前包含策略扫描扩展，根目录统一管理构建配置，子目录按职责组织源码 | `policy_scan/`、`../scripts/build_rust.py` |
 | `host_support/` | 标准库实现的宿主文件、锁、路径与进程机制 | `filesystem.py`、`locking.py`、`storage.py` |
 
 模型协议、具体工具、执行隔离仍分别归属 `llm/`、`tools/`、`sandbox/`。不要把业务策略为了“共享”而继续下沉到 `host_support`。
@@ -52,6 +53,7 @@
 | `maintenance.py` | 标准库环境诊断 |
 | `paths.py`、`release_manifest.py` | 可信资源位置、归档处理、发行清单验证 |
 | `_bootstrap.py` | 直接脚本运行时，从脚本位置建立可信包导入路径 |
+| `console.py` | 安装入口统一配置 UTF-8 标准输出与错误输出，支持 Windows 重定向管道 |
 
 安装模块以包内相对导入为准，直接运行时先建立包身份，避免包导入和脚本导入维护两套实现。安装运行时校验会在独立子进程中尝试导入 CLI，但安装服务本身不导入模型、工具或终端模块。
 
@@ -123,11 +125,36 @@ flowchart TD
 
 `SessionState` 管理计数、上下文估算和恢复；`SessionStatus` 在其上提供文本格式和 `/context`。`ThinkingController` 接收明确参数和可选 `ThinkingPreferences` 接口；CLI 的 `ThinkingControl` 负责转换命令行参数、注入文件存储并展示 `/thinking`。核心层可以在禁止导入 `cli`、`configuration` 和 `prompt_toolkit` 的进程中独立使用。
 
-`RuntimeEventBridge` 接收调度函数及展示回调，不持有 `ConversationUI`。模型线程先执行原有追踪/统计回调，再向 UI 队列传入不可变的文本、步骤序号和耗时；界面控件只在 UI 线程更新。桥接替换旧的模型输出回调以避免重复打印，并在上下文退出时恢复原始事件、模型输出和取消回调，包括清理失败的路径。
+`RuntimeEventBridge` 接收调度函数及展示回调，不持有 `ConversationUI`。模型线程先执行原有追踪/统计回调，再向 UI 队列传入不可变的文本、步骤序号和耗时；界面控件只在 UI 线程更新。文本、思考和进度回调统一进入任务的事件队列；接收完成结果前，UI 先排空该队列，再合并历史和保存会话，最后允许下一任务。桥接替换旧的模型输出回调以避免重复打印，并在上下文退出时恢复原始事件、模型输出和取消回调，包括清理失败的路径。
 
 `TaskRunner` 接收 Runtime、输出函数、取消检查以及可选沙箱/会话。它返回任务结果或错误；UI 决定如何接收历史、展示错误和保存检查点。界面关闭时先请求取消并等待后台操作，再恢复 Runtime 回调。`layout` 和 `bindings` 属于同一展示层，可以使用应用的界面状态，但不执行模型请求或实现保存策略。
 
 直接导入具体模块；`cli.live`、`cli.tui` 已移除。TUI 与公共执行/展示模块不得反向导入 `interactive` 或 `main`。这些规则、无终端运行和异常清理由 [会话解耦测试](../tests/test_session_decoupling.py) 验证。
+
+## 扫描与文件系统接口
+
+Linux 隔离策略通过 `sandbox/policy_scan.py` 的 `PolicyScanner.scan(plan, request)` 批量调用。
+`PolicyPlan` 只保存静态配置，`ScanRequest` 保存本次挂载快照与扫描范围；完整成功返回
+`ScanResult`，失败通过 `ScanFailure` 保留诊断指标和原异常。默认实现仍是
+`sandbox/linux_policy.py` 的无状态 `PythonPolicyScanner`，每次创建独立扫描观察。
+后端负责注入名称规则、WSL 驱动验证和挂载命令生成，接口不接受逐文件 Python 回调。
+
+`host_support/path_rules.py` 的 `NameRules` 仅提供名称匹配机制，保护名单仍归
+`tools/_internal/file_policy.py`。`host_support/file_scan.py` 定义作用域内的
+`DirectorySource` / `DirectoryReader`；`FileAccess.read_directory()` 是其 Python 实现。
+文本搜索的路径筛选、内容解码、预算和结果格式仍由工具层负责。
+
+`sandbox/rust_policy.py` 提供可选 Rust 适配器，原生实现与构建配置位于
+`rust/policy_scan/`。`policy_scanners.py` 根据 `AGENT_NATIVE_SCANNER=python|rust`
+装配后端，默认 Python，显式 Rust 失败不降级。扩展按平台单独构建安装，主包不强制依赖
+Rust 编译器。批量调用传入路径字节及规则数据，返回保护路径、Git 路径和指标；取消及
+失败仍通过 `ScanFailure` 保留 Python 异常。
+
+ASCII 名称匹配在 Rust 执行，非 ASCII 名称通过当前解释器的文件系统解码和 Unicode
+小写转换保持兼容。Rust 扫描释放 GIL，并周期检查信号及应用取消状态。Python 参考实现
+保留用于差分验证。详见 [Rust 扫描器构建与验证](../rust/policy_scan/README.md)。
+
+目录读取和文本搜索仍由 Python 实现：搜索在目录作用域内复用已打开的父目录，并从同一打开文件获取内容与元数据；`tools/_internal/text_search.py` 逐行迭代，避免另建完整行列表。名称、路径保护、读取预算和结果语义仍由原工具负责，Rust 扩展只替换 Linux 策略扫描。
 
 ## 安装兼容与打包
 

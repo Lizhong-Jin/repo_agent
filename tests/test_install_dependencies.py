@@ -152,6 +152,15 @@ def test_native_install_adds_lsp_and_rolls_back_failures(installation, monkeypat
         ],
     )
     monkeypatch.setattr(setup, "print_language_status", lambda root: None)
+    rust_attempts = []
+
+    def optional_rust(root, **kwargs):
+        assert load_record(root)["status"] == "installed"
+        assert not (root / ".repo-agent-install-transaction").exists()
+        rust_attempts.append(root)
+        return False  # A missing optional compiler never rolls back the core.
+
+    monkeypatch.setattr(setup, "install_rust_extension", optional_rust)
 
     def install_servers(root, names):
         assert load_record(root)["status"] == "installed"
@@ -181,7 +190,7 @@ def test_native_install_adds_lsp_and_rolls_back_failures(installation, monkeypat
 
     def run(command, **kwargs):
         commands.append(command)
-        if command[1:4] == ["-m", "pip", "install"]:
+        if command[1:5] == ["-B", "-m", "pip", "install"]:
             (root / ".venv/bin").mkdir(exist_ok=True)
             for name in COMMANDS:
                 (root / ".venv/bin" / name).write_text("new entry")
@@ -208,8 +217,10 @@ def test_native_install_adds_lsp_and_rolls_back_failures(installation, monkeypat
         with pytest.raises(SystemExit):
             setup.main()
         assert (root / ".venv/old-marker").exists()
+        assert not rust_attempts
     else:
         setup.main()
+        assert rust_attempts == [root]
         assert load_record(root)["languages"] == (
             ["python", "typescript", "cpp"]
             if failure == "middle-language"
@@ -228,7 +239,7 @@ def test_native_install_adds_lsp_and_rolls_back_failures(installation, monkeypat
     assert str(root / "requirements-build.lock") in locked
     assert all(not call["docker"] for call in checks)
     assert any(str(root) + "[lsp]" in command for command in commands)
-    assert any(command[1:] == ["-m", "pip", "check"] for command in commands)
+    assert any(command[1:] == ["-B", "-m", "pip", "check"] for command in commands)
     assert not any("sandbox.build" in command for command in commands)
 
 

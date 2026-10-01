@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -34,6 +35,21 @@ def host_target():
 
 def platform_tags(target):
     return release_target(target).wheel_platforms()
+
+
+def strip_runtime_bytecode(runtime):
+    """Ship immutable sources, not timestamp-sensitive, regenerable caches."""
+    caches = list(runtime.rglob("*.pyc"))
+    for cache in caches:
+        source = (
+            Path(importlib.util.source_from_cache(str(cache)))
+            if cache.parent.name == "__pycache__"
+            else cache.with_suffix(".py")
+        )
+        if not source.is_file():
+            raise ValueError(f"Runtime contains sourceless bytecode: {cache.relative_to(runtime)}")
+    for cache in caches:
+        cache.unlink()
 
 
 def windows_requirements(source, destination, version):
@@ -99,6 +115,7 @@ def prepare(root, output, target, *, with_dev=False, archive=None, wheelhouse=No
             extract_files(packed, runtime)
             if not (runtime / release_target(target).runtime_python).is_file():
                 raise ValueError("Windows Python archive is missing python/python.exe")
+            strip_runtime_bytecode(runtime / "python")
             packed.unlink()
         shutil.copy2(root / "runtime/python.lock", runtime / "python.lock")
         (runtime / "target").write_text(target + "\n")

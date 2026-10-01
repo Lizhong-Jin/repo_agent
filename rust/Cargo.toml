@@ -1,0 +1,27 @@
+[package]
+name = "repo-agent-policy-scan"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+
+[lib]
+path = "policy_scan/src/lib.rs"
+name = "repo_agent_scan"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+pyo3 = { version = "=0.27.2", features = ["abi3-py311"] }
+libc = "=0.2.175"
+
+[build-dependencies]
+pyo3-build-config = "=0.27.2"
+
+[dev-dependencies]
+pyo3 = { version = "=0.27.2", features = ["auto-initialize"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -61,6 +61,7 @@ python3 -m venv .venv
 | GPU | [算子验证](gpu-operators.md#验证边界) | Docker / native 各有开关，必须有实际 NVIDIA GPU 和所需依赖 |
 | 发行安装 | [安装验收](distribution.md#校验失败处理与安装验收) | 显式提供当前平台完整包，使用受管 Python 离线安装；测试以模拟 Docker 验证构建入口 |
 | Windows 文件与安装契约 | [Windows 文件服务](platform-adaptation.md#windows-文件服务) | 共享文件契约可跨平台运行；Windows 内核用例只能在 Windows 运行 |
+| 可选 Rust 扫描器（源码位于 `rust/`，产物位于 `rust_wheels/`） | [构建与差分验证](../rust/policy_scan/README.md#verify) | 单独安装扩展后运行差分测试；未安装时相关用例会跳过，主包不要求 Rust 编译器 |
 | Windows ZIP 实装 | [ZIP 验收](distribution.md#校验失败处理与安装验收) | Windows x86_64、PowerShell 5.1+，设置 `REPO_AGENT_WINDOWS_ARCHIVE` |
 | Windows Docker 回写 | [真实容器往返](platform-adaptation.md#windows-文件服务) | `RUN_WINDOWS_DOCKER_TESTS=1`；Git for Windows、Docker Desktop Linux 容器模式及本地镜像 |
 
@@ -71,7 +72,7 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py t
 
 开关只选择测试，不能补齐依赖；缺少目标平台或硬件时的跳过不计为通过。真实模型 API 的可用性、参数和计费需要另行验证，不属于默认套件的结论。
 
-原生 Windows 开发测试需另行准备 Python 和开发依赖，虚拟环境入口为 `.venv\Scripts\python.exe`；发行 ZIP 不安装 pytest/Ruff。当前 Windows CI 运行架构边界、共享文件、Windows 文件和发行安装四份测试模块，没有声明整个默认套件已适配 Windows。工作流范围见[平台验证说明](platform-adaptation.md#扩展与验证)。
+原生 Windows 开发测试需另行准备 Python 和开发依赖，虚拟环境入口为 `.venv\Scripts\python.exe`；发行 ZIP 不安装 pytest/Ruff。当前 Windows CI 运行架构边界、共享文件、Windows 文件、发行安装和取消协议五份测试模块，没有声明整个默认套件已适配 Windows。工作流范围见[平台验证说明](platform-adaptation.md#扩展与验证)。
 
 ## 离线开发环境
 
@@ -81,7 +82,7 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py t
 .venv/bin/python scripts/prepare_python_bundle.py --target linux-x86_64 --with-dev --output dist/dev-kit-linux-x86_64
 ```
 
-可选目标为 `linux-x86_64`、`linux-arm64`、`macos-x86_64`、`macos-arm64`、`windows-x86_64`。此脚本每次处理一个平台，省略 `--target` 时选择当前平台，输出目录须为空。macOS/Linux 输出 `runtime/python.tar.gz`；Windows 在构建时展开到 `runtime/python/`，不保留该归档。各目标均包含平台标记、`wheelhouse/` 和依赖清单指纹。`--with-dev` 加入固定构建工具、pytest、Ruff 及其依赖；没有该选项时，macOS/Linux 准备 native 运行依赖，Windows 仅准备 local/Docker 核心依赖。
+可选目标为 `linux-x86_64`、`linux-arm64`、`macos-x86_64`、`macos-arm64`、`windows-x86_64`。此脚本每次处理一个平台，省略 `--target` 时选择当前平台，输出目录须为空。macOS/Linux 输出 `runtime/python.tar.gz`；Windows 在构建时展开到 `runtime/python/`，移除有对应源码的 `.pyc` 缓存，不保留该归档；发现无源码字节码时停止构建。各目标均包含平台标记、`wheelhouse/` 和依赖清单指纹。`--with-dev` 加入固定构建工具、pytest、Ruff 及其依赖；没有该选项时，macOS/Linux 准备 native 运行依赖，Windows 仅准备 local/Docker 核心依赖。
 
 将源码与此目录复制到目标机器，按[离线安装](installation.md#离线安装)执行。开发材料须与源码的锁文件匹配；依赖升级后重新生成。首次准备仍需联网，不把运行时和 wheels 提交到 Git。已具备材料时，准备脚本也支持 `--offline --runtime-archive ... --wheelhouse ...`。
 
@@ -212,3 +213,5 @@ Runtime 负责同步任务循环、轮数限制和输出截断恢复。CLI 通�
 见[统一分发清单](distribution.md#统一分发清单)。
 
 </details>
+
+Rust 编译：`python scripts/build_rust.py build`；wheel 打包：`python scripts/build_rust.py wheel`。构建与离线选项见 [Rust 构建入口](../rust/README.md)。

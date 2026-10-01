@@ -228,7 +228,7 @@ def install_language_servers(root, languages):
         )
 
 
-def service_report(root, *, mode, languages=None, image="repo-agent-sandbox:v1"):
+def service_report(root, *, mode, languages=None, image="repo-agent-sandbox:v1", scanner=None):
     """Actual symbol tests, with fake source files and no user project mounts or credentials."""
     if mode == "local":
         return [("OK", "执行模式", "local 仅提供文件/Git 工具，无需语言服务")]
@@ -246,6 +246,8 @@ def service_report(root, *, mode, languages=None, image="repo-agent-sandbox:v1")
             *arguments,
         ]
         env = {**os.environ, "PATH": tool_path(installed_python(root))}
+        if scanner is not None:
+            env["AGENT_NATIVE_SCANNER"] = scanner
     else:
         container = "repo-agent-lsp-check-" + uuid4().hex
         command = [

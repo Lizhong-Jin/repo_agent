@@ -24,9 +24,9 @@ Agent 使用固定的解释器和依赖，用户项目继续使用已有的 venv
 
 源码和发行安装默认使用 `runtime/python.lock` 固定的 CPython 3.13.15（python-build-standalone 20260924，普通 GIL、install_only_stripped）。支持 Linux/macOS 的 x86_64/ARM64 和 Windows x86_64；WSL2 使用 Linux 包。Windows ZIP 已展开独立 Python，由 PowerShell 入口校验并复制到持久缓存后创建虚拟环境，不依赖系统 Python。平台发行包的 Python wheels 以 Linux glibc 2.28+、macOS ARM64 11+ / x86_64 10.15+ 为目标；系统沙箱和语言工具链还须满足各自要求。
 
-解释器及标准库、配套库、许可证文件来自完整的上游运行时归档，不复制构建机器上的 `.venv`。macOS/Linux 安装器校验固定 SHA256 后解压，检查 ssl、ctypes、venv、ensurepip 和版本；在线下载需要 curl，解压需要 tar，校验使用 sha256sum 或 shasum。Windows 在构建时校验上游归档并展开，PowerShell 安装入口校验清单中的逐文件哈希后使用内置 Python，无需安装机预装 Python、curl 或 tar。
+解释器及标准库、配套库、许可证文件来自完整的上游运行时归档，不复制构建机器上的 `.venv`。macOS/Linux 安装器校验固定 SHA256 后解压，检查 ssl、ctypes、venv、ensurepip 和版本；在线下载需要 curl，解压需要 tar，校验使用 sha256sum 或 shasum。Windows 在构建时校验上游归档并展开，移除有对应源码的字节码缓存；若遇到无源码字节码则构建失败。PowerShell 安装入口校验清单中的逐文件哈希后使用内置 Python，无需安装机预装 Python、curl 或 tar。新构建的源码型运行时不把可再生成的 `.pyc` 纳入清单，后续引导会先清理运行中产生的缓存；解释器、DLL 和标准库源码仍须通过哈希检查。
 
-运行时放在 `${XDG_DATA_HOME:-~/.local/share}/repo-agent/runtimes/<版本>-<平台>-<哈希前缀>/`。同一版本可被多套 Agent 安装复用，每套安装仍有独立 `.venv`。升级使用新的缓存目录，不原地替换旧解释器。卸载 Agent 保留共享运行时，避免破坏其他 venv；确认没有安装使用它后才可手动删除。
+运行时放在 `${XDG_DATA_HOME:-~/.local/share}/repo-agent/runtimes/<版本>-<平台>-<哈希前缀>/`。Windows 缓存键还包含发行清单哈希的前 16 位，仅清单一致的发行材料复用同一缓存；macOS/Linux 按上游运行时键复用。每套安装仍有独立 `.venv`。升级使用新的缓存目录，不原地替换旧解释器。卸载 Agent 保留共享运行时，避免破坏其他 venv；确认没有安装使用它后才可手动删除。
 
 | 参数/环境变量 | 作用 |
 | --- | --- |

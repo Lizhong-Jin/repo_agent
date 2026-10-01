@@ -37,16 +37,75 @@ BUILTINS.update(
         "AGENT_LOG_DIR": "",
         "AGENT_SANDBOX_WRITEBACK": "manual",
         "AGENT_SANDBOX_VERIFY_COMMAND": "",
+        "AGENT_NATIVE_SCANNER": "python",
         "AGENT_WEB_SEARCH_PROVIDER": "off",
         "AGENT_WEB_FETCH_ENABLED": "false",
     }
 )
-KEYS = [
-    "LLM_PROVIDER",
-    "LLM_MODEL",
-    "LLM_BASE_URL",
-    *sorted(CONFIG_KEYS - {"LLM_PROVIDER", "LLM_MODEL", "LLM_BASE_URL"}),
-]
+# Keep related settings together, ordered from common choices to advanced options.
+CONFIG_GROUPS = (
+    ("模型与接口", ("LLM_PROVIDER", "LLM_MODEL", "LLM_BASE_URL")),
+    ("模型 API 密钥", tuple(dict.fromkeys(p.api_key_env for p in PROVIDERS.values()))),
+    (
+        "任务与输出",
+        (
+            "AGENT_MAX_STEPS",
+            "AGENT_MAX_OUTPUT_TOKENS",
+            "AGENT_MAX_RECOVERIES",
+            "AGENT_RECOVERY_MAX_OUTPUT_TOKENS",
+            "LLM_STREAM",
+            "LLM_TEMPERATURE",
+            "LLM_TOOL_CHOICE",
+        ),
+    ),
+    (
+        "思考与显示",
+        (
+            "LLM_THINKING",
+            "LLM_REASONING_EFFORT",
+            "LLM_THINKING_BUDGET",
+            "LLM_THINKING_HISTORY",
+            "LLM_THINKING_RECALL",
+            "LLM_THINKING_PROFILE",
+            "AGENT_THINKING_DISPLAY",
+        ),
+    ),
+    (
+        "上下文与压缩",
+        (
+            "LLM_CONTEXT_WINDOW",
+            "AGENT_AUTO_COMPACT",
+            "AGENT_COMPACT_THRESHOLD",
+            "AGENT_COMPACT_TARGET",
+            "AGENT_COMPACT_KEEP_TOKENS",
+            "AGENT_COMPACT_MAX_REFINEMENTS",
+        ),
+    ),
+    (
+        "超时与重试",
+        (
+            "LLM_TIMEOUT",
+            "LLM_CONNECT_TIMEOUT",
+            "LLM_WRITE_TIMEOUT",
+            "LLM_POOL_TIMEOUT",
+            "LLM_MAX_RETRIES",
+            "LLM_RETRY_DELAY",
+            "LLM_MAX_RETRY_DELAY",
+        ),
+    ),
+    (
+        "联网工具",
+        ("AGENT_WEB_SEARCH_PROVIDER", "BRAVE_SEARCH_API_KEY", "AGENT_WEB_FETCH_ENABLED"),
+    ),
+    (
+        "沙箱与回写",
+        ("AGENT_NATIVE_SCANNER", "AGENT_SANDBOX_WRITEBACK", "AGENT_SANDBOX_VERIFY_COMMAND"),
+    ),
+    ("提示词与日志", ("AGENT_SYSTEM_PROMPT", "AGENT_LOG_DIR")),
+    ("高级请求参数", ("LLM_EXTRA_JSON",)),
+    ("已弃用配置项（不再生效）", ("AGENT_COMPACT_SUMMARY_TOKENS",)),
+)
+KEYS = [key for _, keys in CONFIG_GROUPS for key in keys]
 
 
 def safe_value(key, value, values):
@@ -82,18 +141,20 @@ def show(root, *, user_only=False):
         print("启动生效配置（未包含额外启动参数或已运行会话中的临时设置）：")
     else:
         print("用户文件中保存的配置：")
-    for key in KEYS:
-        value = values.get(key, "")
-        source = sources.get(key, "未写入" if user_only else "内置默认")
-        if not user_only and not value:
-            value = fallback(key, values, root)
-            if key in sources and value:
-                source += "（空值，采用默认行为）"
-        if key == "AGENT_COMPACT_SUMMARY_TOKENS":
-            source += "；已弃用，此值不再生效"
-        print(f"{key} = {safe_value(key, value, values)}    [{source}]")
+    for title, keys in CONFIG_GROUPS:
+        print(f"\n【{title}】")
+        for key in keys:
+            value = values.get(key, "")
+            source = sources.get(key, "未写入" if user_only else "内置默认")
+            if not user_only and not value:
+                value = fallback(key, values, root)
+                if key in sources and value:
+                    source += "（空值，采用默认行为）"
+            if key == "AGENT_COMPACT_SUMMARY_TOKENS":
+                source += "；已弃用，此值不再生效"
+            print(f"  {key} = {safe_value(key, value, values)}    [{source}]")
     if not user_only:
-        print("优先级：启动参数 > 非空环境变量 > 项目配置 > 用户配置 > 内置默认。")
+        print("\n优先级：启动参数 > 非空环境变量 > 项目配置 > 用户配置 > 内置默认。")
 
 
 def validate_value(key, value):

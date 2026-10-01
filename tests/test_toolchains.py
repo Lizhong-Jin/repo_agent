@@ -100,7 +100,7 @@ def test_skip_installs_python_without_brew_or_server_downloads(installed, monkey
     )
 
     def run(command, **kw):
-        if command[1:4] == ["-m", "pip", "install"]:
+        if command[1:5] == ["-B", "-m", "pip", "install"]:
             if "--require-hashes" in command:
                 assert str(root / "requirements-lsp.lock") in command
                 return SimpleNamespace(returncode=0)

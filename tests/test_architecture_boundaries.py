@@ -43,10 +43,53 @@ def test_installer_entrypoints_work_without_site_packages_from_foreign_cwd(tmp_p
     for name in ("installer", "configuration", "host_support"):
         (tmp_path / f"{name}.py").write_text("raise RuntimeError('untrusted task module')\n")
     result = subprocess.run(
-        [sys.executable, "-E", "-s", "-S", "-B", str(ROOT / "installer" / f"{entry}.py"), "--help"],
+        [
+            sys.executable,
+            "-X",
+            "utf8",
+            "-E",
+            "-s",
+            "-S",
+            "-B",
+            str(ROOT / "installer" / f"{entry}.py"),
+            "--help",
+        ],
         cwd=tmp_path,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "--help" in result.stdout
+
+
+@pytest.mark.parametrize("entry", ["setup", "uninstall", "release_install"])
+def test_direct_installer_help_recovers_from_legacy_pipe_encoding(tmp_path, entry):
+    # Force the actual stdout/stderr wrappers to cp1252, even on UTF-8 hosts.
+    code = """
+import runpy, sys
+sys.stdout.reconfigure(encoding='cp1252', errors='strict')
+sys.stderr.reconfigure(encoding='cp1252', errors='strict')
+sys.path.insert(0, sys.argv[1])
+entry = sys.argv[2]
+sys.argv = [entry, '--help']
+runpy.run_path(entry, run_name='__main__')
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-E",
+            "-s",
+            "-S",
+            "-B",
+            "-c",
+            code,
+            str(ROOT / "installer"),
+            str(ROOT / "installer" / f"{entry}.py"),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        encoding="utf-8",
         timeout=15,
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -67,6 +110,8 @@ def test_packaged_bootstrap_runs_without_source_or_site_packages(tmp_path, targe
     result = subprocess.run(
         [
             sys.executable,
+            "-X",
+            "utf8",
             "-E",
             "-s",
             "-S",
@@ -76,7 +121,7 @@ def test_packaged_bootstrap_runs_without_source_or_site_packages(tmp_path, targe
         ],
         cwd=workspace,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=15,
     )
     assert result.returncode == 0, result.stdout + result.stderr

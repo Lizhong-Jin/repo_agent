@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -326,18 +327,28 @@ def test_directory_swap_never_enumerates_external_tree(backend, monkeypatch, nam
     outside = root.parent / "outside-dir"
     outside.mkdir()
     (outside / "SYNTHETIC_SECRET_NAME").write_text("SYNTHETIC_SECRET")
-    original = FileAccess.iterdir
+    method = "read_directory" if name == "search_files" else "iterdir"
+    original = getattr(FileAccess, method)
     changed = False
 
-    def race(self, path):
+    def replace_directory():
         nonlocal changed
         if not changed:
             changed = True
             (root / "src").rename(root / "old-src")
             (root / "src").symlink_to(outside, target_is_directory=True)
+
+    def race(self, path):
+        replace_directory()
         yield from original(self, path)
 
-    monkeypatch.setattr(FileAccess, "iterdir", race)
+    @contextmanager
+    def race_reader(self, path):
+        replace_directory()
+        with original(self, path) as reader:
+            yield reader
+
+    monkeypatch.setattr(FileAccess, method, race_reader if name == "search_files" else race)
     result = backend.execute(root, name, args)
     assert changed
     assert "SYNTHETIC_SECRET_NAME" not in str(result)

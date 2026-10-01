@@ -60,6 +60,9 @@ def prepare_release(bundle, destination):
 
 
 def main(argv=None):
+    from .console import configure_output
+
+    configure_output()
     parser = argparse.ArgumentParser(description="安装独立 Repo Agent 发行版，不依赖下载/源码目录")
     parser.add_argument("--archive", type=Path, help="发行 tar.gz/ZIP 文件；已解压发行包可省略")
     parser.add_argument("--sha256", help="可选：校验整个发行包的 SHA256")

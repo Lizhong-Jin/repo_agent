@@ -16,11 +16,13 @@ if not __package__:
     enable_host_support()
     __package__ = "installer"
 
-from configuration.storage import config_lock
+from configuration.literal import merge_template
+from configuration.storage import config_lock, read_bytes, replace_config
 from host_support.integration import command_state, shell_path_plan
 from host_support.locking import file_lock
 from host_support.paths import installed_command, installed_python, public_command, user_bin_dir
 
+from .console import configure_output
 from .dependencies import (
     available_mode,
     language_status,
@@ -49,6 +51,7 @@ from .installation import (
     user_config_path,
 )
 from .maintenance import environment_report, print_report
+from .rust_extension import install_rust_extension
 from .toolchains import install_missing
 
 
@@ -77,7 +80,7 @@ def confirm_commands(agent_home: Path, bin_dir: Path) -> dict[str, str | None]:
         print("检测到其他目录的 Repo Agent 安装，安装成功后将切换以下命令：", flush=True)
         for command, old_target, target in replacements:
             print(f"  {command}\n    当前：{old_target}\n    新位置：{target}", flush=True)
-        print("旧安装目录和用户配置会保留；卸载新安装后不会自动回退。", flush=True)
+        print("旧安装目录会保留；用户配置将按新模板合并，卸载新安装后不会自动回退。", flush=True)
         try:
             answer = input("是否继续安装并替换命令？[y/N] ").strip().lower()
         except (EOFError, KeyboardInterrupt):
@@ -94,20 +97,30 @@ def check_command_states(bin_dir: Path, states: dict[str, str | None]) -> None:
 
 
 def configure_user(agent_home: Path, record: dict | None = None) -> Path:
-    """Create an editable template without prompting or importing credentials."""
+    """Refresh the template while retaining supported user values, never environment values."""
     path = user_config_path()
-    if path.exists():
-        print(f"保留已有配置：{path}")
-        return path
-    template = (agent_home / ".env.example").read_text(encoding="utf-8")
-    if record is not None:
-        record["config_created"] = True
-        save_record(record)
+    template_path = agent_home / ".env.example"
+    template = template_path.read_text(encoding="utf-8")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with config_lock(path):
-        if path.exists():
-            print(f"保留已有配置：{path}")
+        before = read_bytes(path)
+        if before is not None:
+            content = merge_template(
+                template,
+                before.decode("utf-8"),
+                template_path=template_path,
+                config_path=path,
+            ).encode("utf-8")
+            if content == before:
+                print(f"用户配置已与当前模板同步：{path}")
+                return path
+            backup = replace_config(path, content, before)
+            print(f"已按新模板合并用户配置，保留有效设置并移除旧项：{path}")
+            print(f"原配置已备份：{backup}")
             return path
+        if record is not None:
+            record["config_created"] = True
+            save_record(record)
         # Publish a complete template exclusively; a failed write never leaves half a .env.
         fd, temporary = tempfile.mkstemp(prefix=".config-template-", dir=path.parent)
         try:
@@ -236,6 +249,7 @@ def preserve_managed_servers(transaction, root):
 
 
 def main(argv=None, *, approved_commands=None) -> None:
+    configure_output()
     parser = argparse.ArgumentParser(description="配置 Repo Agent 用户安装")
     parser.add_argument("--agent-home", type=Path, required=True)
     parser.add_argument("--bin-dir", type=Path, default=user_bin_dir())
@@ -392,11 +406,14 @@ def main(argv=None, *, approved_commands=None) -> None:
                 if args.bootstrap:
                     transaction.fresh_venv()
                     prepare_venv(record)
-                    subprocess.run([python, "-m", "venv", str(agent_home / ".venv")], check=True)
+                    subprocess.run(
+                        [python, "-B", "-m", "venv", str(agent_home / ".venv")], check=True
+                    )
                     python = str(installed_python(agent_home))
                     print("安装核心依赖……", flush=True)
                     locked = [
                         python,
+                        "-B",
                         "-m",
                         "pip",
                         "install",
@@ -412,6 +429,7 @@ def main(argv=None, *, approved_commands=None) -> None:
                         run_download(
                             [
                                 python,
+                                "-B",
                                 "-m",
                                 "pip",
                                 "install",
@@ -426,6 +444,7 @@ def main(argv=None, *, approved_commands=None) -> None:
                         run_download(
                             [
                                 python,
+                                "-B",
                                 "-m",
                                 "pip",
                                 "install",
@@ -438,7 +457,7 @@ def main(argv=None, *, approved_commands=None) -> None:
                             label="安装 Agent 核心依赖",
                             cwd=agent_home,
                         )
-                    subprocess.run([python, "-m", "pip", "check"], check=True)
+                    subprocess.run([python, "-B", "-m", "pip", "check"], check=True)
                     if args.mode == "native":
                         preserve_managed_servers(transaction, agent_home)
                         states = {row["language"]: row for row in language_status(agent_home)}
@@ -472,7 +491,9 @@ def main(argv=None, *, approved_commands=None) -> None:
                         )
                         print("验证原生沙箱和 Python 语言服务（使用临时示例文件）……", flush=True)
                         if not print_report(
-                            service_report(agent_home, mode="native", languages=languages)
+                            service_report(
+                                agent_home, mode="native", languages=languages, scanner="python"
+                            )
                         ):
                             raise ValueError("原生模式依赖实测未通过，恢复原安装")
                     subprocess.run(
@@ -534,6 +555,10 @@ def main(argv=None, *, approved_commands=None) -> None:
                 }
                 save_record(record)
                 transaction.commit()
+                if args.bootstrap:
+                    install_rust_extension(
+                        agent_home, release=release, offline=args.offline, wheelhouse=wheelhouse
+                    )
             except BaseException:
                 if not transaction.state["committed"]:
                     transaction.rollback()

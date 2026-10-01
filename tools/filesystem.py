@@ -21,6 +21,7 @@ import hashlib
 import logging
 import os
 import re
+from contextlib import closing
 from dataclasses import dataclass
 from functools import wraps
 from itertools import pairwise
@@ -32,13 +33,14 @@ from typing import Any, Literal
 from llm import ToolDefinition
 
 from ._internal._file_entries import inspect_entry, iter_search_candidates
-from ._internal._file_io import FileSnapshot, StagedWrites, read_snapshot
+from ._internal._file_io import FileSnapshot, StagedWrites, read_snapshot, snapshot_stat
 from ._internal._workspace import WorkspaceTool
 from ._internal._workspace import serialized_file_write as _serialized_file_write
 from ._internal.base import ExecutionKind, ToolResult
 from ._internal.errors import ToolErrorCode, tool_error
 from ._internal.file_access import FileAccess, current_file_access
 from ._internal.file_policy import is_credential_path
+from ._internal.text_search import text_lines
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +229,7 @@ class ReadFileTool(FileTool):
                 return tool_error(ToolErrorCode.PROTECTED_FILE)
             if not target.is_relative_to(self.workspace_root):
                 return tool_error(ToolErrorCode.PATH_OUTSIDE_WORKSPACE)
-            info = target.stat()
+            info = snapshot_stat(target, follow_symlinks=True)
             if not S_ISREG(info.st_mode):
                 return tool_error(ToolErrorCode.NOT_A_FILE)
             snapshot = read_snapshot(
@@ -640,7 +642,7 @@ class EditFileTool(FileTool):
                 return tool_error(ToolErrorCode.PROTECTED_FILE)
             if not target.is_relative_to(self.workspace_root):
                 return tool_error(ToolErrorCode.PATH_OUTSIDE_WORKSPACE)
-            info = candidate.lstat()
+            info = snapshot_stat(candidate)
             if S_ISLNK(info.st_mode):
                 return tool_error(ToolErrorCode.PATH_IS_SYMLINK)
             if not S_ISREG(info.st_mode):
@@ -1390,7 +1392,7 @@ class ApplyPatchTool(FileTool):
                 return tool_error(ToolErrorCode.PROTECTED_FILE)
             if not target.is_relative_to(self.workspace_root):
                 return tool_error(ToolErrorCode.PATH_OUTSIDE_WORKSPACE)
-            info = candidate.lstat()
+            info = snapshot_stat(candidate)
             if S_ISLNK(info.st_mode):
                 return tool_error(ToolErrorCode.PATH_IS_SYMLINK)
             if not S_ISREG(info.st_mode):
@@ -2093,67 +2095,76 @@ class SearchFilesTool(FileTool):
                 glob=glob,
                 policy=policy,
             )
-            for file, info in files:
-                if files_scanned >= self.max_files_scanned:
-                    truncated = True
-                    truncation_reason = "max_files_scanned"
-                    break
-                files_scanned += 1
-                try:
-                    metadata = inspect_entry(file, policy, info=info)
-                    if metadata is None or not metadata.resolved.is_relative_to(
-                        self.workspace_root
-                    ):
-                        skipped_files += 1
-                        continue
-                    info = metadata.info
-                    if not S_ISREG(info.st_mode) or info.st_size > self.max_file_bytes:
-                        skipped_files += 1
-                        continue
-                    snapshot = read_snapshot(file, file, info, self.max_file_bytes)
-                    if isinstance(snapshot, ToolResult):
-                        skipped_files += 1
-                        continue
-                    raw = snapshot.raw
-                    if b"\x00" in raw:
-                        skipped_files += 1
-                        continue
+            with closing(files):
+                for candidate in files:
+                    file, info = candidate.path, candidate.info
+                    if files_scanned >= self.max_files_scanned:
+                        truncated = True
+                        truncation_reason = "max_files_scanned"
+                        break
+                    files_scanned += 1
                     try:
-                        text = raw.decode("utf-8-sig")
-                    except UnicodeDecodeError:
+                        metadata = inspect_entry(file, policy, info=info)
+                        if metadata is None or not metadata.resolved.is_relative_to(
+                            self.workspace_root
+                        ):
+                            skipped_files += 1
+                            continue
+                        info = metadata.info
+                        if not S_ISREG(info.st_mode) or info.st_size > self.max_file_bytes:
+                            skipped_files += 1
+                            continue
+                        snapshot = read_snapshot(
+                            file, file, info, self.max_file_bytes, directory=candidate.directory
+                        )
+                        if isinstance(snapshot, ToolResult):
+                            skipped_files += 1
+                            continue
+                        raw = snapshot.raw
+                        if b"\x00" in raw:
+                            skipped_files += 1
+                            continue
+                        try:
+                            text = raw.decode("utf-8-sig")
+                        except UnicodeDecodeError:
+                            skipped_files += 1
+                            continue
+                    except (PermissionError, OSError, RuntimeError):
                         skipped_files += 1
                         continue
-                except (PermissionError, OSError, RuntimeError):
-                    skipped_files += 1
-                    continue
-                normalized = text.replace("\r\n", "\n").replace("\r", "\n")
-                file_matched = False
-                for line_number, line in enumerate(normalized.split("\n"), start=1):
-                    match_index = find_match_index(line)
-                    if match_index == -1:
+                    # Most repository files do not match. Avoid line allocation and
+                    # Python iteration for that common literal-search case.
+                    if case_sensitive and query not in text:
                         continue
-                    if len(matches) >= self.max_results:
-                        truncated = True
-                        truncation_reason = "max_results"
+                    file_matched = False
+                    for line_number, line in enumerate(text_lines(text), start=1):
+                        match_index = find_match_index(line)
+                        if match_index == -1:
+                            continue
+                        if len(matches) >= self.max_results:
+                            truncated = True
+                            truncation_reason = "max_results"
+                            break
+                        if not file_matched:
+                            files_with_matches += 1
+                            file_matched = True
+                        truncated_lines = self._truncate_matching_line(
+                            line, match_index, len(query)
+                        )
+                        output_chars += len(truncated_lines)
+                        if output_chars > self.max_output_chars:
+                            truncated = True
+                            truncation_reason = "max_output_chars"
+                            break
+                        matches.append(
+                            {
+                                "path": file.relative_to(self.workspace_root).as_posix(),
+                                "line_number": line_number,
+                                "line": truncated_lines,
+                            }
+                        )
+                    if truncated:
                         break
-                    if not file_matched:
-                        files_with_matches += 1
-                        file_matched = True
-                    truncated_lines = self._truncate_matching_line(line, match_index, len(query))
-                    output_chars += len(truncated_lines)
-                    if output_chars > self.max_output_chars:
-                        truncated = True
-                        truncation_reason = "max_output_chars"
-                        break
-                    matches.append(
-                        {
-                            "path": file.relative_to(self.workspace_root).as_posix(),
-                            "line_number": line_number,
-                            "line": truncated_lines,
-                        }
-                    )
-                if truncated:
-                    break
         except PermissionError:
             return tool_error(ToolErrorCode.PERMISSION_DENIED)
         except (OSError, RuntimeError):

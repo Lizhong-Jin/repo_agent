@@ -5,6 +5,7 @@ import stat
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 
+from host_support.path_rules import NameRules
 from host_support.paths import session_state_root
 
 PROTECTED_NAMES = frozenset(
@@ -35,19 +36,19 @@ PROTECTED_NAMES = frozenset(
 PROTECTED_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".jks", ".keystore")
 
 
+PROTECTED_NAME_RULES = NameRules(
+    names=PROTECTED_NAMES | {".env"},
+    prefixes=(".env.",),
+    suffixes=PROTECTED_SUFFIXES,
+)
+
+
 def is_protected_name(path: str | PurePath) -> bool:
-    return any(is_protected_leaf(part) for part in PurePath(path).parts)
+    return PROTECTED_NAME_RULES.matches_path(path)
 
 
 def is_protected_leaf(name: str) -> bool:
-    """Match one directory entry, without constructing or parsing a path."""
-    name = name.lower()
-    return (
-        name in PROTECTED_NAMES
-        or name == ".env"
-        or name.startswith(".env.")
-        or name.endswith(PROTECTED_SUFFIXES)
-    )
+    return PROTECTED_NAME_RULES.matches_leaf(name)
 
 
 def runtime_protected_paths(root=None):

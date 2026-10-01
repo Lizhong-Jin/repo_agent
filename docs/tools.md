@@ -10,6 +10,7 @@
 - [run_shell 工具与平台行为](#run_shell-工具与平台行为)
 - [get_execution_environment 工具](#get_execution_environment-工具)
 - [read_file 工具](#read_file-工具)
+- [search_files 工具](#search_files-工具)
 - [GetSymbols：读取多语言代码符号](#getsymbols读取多语言代码符号)
 - [引用查询与文件诊断](#引用查询与文件诊断)
 - [SearchWorkspaceSymbols：跨文件查找符号](#searchworkspacesymbols跨文件查找符号)
@@ -143,8 +144,10 @@ runtime = AgentRuntime(client, tools=registered_tools, tool_groups=groups)
 - `tools/_internal/_workspace.py`：轻量 `WorkspaceTool` 基类，统一工作区根目录及正整数限制校验；内置写操作共用的进程内锁也在此处。
 - `tools/_internal/file_policy.py`：`PathPolicy` 保存一次操作使用的保护路径配置，允许复用当前条目的元数据检查硬链接；保留 `is_credential_path()` 供其他工具调用。相对环境配置路径仍按当前工作目录解析。
 - `host_support/filesystem.py`：提供不跟随链接的描述符操作和 native 轻量文件服务；`tools/_internal/file_access.py` 为它注入工作区 `PathPolicy` 与只读目录约束。底层机制不替代工具层授权。
-- `tools/_internal/_file_io.py`：`FileSnapshot` 和 `read_snapshot()` 负责有上限的字节读取，按需计算 SHA-256；严格读取模式检查打开前后文件身份。`StagedWrites` 统一临时文件、同步落盘、权限复制、替换及失败/取消清理。文本编码与换行规则由工具决定。
-- `tools/_internal/_file_entries.py`：共享目录条目检查和内容搜索遍历。普通文件的一次元数据查询同时用于类型、大小和硬链接保护；符号链接单独查询目标，保留链接自身的类型信息。
+- `tools/_internal/_file_io.py`：`FileSnapshot` 和 `read_snapshot()` 负责有上限的字节读取，按需计算 SHA-256；`snapshot_stat()` 与后续读取使用同一文件服务的元数据语义，避免 Windows 路径/句柄时间含义不同而误判。严格读取模式检查打开前后文件身份。`StagedWrites` 统一临时文件、同步落盘、权限复制、替换及失败/取消清理。文本编码与换行规则由工具决定。
+- `tools/_internal/_file_entries.py`：共享目录条目检查和内容搜索遍历。普通文件的一次元数据查询同时用于类型、大小和硬链接保护；符号链接单独查询目标，保留链接自身的类型信息。共享文件服务中的搜索候选借用当前 `DirectoryReader`，在目录作用域内复用父目录句柄；预算耗尽和异常退出会关闭作用域。
+- `host_support/file_scan.py`、`host_support/path_rules.py`：目录读取协议和名称匹配机制；实际保护名单继续由工具策略维护。目录身份固定不代表内容是原子快照，读取仍须校验实际打开的文件。
+- `tools/_internal/text_search.py`：对已完整解码、受大小限制的内容惰性分行，只将 CRLF、CR、LF 作为换行；不额外构造完整行列表，其他 Unicode 分隔符留在原行。文本搜索不调用 Rust 扩展或外部搜索程序。
 
 列目录、查找文件和搜索内容在每次调用时创建新的 `PathPolicy`，扫描中复用配置和当前条目的元数据，不跨调用缓存文件状态。搜索仍保留保护目录剪枝、隐藏文件规则和扫描预算；查找文件仍使用原有 glob 语义和精确总数。补丁提交前重新读取字节、校验身份和摘要，不再重复解码、分析换行或拆行；首次替换前的全量检查和每次替换前的检查都保留。
 
@@ -214,6 +217,18 @@ no_match = tool_error("NO_MATCH", "old_text does not occur in the file.")
 通用类别包括参数校验、路径越界/保护、权限、不存在、文件/目录类型、符号链接、已有路径、编码、容量限制和基础读写失败。现有错误码字符串及 `ToolResult.to_message()` 的返回结构保持不变；例如 `PARENT_NOT_DIRECTORY`、`FILE_EXISTS` 与 `PATH_ALREADY_EXISTS` 继续保留原码，便于兼容既有调用方和日志。
 
 `LINE_OUT_OF_RANGE`、`NO_CHANGES`、`NO_MATCH`、`MULTIPLE_MATCHES`、`EDIT_RESULT_TOO_LARGE`、`SEARCH_ERROR`、`CREATE_DIRECTORY_ERROR` 和 `DELETE_FILE_ERROR` 等仍由相应工具定义。工具特有错误必须提供说明，不需要加入公共枚举。新增工具可直接复用上述公共入口。
+
+## search_files 工具
+
+`search_files` 按行查找 UTF-8（可含 BOM）文本中的字面子串，不解析正则表达式。目录递归搜索，也可选择单个文件；默认区分大小写，`case_sensitive=false` 使用 Unicode `casefold()`。每个命中行返回一次工作区相对路径、从 1 开始的行号和文本。
+
+```json
+{"query": "TODO", "path": "src", "glob": "*.py", "case_sensitive": true, "include_hidden": false}
+```
+
+`path` 默认为 `.`。`glob` 匹配完整工作区相对路径，使用 `/` 分隔，`*` 可匹配 `/`；选择子目录不会改变匹配基准。隐藏文件默认排除，`include_hidden=true` 也不能读取受保护凭据或绕过路径限制。二进制、过大、无法读取和非 UTF-8 文件跳过。
+
+工具实例默认最多扫描 10,000 个候选文件，单文件 2 MiB，返回 100 个命中行；每行正文片段最多 2,000 字符，前后省略标记另占最多 6 字符；命中文本累计预算 20,000 字符（不包含结果 JSON 的其他字段）。返回 `files_scanned`、`skipped_files`、`files_with_matches`、`truncated` 和 `truncation_reason`；达到预算时应结合截断标记判断完整性，不能把部分结果当作全库无遗漏查询。大小写敏感且整段内容不含查询时直接跳过逐行处理；惰性分行不等于流式读取整个文件。
 
 ## run_shell 工具与平台行为
 

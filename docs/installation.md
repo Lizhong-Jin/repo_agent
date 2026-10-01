@@ -10,11 +10,11 @@
 
 维护者的构建产物位于 `dist/<版本>/<平台>/`，每个压缩包旁有对应的 `.sha256` 文件；构建器默认生成全部平台，只提供完整包。构建命令与目录结构见[构建与分发](distribution.md)。
 
-发行压缩包自带与文件名对应的顶层文件夹，直接解压即可，无需预先创建空目录。以下以 0.1.2 的 macOS ARM64 完整包为例，其他平台替换后缀：
+发行压缩包自带与文件名对应的顶层文件夹，直接解压即可，无需预先创建空目录。以下以源码当前版本 0.1.3 的 macOS ARM64 包名演示路径，实际操作须替换为所下载的版本与平台；示例不表示现有归档已包含工作区的未发布修改：
 
 ```bash
-tar -xzf repo-agent-0.1.2-macos-arm64.tar.gz
-cd repo-agent-0.1.2-macos-arm64
+tar -xzf repo-agent-0.1.3-macos-arm64.tar.gz
+cd repo-agent-0.1.3-macos-arm64
 ./install-release.sh
 ./install-release.sh --check
 ```
@@ -24,9 +24,9 @@ cd repo-agent-0.1.2-macos-arm64
 已有源码时，也可以直接安装构建好的压缩包；更新后的安装器兼容新格式和旧版平铺格式：
 
 ```bash
-./install-release.sh --archive dist/0.1.2/macos-arm64/repo-agent-0.1.2-macos-arm64.tar.gz
+./install-release.sh --archive dist/0.1.3/macos-arm64/repo-agent-0.1.3-macos-arm64.tar.gz
 # 使用从可信发布来源取得的 SHA256 做整个压缩包校验
-./install-release.sh --archive dist/0.1.2/macos-arm64/repo-agent-0.1.2-macos-arm64.tar.gz --sha256 <SHA256>
+./install-release.sh --archive dist/0.1.3/macos-arm64/repo-agent-0.1.3-macos-arm64.tar.gz --sha256 <SHA256>
 ```
 
 默认位置：
@@ -54,7 +54,7 @@ repo-agent uninstall
 
 卸载沿用归属检查：删除当前版本的 `.venv` 和仍指向它的命令，默认保留用户配置、系统工具链、发行版文件及恢复入口，不回退至旧安装。需要重装时可在该版本目录运行 `./install-release.sh`。如需删除已卸载版本的剩余文件，请先确认不再需要该目录内的恢复入口或修改后再手动删除。
 
-macOS/Linux 构建器生成的 schema 2 发行包仅保留一个顶层入口 `install-release.sh`，不包含源码专用的 `install.sh` 和 `uninstall.sh`。较早的 schema 1 包保留原有脚本，不能仅凭版本号判断是否支持新参数；旧包卸载可使用 `repo-agent uninstall` 或包内 `uninstall.sh`。对于新包，命令无法启动时，可在已安装版本目录执行：
+当前 macOS/Linux 构建器生成的 schema 4 发行包（此前 schema 2 也使用单入口布局）仅保留一个顶层入口 `install-release.sh`，不包含源码专用的 `install.sh` 和 `uninstall.sh`。较早的 schema 1 包保留原有脚本，不能仅凭版本号判断是否支持新参数；旧包卸载可使用 `repo-agent uninstall` 或包内 `uninstall.sh`。对于新包，命令无法启动时，可在已安装版本目录执行：
 
 ```bash
 ./install-release.sh --recover             # 恢复中断的安装
@@ -74,8 +74,8 @@ macOS/Linux 构建器生成的 schema 2 发行包仅保留一个顶层入口 `in
 支持 Windows 10 1809+ / Windows 11 x86_64、Windows PowerShell 5.1+。ZIP 内置锁定的 Python 3.13、pip、venv 和 Windows 离线 wheels，不需要预装 Python 或管理员权限。只提供一个安装脚本 `install_release.ps1`，卸载、检查和恢复均由它的参数完成。
 
 ```powershell
-Expand-Archive .\repo-agent-0.1.2-windows-x86_64.zip -DestinationPath .
-Set-Location .\repo-agent-0.1.2-windows-x86_64
+Expand-Archive .\repo-agent-0.1.3-windows-x86_64.zip -DestinationPath .
+Set-Location .\repo-agent-0.1.3-windows-x86_64
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --check
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --offline
 ```
@@ -84,12 +84,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --
 
 目录布局沿用上表（`~` 为用户目录），命令名为 `repo-agent.exe`、`repo-agent-build-sandbox.exe`。安装器将独立 Python 校验并复制到用户数据目录的共享缓存，再在最终版本目录创建 `.venv`；安装成功后可以删除 ZIP 和解压目录。`AGENT_PYTHON_CACHE` 可指定缓存位置；`AGENT_PYTHON` 可指定完整解释器路径或 `system`。`--data-dir`、`--bin-dir` 支持含空格的路径，请用引号包裹。
 
+Windows 新构建包的运行时缓存按上游版本和发行清单区分，升级不原地覆盖旧解释器。引导会清理源码型运行时中可再生成的字节码缓存，包括维护操作；不会因此跳过源码或 DLL 的完整性校验。安装、卸载与发行安装 Python 入口的管道输出统一使用 UTF-8。
+
 默认将命令目录加入当前用户的 PATH（HKCU），不修改系统 PATH，也不写 Bash/Zsh 配置。打开新终端，或执行安装末尾给出的当前终端 PATH 命令；`--no-path` 完全跳过此操作。命令通过归属记录管理，已有其他安装时确认接管；重装保留配置，核心失败恢复旧虚拟环境、命令和未被外部修改的 PATH。
 
 卸载前退出该版本的所有 Agent 进程，在已安装版本目录（默认如下）运行同一个脚本：
 
 ```powershell
-Set-Location "$HOME/.local/share/repo-agent/versions/0.1.2"
+Set-Location "$HOME/.local/share/repo-agent/versions/0.1.3"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --recover
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --uninstall --dry-run
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --uninstall
@@ -109,7 +111,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --
 
 源码安装创建专用 `.venv`，自动安装开发依赖 pytest、Ruff 和构建工具，将模板复制到用户配置，并把 `repo-agent`、`repo-agent-build-sandbox` 安装到 `~/.local/bin`。默认补充 Bash / Zsh 的 PATH；打开新终端或执行安装结尾打印的命令。其他 shell 自行配置 PATH。源码和安装目录需要保留，命令依赖其中的虚拟环境。
 
-首次在目标项目运行 `repo-agent` 时，若缺少模型或 Key，交互终端会引导设置；也可先运行 `repo-agent config model`。安装本身无需模型信息。已有用户配置不会被覆盖，新模板与内置默认值的区别见[配置参考](configuration.md#模板与内置默认值)。
+Linux/macOS 源码安装在核心安装成功后自动尝试编译并安装 Rust 策略扫描扩展。需要已有 Rust >= 1.85（cargo/rustc）和 C 链接器，安装器不会自动安装编译器；maturin 构建依赖在隔离环境中准备，Cargo 中间产物写入项目外的临时目录，最终 wheel 保留到源码根目录 `rust_wheels/`。手工编译和打包入口见 [Rust 构建说明](../rust/README.md)。缺少工具、下载或编译失败、取消该可选步骤均只提示，不撤销核心安装。离线编译需要本地 maturin wheel 和已缓存的 Cargo 依赖，准备不足时跳过扩展。
+
+附带预编译扩展的发行包会直接安装并验证包内 Rust wheel，安装机不需要 Rust 编译器，也不联网编译。Windows 当前不支持此扩展。安装扩展不会修改扫描器配置，默认仍为 `AGENT_NATIVE_SCANNER=python`；Linux 用户可改为 `rust` 启用。若旧配置显式选择了 `rust` 而本次扩展安装失败，应改回 `python` 或补装扩展后再运行。详情见 [Rust 扫描器说明](../rust/policy_scan/README.md)。
+
+首次在目标项目运行 `repo-agent` 时，若缺少模型或 Key，交互终端会引导设置；也可先运行 `repo-agent config model`。安装本身无需模型信息。已有用户配置会按新模板重建，保留仍有效的旧值（含显式空值），补充新增项，丢弃模板已移除的项；替换前自动备份。新模板与内置默认值的区别见[配置参考](configuration.md#模板与内置默认值)。
 
 ```bash
 ./install.sh --mode native                  # macOS / Linux 原生模式，询问是否补齐额外语言服务
@@ -150,7 +156,7 @@ git pull
 ./install.sh
 ```
 
-重装默认沿用此前安装模式；安装保留已有用户配置；新增配置项可以参考 `.env.example` 补充。仅更新宿主机代码时可使用 `--skip-sandbox`；改动工具、沙箱、镜像依赖或保护规则后需要重建镜像：
+重装默认沿用此前安装模式；用户配置按 `.env.example` 的分组和注释重建，保留模板内配置项的旧值，新增项采用模板值，弃用项和未知项移除。旧文件格式损坏时停止合并并保留原文件。仅更新宿主机代码时可使用 `--skip-sandbox`；改动工具、沙箱、镜像依赖或保护规则后需要重建镜像：
 
 ```bash
 repo-agent-build-sandbox
@@ -162,7 +168,7 @@ repo-agent-build-sandbox
 
 在新目录运行 `./install.sh` 时，如果目标命令目录中的 `repo-agent` 或 `repo-agent-build-sandbox` 已指向另一份安装，会先列出两个命令需要替换的位置，并询问 `是否继续安装并替换命令？[y/N]`。输入 `y` 或 `yes` 后继续；回车、输入其他内容、Ctrl+C 或没有可读取的输入均取消，不创建 Agent 虚拟环境、安装依赖、构建镜像或写入安装记录。用于启动安装器的共享 Python 可能已在此之前下载并校验，取消后保留。同目录重复安装不需要确认命令替换；native 的工具链补齐仍会询问。
 
-新目录的依赖安装和镜像构建成功后，命令才会切换；这些步骤失败时旧命令仍可用。旧安装目录和用户配置保留。之后卸载旧目录不会删除指向新目录的命令；卸载当前新目录会移除命令，不自动回退到旧目录。其他普通文件或无法识别的同名链接不会被覆盖；安装期间链接若被其他操作改变，会停止覆盖并提示重试。
+新目录的依赖安装和镜像构建成功后，命令才会切换；这些步骤失败时旧命令仍可用。旧安装目录保留，用户配置按新模板合并。之后卸载旧目录不会删除指向新目录的命令；卸载当前新目录会移除命令，不自动回退到旧目录。其他普通文件或无法识别的同名链接不会被覆盖；安装期间链接若被其他操作改变，会停止覆盖并提示重试。
 
 检测范围是 `--bin-dir` 指定的命令目录（默认 `~/.local/bin`）；多个命令目录并存时，终端使用 PATH 中排在前面的命令。
 
@@ -173,8 +179,8 @@ macOS/Linux 命令仍可用时，可以执行 `repo-agent uninstall`；命令损
 | 安装类型 | 预览卸载 | 执行卸载 |
 | --- | --- | --- |
 | 源码安装 | `./uninstall.sh --dry-run` | `./uninstall.sh` |
-| macOS/Linux schema 2 发行包 | `./install-release.sh --uninstall --dry-run` | `./install-release.sh --uninstall` |
-| Windows schema 3 ZIP | `./install_release.ps1 --uninstall --dry-run` | `./install_release.ps1 --uninstall` |
+| macOS/Linux 当前发行包 | `./install-release.sh --uninstall --dry-run` | `./install-release.sh --uninstall` |
+| Windows 当前 ZIP | `./install_release.ps1 --uninstall --dry-run` | `./install_release.ps1 --uninstall` |
 
 在对应安装目录执行。下列清理选项以源码入口为例；macOS/Linux 发行包使用 `./install-release.sh --uninstall`，Windows 使用 `./install_release.ps1 --uninstall` 后追加同样的选项。Windows 执行策略与完整命令见[ZIP 安装](#windows-x86_64-zip-安装)。
 
@@ -201,8 +207,8 @@ macOS/Linux 命令仍可用时，可以执行 `repo-agent uninstall`；命令损
 | 内容 | 行为 |
 | --- | --- |
 | 安装目录 `.venv` | 安装标记和目录身份均匹配时删除；目录被替换或改成符号链接时保留 |
-| `repo-agent`、`repo-agent-build-sandbox` | 仅删除记录中仍指向当前安装的链接；指向其他副本或变成普通文件时保留 |
-| Shell 配置 | 仅删除安装器添加、未被修改且不再共享的标记块；用户原有内容保留 |
+| `repo-agent`、`repo-agent-build-sandbox` | macOS/Linux 仅删除仍指向当前安装的已登记链接；Windows 按归属记录和哈希处理安装的 `.exe`。外部替换或修改的命令保留 |
+| Shell 配置 / Windows 用户 PATH | macOS/Linux 仅删除安装器添加、未被修改且不再共享的标记块；Windows 按记录比较并恢复 HKCU 用户 PATH，外部修改时保留。用户原有内容不直接覆盖 |
 | 通用 `~/.local/bin` PATH | 保留，其他程序也可能依赖此目录 |
 | 用户配置 `.env`、`thinking.json` 及 `.env.backups` 中的受管备份 | 默认保留；`--purge` 删除安装记录中的配置文件、思考偏好及含历史 Key 的受管备份，其他安装仍使用或无法确认归属时保留 |
 | 项目 `.env`、源码、Git、会话快照及日志、沙箱副本及备份 | 不清理；配置文件如果被显式指定为用户配置，则按上一行处理 |
@@ -218,7 +224,9 @@ macOS/Linux 命令仍可用时，可以执行 `repo-agent uninstall`；命令损
 
 安装器在创建虚拟环境前开始记录，在写入配置、命令链接和 Shell 配置前更新记录；镜像成功构建后记录其 ID 和 Docker 主机标识。依赖安装或最终切换失败时，会自动恢复旧环境、命令链接、Shell 配置块和安装记录；首次安装失败则移除本次创建的环境。若恢复未完成，保留恢复记录并要求先恢复再卸载。
 
-安装目录的 `.repo-agent-install.json` 是本地记录，已加入 Git 忽略和 Agent 文件保护；`.venv` 内还有配套归属标记。登记表位于 `${XDG_STATE_HOME:-~/.local/state}/repo-agent/installations`，权限仅限当前用户，其中只保存路径、归属和状态，不保存 API Key 或配置内容。
+用户配置不随安装事务回滚：已创建或已合并的配置会保留。合并前的原文件保存在用户配置目录的 `.env.backups/`，可使用 `repo-agent config backups` 查看和 `config restore` 恢复；重复安装且配置内容未变化时不新增备份。
+
+安装目录的 `.repo-agent-install.json` 是本地记录，已加入 Git 忽略和 Agent 文件保护；`.venv` 内还有配套归属标记。登记表位于 `${XDG_STATE_HOME:-~/.local/state}/repo-agent/installations`，macOS/Linux 使用用户私有权限，Windows 继承用户目录 ACL；其中只保存路径、归属和状态，不保存 API Key 或配置内容。
 
 普通卸载成功后删除安装目录记录，用户级登记表保留一份卸载回执，用于重复卸载或之后执行 `--purge` / `--remove-image`。使用自定义 `XDG_STATE_HOME` 时，后续操作应保持同一设置。
 
@@ -228,7 +236,7 @@ macOS/Linux 命令仍可用时，可以执行 `repo-agent uninstall`；命令损
 
 ## 安装检查、失败恢复与诊断
 
-以下脚本命令用于源码安装。发行版在已安装版本目录使用 `./install-release.sh --check` 或 `./install-release.sh --recover`；`repo-agent doctor` 适用于两种安装。
+以下 Shell 命令用于 macOS/Linux 源码安装。macOS/Linux 发行版在已安装版本目录使用 `./install-release.sh --check` 或 `./install-release.sh --recover`；Windows 使用 `./install_release.ps1` 的同名选项。`repo-agent doctor` 适用于源码与发行版安装。
 
 ```bash
 ./install.sh --check                  # 按安装模式检查环境，不做修改、不询问补齐
@@ -284,7 +292,7 @@ python3 -B cli/doctor.py --skip-docker
 | `./install.sh --mode docker` | 核心依赖 | 需要已有 Docker 服务；构建镜像，其中包含语言服务、Git、编译工具并进行符号测试 |
 | `./install.sh --mode local` | 核心依赖 | 仅文件/Git 工具，不提供命令执行和语言服务，不依赖 Docker |
 
-首次安装模式为 native；重装默认沿用本安装记录。模式绑定安装目录，不会从任务目录读取；用户配置中的模型与 Key 不受影响。`--check` 只检查和说明将要补齐的工具，不调用 Homebrew 安装、不运行 pip 安装。
+macOS/Linux 首次安装模式为 native，Windows 为 local；重装默认沿用本安装记录。模式绑定安装目录，不会从任务目录读取；用户配置中的模型与 Key 不受影响。`--check` 只检查和说明将要补齐的工具，不调用 Homebrew 安装、不运行 pip 安装。
 
 native 始终安装 Python 语言服务；安装时询问是否补齐额外工具链和语言服务，回车或输入结束默认跳过。可用 `--with-toolchains` 自动同意、`--skip-toolchains` 自动跳过；`--languages python,typescript` 限制补齐范围。跳过时不下载 gopls/npm 服务，也不调用 Homebrew；缺少 Homebrew 不阻止基础安装。同目录重装保留受管的 JS/TS、Go 服务，重新验证此前已启用且仍可用的语言。
 

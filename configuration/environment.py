@@ -8,6 +8,7 @@ from pathlib import Path
 from host_support.paths import user_config_path as user_config_path
 from llm.providers import PROVIDERS
 
+from .literal import parse_config
 from .storage import config_lock, read_bytes, replace_config
 
 CONFIG_KEYS = frozenset(
@@ -17,7 +18,7 @@ CONFIG_KEYS = frozenset(
     "LLM_WRITE_TIMEOUT LLM_POOL_TIMEOUT LLM_CONTEXT_WINDOW LLM_MAX_RETRIES LLM_RETRY_DELAY "
     "LLM_MAX_RETRY_DELAY LLM_EXTRA_JSON AGENT_MAX_STEPS AGENT_MAX_OUTPUT_TOKENS "
     "AGENT_MAX_RECOVERIES AGENT_RECOVERY_MAX_OUTPUT_TOKENS AGENT_THINKING_DISPLAY "
-    "AGENT_SYSTEM_PROMPT AGENT_LOG_DIR AGENT_SANDBOX_WRITEBACK "
+    "AGENT_SYSTEM_PROMPT AGENT_LOG_DIR AGENT_SANDBOX_WRITEBACK AGENT_NATIVE_SCANNER "
     "AGENT_SANDBOX_VERIFY_COMMAND AGENT_WEB_SEARCH_PROVIDER BRAVE_SEARCH_API_KEY "
     "AGENT_WEB_FETCH_ENABLED AGENT_AUTO_COMPACT AGENT_COMPACT_THRESHOLD "
     "AGENT_COMPACT_TARGET AGENT_COMPACT_KEEP_TOKENS AGENT_COMPACT_SUMMARY_TOKENS "
@@ -26,26 +27,7 @@ CONFIG_KEYS = frozenset(
 
 
 def read_config(path: Path) -> dict[str, str]:
-    values = {}
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        match = re.fullmatch(r"(?:export )?([A-Za-z_][A-Za-z0-9_]*)=(.*)", line)
-        if match is None:
-            raise ValueError(f"{path} 第 {number} 行格式错误，应为 KEY=VALUE")
-        key, value = match.groups()
-        if key not in CONFIG_KEYS:
-            continue
-        value = value.strip()
-        if value.startswith(('"', "'")):
-            if len(value) < 2 or value[-1] != value[0]:
-                raise ValueError(f"{path} 第 {number} 行引号不匹配")
-            value = value[1:-1]
-        if "\x00" in value:
-            raise ValueError(f"{path} 第 {number} 行包含不支持的字符")
-        values[key] = value
-    return values
+    return parse_config(path.read_text(encoding="utf-8"), source=path, keys=CONFIG_KEYS)
 
 
 def load_configuration(root: Path, *, user_only=False):

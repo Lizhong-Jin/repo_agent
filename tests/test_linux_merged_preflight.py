@@ -38,7 +38,7 @@ def test_real_launch_path_enumerates_workspace_once_including_masked_trees(
         files.append(path)
     backend.read_paths = (*backend.read_paths, backend.workspace / ".venv")
     visits, checks = Counter(), Counter()
-    scandir, check = policy_module.open_directory, backend._check_workspace_file
+    scandir, check = policy_module.open_directory, policy_module.validate_workspace_file
 
     def enumerate_directory(path):
         if not isinstance(path, int):
@@ -50,7 +50,7 @@ def test_real_launch_path_enumerates_workspace_once_including_masked_trees(
         check(path, info)
 
     monkeypatch.setattr(policy_module, "open_directory", enumerate_directory)
-    monkeypatch.setattr(backend, "_check_workspace_file", validate)
+    monkeypatch.setattr(policy_module, "validate_workspace_file", validate)
     monkeypatch.setattr(backend, "_check_workspace", lambda: pytest.fail("Separate workspace walk"))
     monkeypatch.setattr(ProcessRunner, "run", lambda *a, **kw: success())
     if worker:

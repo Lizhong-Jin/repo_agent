@@ -14,6 +14,8 @@ from contextvars import ContextVar
 from fnmatch import fnmatchcase
 from pathlib import Path
 
+from .file_scan import DirectoryReader
+
 _active_access = ContextVar("native_file_access", default=None)
 
 
@@ -210,6 +212,17 @@ class FileAccess:
         for name in names:
             yield Path(path) / name
 
+    @contextmanager
+    def read_directory(self, path):
+        """Pin one directory for a batch of reads; never cache it across calls."""
+        path = Path(path)
+        with self.directory(path) as fd:
+            reader = _DescriptorDirectoryReader(self, path, fd)
+            try:
+                yield reader
+            finally:
+                reader.closed = True
+
     def walk(self, path):
         pending = [Path(path)]
         while pending:
@@ -328,6 +341,43 @@ class FileAccess:
         except BaseException:
             staged.unlink(missing_ok=True)
             raise
+
+
+class _DescriptorDirectoryReader(DirectoryReader):
+    """Directory-local operations with the same policy and opened-file checks."""
+
+    def __init__(self, access, path, fd):
+        self.access, self.path, self.fd = access, path, fd
+        self.closed = False
+
+    def _check(self, name=None):
+        if self.closed:
+            raise ValueError("Directory reader is closed")
+        if name is not None:
+            if name in {"", ".", ".."} or Path(name).name != name or "\x00" in name:
+                raise ValueError("Expected a single directory entry name")
+            self.access._parts(self.path / name)
+
+    def names(self):
+        self._check()
+        return list_directory(self.fd)
+
+    def stat(self, name):
+        self._check(name)
+        return stat_at(name, dir_fd=self.fd)
+
+    @contextmanager
+    def open_read(self, name):
+        self._check(name)
+        fd = open_file(name, dir_fd=self.fd)
+        try:
+            self.access.regular(os.fstat(fd))
+            stream = os.fdopen(fd, "rb")
+        except BaseException:
+            os.close(fd)
+            raise
+        with stream:
+            yield stream
 
 
 class _StagedFile:

@@ -32,6 +32,7 @@ from build_manifest import (  # noqa: E402
 from host_support.paths import environment_python  # noqa: E402
 from host_support.platforms import release_target  # noqa: E402
 from installer.release_manifest import RELEASE_SCHEMA, read_release  # noqa: E402
+from rust_wheels import prepare_rust_wheels  # noqa: E402
 
 
 def runtime_archives(targets, source, *, offline):
@@ -55,7 +56,7 @@ def runtime_archives(targets, source, *, offline):
     return paths
 
 
-def write_release(bundle, output, version, target, wheel_name):
+def write_release(bundle, output, version, target, wheel_name, *, rust_wheel=None):
     files = {
         path.relative_to(bundle).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted(bundle.rglob("*"))
@@ -69,6 +70,8 @@ def write_release(bundle, output, version, target, wheel_name):
         "wheel": "wheels/" + wheel_name,
         "files": files,
     }
+    if rust_wheel is not None:
+        manifest["rust_wheel"] = "wheels/" + rust_wheel.name
     (bundle / "release.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     # Fail before replacing an existing artifact if bootstrap files are incomplete.
     read_release(bundle)
@@ -109,7 +112,18 @@ def write_release(bundle, output, version, target, wheel_name):
     return destination
 
 
-def build(root, output, uv, *, target=None, runtime_archive=None, wheelhouse=None, offline=False):
+def build(
+    root,
+    output,
+    uv,
+    *,
+    target=None,
+    runtime_archive=None,
+    wheelhouse=None,
+    offline=False,
+    rust_wheelhouse=None,
+    require_rust=False,
+):
     records = runtime_records(root)
     if target is not None and target not in records:
         raise ValueError(f"不支持的构建平台：{target}")
@@ -140,6 +154,14 @@ def build(root, output, uv, *, target=None, runtime_archive=None, wheelhouse=Non
         raise ValueError("无效的发行版本号")
     with tempfile.TemporaryDirectory(prefix="repo-agent-dist-") as temporary:
         work = Path(temporary)
+        rust_wheels = prepare_rust_wheels(
+            root,
+            {selected: records[selected] for selected in targets},
+            work / "rust_wheels",
+            wheelhouse=rust_wheelhouse or wheelhouse,
+            offline=offline,
+            required=require_rust,
+        )
         stage = work / "source"
         stage.mkdir()
         copy_files(root, stage, sources)
@@ -203,7 +225,14 @@ def build(root, output, uv, *, target=None, runtime_archive=None, wheelhouse=Non
             shutil.copytree(bundle, platform_bundle)
             copy_files(root, platform_bundle, bootstrap_files(root, target=selected))
             shutil.copytree(kit, platform_bundle, dirs_exist_ok=True)
-            results.append(write_release(platform_bundle, output, version, selected, wheel.name))
+            rust_wheel = rust_wheels.get(selected)
+            if rust_wheel is not None:
+                shutil.copy2(rust_wheel, platform_bundle / "wheels" / rust_wheel.name)
+            results.append(
+                write_release(
+                    platform_bundle, output, version, selected, wheel.name, rust_wheel=rust_wheel
+                )
+            )
         return results
 
 
@@ -230,6 +259,16 @@ def main():
         "--wheelhouse", type=Path, help="本地 wheel 目录；全平台离线构建需包含所有目标及构建依赖"
     )
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument(
+        "--rust-wheelhouse",
+        type=Path,
+        help="预编译 Rust wheel 目录；未指定时搜索 --wheelhouse，随后搜索项目 rust_wheels/",
+    )
+    parser.add_argument(
+        "--require-rust",
+        action="store_true",
+        help="要求所有 Linux/macOS 目标包含 Rust 扩展，否则构建失败",
+    )
     args = parser.parse_args()
     if not args.uv:
         parser.error("构建需要 uv；使用 --uv 指定路径，普通用户安装不需要 uv")
@@ -242,6 +281,8 @@ def main():
             runtime_archive=args.runtime_archive,
             wheelhouse=args.wheelhouse,
             offline=args.offline,
+            rust_wheelhouse=args.rust_wheelhouse,
+            require_rust=args.require_rust,
         )
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"构建未完成：{error}\n")

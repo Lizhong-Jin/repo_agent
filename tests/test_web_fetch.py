@@ -314,11 +314,45 @@ def test_main_landmark_avoids_navigation_and_preserves_code_blank_lines(make_fet
     assert "```\nfirst\n\nthird\n```" in page["content"]
 
 
-@pytest.mark.parametrize("html", ["<div>" * 130 + "deep", "<x title='" + "a" * 70_000])
+@pytest.mark.parametrize(
+    "html", ["<div>" * 130 + "deep", "<x title='" + "a" * 70_000], ids=["deep", "unfinished-token"]
+)
 def test_excessive_html_depth_and_tokens_are_bounded(make_fetch, html):
     tool, _ = make_fetch(lambda _: reply(html, content_type="text/html"))
     assert fetch(tool, url="https://docs.example.org")["error"]["code"] == "CONTENT_TOO_COMPLEX"
     assert not tool.backend.pages.cache.entries
+
+
+@pytest.mark.parametrize("length", [65_535, 65_536, 65_537, 70_010])
+def test_unfinished_html_buffer_boundary(make_fetch, length):
+    html = "<x title='" + "a" * (length - len("<x title='"))
+    tool, _ = make_fetch(lambda _: reply(html, content_type="text/html"))
+    result = fetch(tool, url="https://docs.example.org")
+    if length > 65_536:
+        assert result["error"]["code"] == "CONTENT_TOO_COMPLEX"
+        assert not tool.backend.pages.cache.entries
+    else:
+        assert "error" not in result
+
+
+def test_deferred_html_fragments_count_on_older_python():
+    from tools._internal.web_content import _Document
+    from tools._internal.web_errors import WebError
+
+    parser = _Document()
+    parser.rawdata = "a" * 32_768
+    parser._pending_len = 32_768
+    parser.check_pending()
+    parser._pending_len += 1
+    with pytest.raises(WebError, match="HTML token"):
+        parser.check_pending()
+
+
+def test_long_plain_html_text_does_not_count_as_pending(make_fetch):
+    tool, _ = make_fetch(
+        lambda _: reply("<p>" + "word " * 14_000 + "</p>", content_type="text/html")
+    )
+    assert "error" not in fetch(tool, url="https://docs.example.org")
 
 
 def test_failed_inputs_cannot_overflow_output_budget(make_fetch):

@@ -1,6 +1,7 @@
 """Full-screen interaction orchestration; screen state belongs to the UI loop."""
 
 import asyncio
+from queue import Empty, SimpleQueue
 from time import perf_counter
 
 from prompt_toolkit.document import Document
@@ -64,6 +65,7 @@ class ConversationUI:
         self.worker = None
         self.transcript = ""
         self.pending_text = []
+        self.worker_events = SimpleQueue()
         self.flush_handle = None
         self.footer_text = ""
         self.user_lines = {}
@@ -183,7 +185,21 @@ class ConversationUI:
 
     def write(self, *values, sep=" ", end="\n", kind="agent", **kwargs):
         text = sep.join(str(v) for v in values) + end
-        self.loop.call_soon_threadsafe(self.queue_content, kind, text)
+        self.dispatch(self.queue_content, kind, text)
+
+    def dispatch(self, callback, *args):
+        # Publish before scheduling the wakeup: task completion must be able to
+        # drain output even when the UI has not yet handled that wakeup.
+        self.worker_events.put((callback, args))
+        self.loop.call_soon_threadsafe(self.drain_worker_events)
+
+    def drain_worker_events(self):
+        while True:
+            try:
+                callback, args = self.worker_events.get_nowait()
+            except Empty:
+                return
+            callback(*args)
 
     def write_model(self, *values, **kwargs):
         self.write(*values, kind="text", **kwargs)
@@ -199,6 +215,7 @@ class ConversationUI:
             self.flush_handle = self.loop.call_later(0.05, self.flush_text)
 
     def flush_text(self):
+        self.drain_worker_events()
         if self.flush_handle:
             self.flush_handle.cancel()
             self.flush_handle = None
@@ -445,7 +462,7 @@ class ConversationUI:
         self.loop = asyncio.get_running_loop()
         bridge = RuntimeEventBridge(
             self.runtime,
-            dispatch=self.loop.call_soon_threadsafe,
+            dispatch=self.dispatch,
             progress=self.progress,
             model_boundary=self.model_boundary,
             thinking=self.queue_content,

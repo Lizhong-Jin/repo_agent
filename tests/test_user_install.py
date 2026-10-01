@@ -14,6 +14,7 @@ from configuration.environment import (
     read_config,
     user_config_path,
 )
+from configuration.storage import backups
 from installer.setup import configure_path, configure_user, install_command
 
 SOURCE = Path(__file__).resolve().parents[1]
@@ -95,13 +96,137 @@ def test_user_setup_creates_private_template_without_importing_environment(user_
 
 @pytest.mark.parametrize(
     "content",
-    ["", "LLM_MODEL=\n", "LLM_MODEL=mine\nDEEPSEEK_API_KEY=secret\n", "unfinished config"],
+    ["", "LLM_MODEL=\n", "LLM_MODEL=mine\nDEEPSEEK_API_KEY=secret\n"],
 )
-def test_reinstall_preserves_existing_config_even_if_incomplete(user_home, content):
+def test_reinstall_merges_existing_values_into_current_template(user_home, content):
     config = configure_user(SOURCE)
     config.write_text(content)
+    previous = read_config(config)
     configure_user(SOURCE)
+    assert read_config(config) == {**read_config(SOURCE / ".env.example"), **previous}
+    assert backups(config)[0].read_text() == content
+    assert config.stat().st_mode & 0o777 == 0o600
+    assert backups(config)[0].stat().st_mode & 0o777 == 0o600
+
+
+def test_template_covers_current_settings_and_has_valid_defaults():
+    from cli.config_command import validate_values
+    from configuration.literal import ASSIGNMENT, parse_config
+
+    template = SOURCE / ".env.example"
+    text = template.read_text(encoding="utf-8")
+    values = parse_config(text, source=template)
+    keys = [match[1] for line in text.splitlines() if (match := ASSIGNMENT.fullmatch(line))]
+    assert len(keys) == len(set(keys))
+    assert set(values) == CONFIG_KEYS - {"AGENT_COMPACT_SUMMARY_TOKENS"}
+    assert values["AGENT_MAX_OUTPUT_TOKENS"] == "4096"
+    validate_values(values)
+
+
+def test_reinstall_keeps_explicit_values_and_discards_removed_keys(
+    user_home, tmp_path, monkeypatch, capsys
+):
+    config = configure_user(SOURCE)
+    content = (
+        "# old custom comment\nLLM_MODEL=first\nexport LLM_MODEL='我的模型'\n"
+        "AGENT_MAX_STEPS=0\nLLM_STREAM=false\nAGENT_MAX_OUTPUT_TOKENS=51200\n"
+        "LLM_TIMEOUT=\nDEEPSEEK_API_KEY='private-secret'\n"
+        "AGENT_COMPACT_SUMMARY_TOKENS='old invalid value\nUNKNOWN_SETTING=discard\n"
+        'LLM_EXTRA_JSON=\'{"note":"literal # $HOME", "nested":"a\\\\b"}\'\n'
+        "AGENT_SYSTEM_PROMPT='保留字面量 $(touch should-not-exist) 和 \"引号\"'\n"
+    )
+    config.write_text(content, encoding="utf-8")
+    monkeypatch.setenv("LLM_MODEL", "environment-model")
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "environment-key")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("LLM_MODEL=project-model\n")
+    configure_user(SOURCE)
+    values = read_config(config)
+    assert values["LLM_MODEL"] == "我的模型"
+    assert values["AGENT_MAX_STEPS"] == "0"
+    assert values["LLM_STREAM"] == "false"
+    assert values["AGENT_MAX_OUTPUT_TOKENS"] == "51200"
+    assert values["LLM_TIMEOUT"] == ""
+    assert values["DEEPSEEK_API_KEY"] == "private-secret"
+    assert values["BRAVE_SEARCH_API_KEY"] == ""
+    assert json.loads(values["LLM_EXTRA_JSON"])["note"] == "literal # $HOME"
+    assert values["AGENT_SYSTEM_PROMPT"] == '保留字面量 $(touch should-not-exist) 和 "引号"'
+    assert not (tmp_path / "should-not-exist").exists()
+    merged = config.read_text(encoding="utf-8")
+    for removed in ("old custom comment", "AGENT_COMPACT_SUMMARY_TOKENS", "UNKNOWN_SETTING"):
+        assert removed not in merged
+    assert backups(config)[0].read_text(encoding="utf-8") == content
+    output = capsys.readouterr().out
+    assert "private-secret" not in output and "environment-key" not in output
+    before = config.read_bytes()
+    modified = config.stat().st_mtime_ns
+    configure_user(SOURCE)
+    assert config.read_bytes() == before and config.stat().st_mtime_ns == modified
+    assert len(backups(config)) == 1
+
+
+def test_reinstall_uses_target_template_to_remove_retired_settings(user_home, tmp_path):
+    config = configure_user(SOURCE)
+    config.write_text("LLM_MODEL=mine\nLLM_TEMPERATURE=0.5\n")
+    new_install = tmp_path / "new-install"
+    new_install.mkdir()
+    (new_install / ".env.example").write_text("# new template\nLLM_MODEL=\nLLM_TIMEOUT=42\n")
+    configure_user(new_install)
+    assert read_config(config) == {"LLM_MODEL": "mine", "LLM_TIMEOUT": "42"}
+    assert config.read_text().startswith("# new template\n")
+
+
+@pytest.mark.parametrize("content", ["unfinished config", "DEEPSEEK_API_KEY='private-secret\n"])
+def test_reinstall_rejects_malformed_config_without_overwriting_it(user_home, content):
+    config = configure_user(SOURCE)
+    config.write_text(content)
+    with pytest.raises(ValueError) as error:
+        configure_user(SOURCE)
+    assert "private-secret" not in str(error.value)
     assert config.read_text() == content
+    assert not backups(config)
+
+
+def test_failed_config_merge_leaves_original_and_backup(user_home, monkeypatch):
+    config = configure_user(SOURCE)
+    original = b"LLM_MODEL=mine\n"
+    config.write_bytes(original)
+
+    def fail(*args):
+        raise OSError("cannot publish")
+
+    monkeypatch.setattr("host_support.storage.os.replace", fail)
+    with pytest.raises(OSError, match="cannot publish"):
+        configure_user(SOURCE)
+    assert config.read_bytes() == original
+    assert backups(config)[0].read_bytes() == original
+    assert not list(config.parent.glob(".model-settings-*"))
+
+
+def test_failed_merge_backup_leaves_original(user_home, monkeypatch):
+    config = configure_user(SOURCE)
+    original = b"LLM_MODEL=mine\n"
+    config.write_bytes(original)
+
+    def fail(*args):
+        raise OSError("cannot back up")
+
+    monkeypatch.setattr("configuration.storage.create_backup", fail)
+    with pytest.raises(OSError, match="cannot back up"):
+        configure_user(SOURCE)
+    assert config.read_bytes() == original
+
+
+def test_reinstall_does_not_follow_config_symlink(user_home, tmp_path):
+    target = tmp_path / "other.env"
+    target.write_text("LLM_MODEL=other\n")
+    config = user_config_path()
+    config.parent.mkdir(parents=True)
+    config.symlink_to(target)
+    with pytest.raises(ValueError, match="普通文件"):
+        configure_user(SOURCE)
+    assert config.is_symlink()
+    assert target.read_text() == "LLM_MODEL=other\n"
 
 
 @pytest.mark.parametrize("shell", ["zsh", "bash"])

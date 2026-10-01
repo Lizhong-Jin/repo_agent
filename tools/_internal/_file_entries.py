@@ -6,6 +6,8 @@ from fnmatch import fnmatch
 from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 
+from host_support.file_scan import DirectoryReader, DirectorySource
+
 from .file_access import current_file_access
 from .file_policy import PathPolicy
 
@@ -25,6 +27,15 @@ class FileEntry:
         if S_ISREG(self.info.st_mode):
             return "file"
         return "other"
+
+
+@dataclass(frozen=True)
+class SearchCandidate:
+    """Read immediately; directory is borrowed until iteration advances/closes."""
+
+    path: Path
+    info: os.stat_result | None
+    directory: DirectoryReader | None = None
 
 
 def inspect_entry(
@@ -66,15 +77,25 @@ def iter_search_candidates(
     relative = target.relative_to(workspace_root)
     if not include_hidden and any(part.startswith(".") for part in relative.parts):
         return
-    info = target.stat()
+    access = current_file_access()
+    info = access.stat(target) if access else target.stat()
     if S_ISREG(info.st_mode):
         if glob is None or fnmatch(relative.as_posix(), glob):
-            yield target, info
+            yield SearchCandidate(target, info)
         return
     if not S_ISDIR(info.st_mode):
         return
-    access = current_file_access()
-    walk = access.walk(target) if access else os.walk(target, followlinks=False)
+    if access:
+        yield from _native_search_candidates(
+            access,
+            workspace_root,
+            target,
+            include_hidden=include_hidden,
+            glob=glob,
+            policy=policy,
+        )
+        return
+    walk = os.walk(target, followlinks=False)
     for root, dirnames, filenames in walk:
         dirnames.sort(key=lambda name: (name.casefold(), name))
         filenames.sort(key=lambda name: (name.casefold(), name))
@@ -93,10 +114,53 @@ def iter_search_candidates(
             if glob is not None and not fnmatch(relative, glob):
                 continue
             try:
-                info = access.stat(candidate) if access else candidate.lstat()
+                info = candidate.lstat()
             except OSError:
                 # Let the caller count an unreadable candidate as a skipped file.
                 info = None
             if info is not None and S_ISLNK(info.st_mode):
                 continue
-            yield candidate, info
+            yield SearchCandidate(candidate, info)
+
+
+def _native_search_candidates(
+    access: DirectorySource,
+    workspace_root: Path,
+    target: Path,
+    *,
+    include_hidden: bool,
+    glob: str | None,
+    policy: PathPolicy,
+):
+    """One scoped reader per directory; reuse enumeration metadata for reads.
+
+    Keep file order, directory pruning and unreadable-entry behavior identical
+    to the descriptor walk. Only descendants are queued, never open handles.
+    """
+    pending = [target]
+    while pending:
+        root = pending.pop()
+        children = []
+        try:
+            with access.read_directory(root) as directory:
+                for name in sorted(directory.names(), key=lambda name: (name.casefold(), name)):
+                    if not include_hidden and name.startswith("."):
+                        continue
+                    candidate = root / name
+                    try:
+                        info = directory.stat(name)
+                    except OSError:
+                        continue
+                    if S_ISDIR(info.st_mode):
+                        if not policy.is_protected(candidate, candidate.resolve(), info=info):
+                            children.append(candidate)
+                        continue
+                    if S_ISLNK(info.st_mode):
+                        continue
+                    relative = candidate.relative_to(workspace_root).as_posix()
+                    if glob is None or fnmatch(relative, glob):
+                        yield SearchCandidate(candidate, info, directory)
+        except OSError:
+            # Directory access failures were also skipped by FileAccess.walk.
+            continue
+        pending.extend(reversed(children))

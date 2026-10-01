@@ -116,8 +116,11 @@ def test_reinstall_failure_restores_venv_links_records_and_shell(tmp_path, monke
     config.parent.mkdir(parents=True)
     config.write_text("LLM_MODEL=mine\nDEEPSEEK_API_KEY=keep-secret\n")
     monkeypatch.setattr(setup, "environment_report", lambda *a, **kw: [])
+    monkeypatch.setenv("AGENT_INSTALL_RETRIES", "0")
+    failures = []
 
     def run(command, **kwargs):
+        command = [arg for arg in command if arg != "-B"]
         stage = (
             "venv"
             if command[1:3] == ["-m", "venv"]
@@ -126,11 +129,13 @@ def test_reinstall_failure_restores_venv_links_records_and_shell(tmp_path, monke
             else "smoke"
         )
         if failure == stage:
+            failures.append(stage)
             raise subprocess.CalledProcessError(1, command)
         if failure == "interrupt" and stage == "pip":
+            failures.append("interrupt")
             raise KeyboardInterrupt
         if stage == "pip":
-            (root / ".venv/bin").mkdir()
+            (root / ".venv/bin").mkdir(exist_ok=True)
             for name in COMMANDS:
                 (root / ".venv/bin" / name).write_text("new entry")
         return SimpleNamespace(returncode=0)
@@ -140,6 +145,7 @@ def test_reinstall_failure_restores_venv_links_records_and_shell(tmp_path, monke
 
     def link(*args, **kwargs):
         if failure == "second-link" and args[2] == COMMANDS[1]:
+            failures.append("second-link")
             raise OSError("simulated second link failure")
         return original_link(*args, **kwargs)
 
@@ -149,6 +155,7 @@ def test_reinstall_failure_restores_venv_links_records_and_shell(tmp_path, monke
     def shell(*args, **kwargs):
         result = original_shell(*args, **kwargs)
         if failure == "shell":
+            failures.append("shell")
             raise OSError("simulated shell failure")
         return result
 
@@ -171,6 +178,7 @@ def test_reinstall_failure_restores_venv_links_records_and_shell(tmp_path, monke
     with pytest.raises(SystemExit) as error:
         setup.main()
     assert error.value.code == 1
+    assert failures == [failure]
     assert (root / ".venv").stat().st_ino == original_inode
     assert (root / ".venv/old-data").read_text() == "keep old dependencies"
     assert (root / MANIFEST).read_bytes() == original
@@ -178,7 +186,16 @@ def test_reinstall_failure_restores_venv_links_records_and_shell(tmp_path, monke
     for name in COMMANDS:
         assert (bins / name).resolve() == root / ".venv/bin" / name
     assert rc.read_text() == "# existing shell settings\n"
-    assert config.read_text() == "LLM_MODEL=mine\nDEEPSEEK_API_KEY=keep-secret\n"
+    if failure in {"second-link", "shell"}:
+        assert read_config(config) == {
+            "LLM_PROVIDER": "deepseek",
+            "LLM_MODEL": "mine",
+            "DEEPSEEK_API_KEY": "keep-secret",
+        }
+        assert backups(config)[0].read_text() == "LLM_MODEL=mine\nDEEPSEEK_API_KEY=keep-secret\n"
+    else:
+        assert config.read_text() == "LLM_MODEL=mine\nDEEPSEEK_API_KEY=keep-secret\n"
+        assert not backups(config)
     assert not (root / TRANSACTION).exists()
 
 

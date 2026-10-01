@@ -91,6 +91,10 @@ def _extract_zip(archive, destination):
         seen = set()
         files = set()
         for item in members:
+            # ZipInfo normalizes separators on Windows and truncates at NUL.
+            # Validate the original member name before trusting that normalization.
+            if item.orig_filename != item.filename:
+                raise ValueError("ZIP 含被规范化的原始路径")
             name = item.filename.rstrip("/") if item.is_dir() else item.filename
             path = archive_path(name)
             mode = item.external_attr >> 16

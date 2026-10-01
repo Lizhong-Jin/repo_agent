@@ -2,7 +2,7 @@
 
 [文档首页](../docs/index.md) · [项目首页](../README.md) · [会话管理](../docs/sessions.md)
 
-CLI 首次默认使用 macOS / Linux native；本文描述显式选择 `--sandbox docker` 的行为。macOS / Linux 也支持直接修改原项目的 [native 后端](../docs/native-sandbox.md)。Docker 模式下，宿主机运行模型循环、管理密钥/会话/日志/容器，并提供技能加载、历史回查及可选 Web 工具；文件、命令、Python 和 Git 工具均在容器中执行。Python 库直接调用 `create_default_tools` 提供本地文件、Git 和不启动探测子进程的基础环境查询；需要命令执行和隔离时使用 `SandboxSession(root).tools()`。
+CLI 首次在 macOS/Linux 默认 native，Windows 默认 local；本文描述显式选择 `--sandbox docker` 的行为。macOS / Linux 也支持直接修改原项目的 [native 后端](../docs/native-sandbox.md)。Docker 模式下，宿主机运行模型循环、管理密钥/会话/日志/容器，并提供技能加载、历史回查及可选 Web 工具；文件、命令、Python 和 Git 工具均在容器中执行。Python 库直接调用 `create_default_tools` 提供本地文件、Git 和不启动探测子进程的基础环境查询；需要命令执行和隔离时使用 `SandboxSession(root).tools()`。
 
 ## 准备与使用
 
@@ -152,7 +152,7 @@ CUDA 配置挂载 GPU，增加编译所需的内存、临时空间和执行时�
 | --- | --- |
 | Linux | 使用 Docker Engine 或 Docker Desktop 的 Linux daemon |
 | macOS（Intel / Apple Silicon） | 使用 Docker Desktop 等提供的 Linux VM，standard 镜像按 daemon 架构构建 |
-| Windows | 在 WSL2 Linux 发行版内安装并运行项目，通过 Docker Desktop 的 WSL 集成连接 Linux daemon |
+| Windows | 原生 ZIP 配合 Git for Windows 与 Docker Desktop Linux 容器；也可在 WSL2 中安装 Linux 版本并使用 WSL 集成 |
 
 Windows 原生 Python 的共享文件访问、会话锁、原子存储与 Docker 快照/回写已有实现，需要 Git for Windows 与 Docker Desktop 的 Linux 容器模式；验收步骤和限制见[平台适配边界](../docs/platform-adaptation.md#windows-文件服务)。Windows ZIP 提供自带 Python 的 `install_release.ps1 --mode docker` 安装入口；Windows 原生沙箱和 Windows 容器镜像尚不支持，Windows 内核用例与真实 Docker 往返需单独验证。原有 WSL2 路线保持不变，优先将 WSL2 项目放在 Linux 文件系统中。Docker 产品的平台支持见 [Docker Desktop 文档](https://docs.docker.com/desktop/)，Windows 集成见 [WSL2 后端说明](https://docs.docker.com/desktop/features/wsl/)。
 

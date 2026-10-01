@@ -7,9 +7,12 @@ import subprocess
 from pathlib import Path
 
 
-def export_locks(root, uv, *, check=False, offline=False):
+def export_locks(root, uv, *, check=False, offline=False, upgrade=False):
+    if check and upgrade:
+        raise ValueError("--check 与 --upgrade 不能同时使用")
+    lock_options = ["--check"] if check else ["--upgrade"] if upgrade else []
     subprocess.run(
-        [uv, "lock", "--check" if check else "--upgrade", *(["--offline"] if offline else [])],
+        [uv, "lock", *lock_options, *(["--offline"] if offline else [])],
         cwd=root,
         check=True,
     )
@@ -44,13 +47,19 @@ def export_locks(root, uv, *, check=False, offline=False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="更新或检查 Python 锁文件；普通用户安装无需 uv")
-    parser.add_argument("--check", action="store_true")
+    parser = argparse.ArgumentParser(
+        description="同步或检查 Python 锁文件，默认保留已有依赖版本；普通用户安装无需 uv"
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true", help="仅检查锁文件与导出清单是否一致")
+    mode.add_argument("--upgrade", action="store_true", help="升级允许范围内的依赖并导出清单")
     parser.add_argument("--uv", default=os.environ.get("UV") or shutil.which("uv"))
     args = parser.parse_args()
     if not args.uv:
         parser.error("未找到 uv；安装 uv 或通过 --uv 指定构建工具路径")
-    export_locks(Path(__file__).resolve().parents[1], args.uv, check=args.check)
+    export_locks(
+        Path(__file__).resolve().parents[1], args.uv, check=args.check, upgrade=args.upgrade
+    )
 
 
 if __name__ == "__main__":
