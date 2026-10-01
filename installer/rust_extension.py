@@ -218,7 +218,7 @@ def install_rust_extension(root, *, release=None, offline=False, wheelhouse=None
                     "import rust_backend; "
                     "assert rust_backend.API_VERSION == 1; "
                     "assert callable(rust_backend.scan); "
-                    "assert rust_backend.FILESYSTEM_API_VERSION == 1",
+                    "assert rust_backend.FILESYSTEM_API_VERSION == 2",
                 ],
                 cwd=temporary,
                 check=True,

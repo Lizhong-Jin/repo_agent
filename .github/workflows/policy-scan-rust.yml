@@ -42,6 +42,6 @@ jobs:
         run: |
           python scripts/build_rust.py wheel --target host --no-build-isolation --compatibility linux
           python -m pip install rust_wheels/${{ env.RUST_BACKEND_VERSION }}/rust_backend-*.whl
-          python -c 'import rust_backend; assert rust_backend.API_VERSION == 1; assert rust_backend.FILESYSTEM_API_VERSION == 1'
+          python -c 'import rust_backend; assert rust_backend.API_VERSION == 1; assert rust_backend.FILESYSTEM_API_VERSION == 2'
       - name: Differential and integration contracts
-        run: python -m pytest -q -ra tests/test_rust_policy_scan.py tests/test_policy_scan_contract.py tests/test_rust_filesystem.py tests/test_native_file_layer.py tests/test_rust_cross_build.py tests/test_linux_policy_scan.py tests/test_linux_merged_preflight.py tests/test_wsl_drivers.py
+        run: python -m pytest -q -ra tests/test_rust_policy_scan.py tests/test_policy_scan_contract.py tests/test_rust_filesystem.py tests/test_directory_batches.py tests/test_search_scan_contract.py tests/test_native_file_layer.py tests/test_linux_native.py tests/test_rust_cross_build.py tests/test_linux_policy_scan.py tests/test_linux_merged_preflight.py tests/test_wsl_drivers.py

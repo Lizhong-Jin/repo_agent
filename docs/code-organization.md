@@ -12,8 +12,8 @@
 | `installer/` | 安装/卸载、依赖准备、资源定位、发行校验和安装事务 | `setup.py`、`uninstall.py`、`release_install.py` |
 | `configuration/` | 配置环境加载、保存、备份与恢复 | `environment.py`、`storage.py` |
 | `agent/` | Agent 循环、会话持久化与协调、压缩、Skills、追踪 | `runtime.py`、`session.py`、`conversation.py` |
-| `rust/` | Rust 基础能力源码；当前包含策略扫描扩展，根目录统一管理构建配置，子目录按职责组织源码 | `src/lib.rs`、`src/policy_scan/`、`src/filesystem/` |
-| `host_support/` | 标准库实现的宿主文件、锁、路径与进程机制 | `filesystem.py`、`locking.py`、`storage.py` |
+| `rust/` | Rust 基础能力源码；策略扫描和 native 文件系统共用一个扩展，根目录统一管理构建配置 | `src/lib.rs`、`src/policy_scan/`、`src/filesystem/` |
+| `host_support/` | 默认标准库实现的宿主文件、锁、路径与进程机制；可选 Rust 适配器延迟加载 | `filesystem.py`、`locking.py`、`storage.py` |
 
 模型协议、具体工具、执行隔离仍分别归属 `llm/`、`tools/`、`sandbox/`。不要把业务策略为了“共享”而继续下沉到 `host_support`。
 
@@ -53,6 +53,7 @@
 | `maintenance.py` | 标准库环境诊断 |
 | `paths.py`、`release_manifest.py` | 可信资源位置、归档处理、发行清单验证 |
 | `_bootstrap.py` | 直接脚本运行时，从脚本位置建立可信包导入路径 |
+| `rust_extension.py`、`rust_targets.py` | 可选扩展的构建、安装、产物保存和目标工具链检查；发行安装只使用预编译 wheel |
 | `console.py` | 安装入口统一配置 UTF-8 标准输出与错误输出，支持 Windows 重定向管道 |
 
 安装模块以包内相对导入为准，直接运行时先建立包身份，避免包导入和脚本导入维护两套实现。安装运行时校验会在独立子进程中尝试导入 CLI，但安装服务本身不导入模型、工具或终端模块。
@@ -141,7 +142,7 @@ Linux 隔离策略通过 `sandbox/policy_scan.py` 的 `PolicyScanner.scan(plan, 
 
 `host_support/path_rules.py` 的 `NameRules` 仅提供名称匹配机制，保护名单仍归
 `tools/_internal/file_policy.py`。`host_support/file_scan.py` 定义作用域内的
-`DirectorySource` / `DirectoryReader`；`FileAccess.read_directory()` 是其 Python 实现。
+`DirectorySource` / `DirectoryReader`；`FileAccess.scan_directories()` 管理单次扫描的目录句柄缓存，`read_directory()` 提供作用域 reader，可使用 Python 或 Rust 底层机制。
 文本搜索的路径筛选、内容解码、预算和结果格式仍由工具层负责。
 
 `sandbox/rust_policy.py` 提供可选 Rust 适配器，策略源码位于
@@ -154,7 +155,7 @@ ASCII 名称匹配在 Rust 执行，非 ASCII 名称通过当前解释器的文�
 小写转换保持兼容。Rust 扫描释放 GIL，并周期检查信号及应用取消状态。Python 参考实现
 保留用于差分验证。详见 [Rust 扫描器构建与验证](../rust/docs/policy-scan.md)。
 
-macOS native 通过 `host_support/rust_filesystem.py` 接入 `rust/src/filesystem/mod.rs`，实现工作区硬链接检查、目录枚举和 fd 相对路径打开。`DirectoryReader` 保留 Python 策略与元数据/读取校验。文本匹配仍由 Python 实现：搜索在目录作用域内复用已打开的父目录，并从同一打开文件获取内容与元数据；`tools/_internal/text_search.py` 逐行迭代，避免另建完整行列表。名称、路径保护、读取预算和结果语义仍由原工具负责，Rust 不改变 Seatbelt 规则，也不接管文本匹配。`FileAccess.walk/glob` 的逐项分类在同一个目录作用域内读取元数据，避免逐文件重开父目录。
+Linux/macOS native 都在 `_platform_setup()` 中选择 `host_support/rust_filesystem.py` 后端，并通过公共 `_execute_file()` 注入 `FileAccess`，使用 `rust/src/filesystem/mod.rs` 的目录枚举和 fd 相对路径打开。macOS 工作区硬链接检查也使用此模块；Linux 工作区预检仍合并在 `policy_scan` 引擎中。`DirectoryReader.stat_many` 批量传递元数据与逐项错误，`rust/src/filesystem/metadata.rs` 提供相对 fstatat；Python 保留策略与实际读取校验。文本匹配仍由 Python 实现：搜索在目录作用域内复用已打开的父目录，并从同一打开文件获取内容与元数据；`tools/_internal/text_search.py` 逐行迭代，避免另建完整行列表。名称、路径保护、读取预算和结果语义仍由原工具负责，Rust 不改变 Seatbelt 规则，也不接管文本匹配。`FileAccess.walk/glob_entries` 和搜索在一次扫描内最多复用 32 个目录句柄，元数据按 128 项批量获取；`iterdir_entries/glob_entries` 向 list/find 传递已有元数据，避免重复打开和检查。写操作不共享扫描缓存。
 
 ## 安装兼容与打包
 

@@ -146,8 +146,10 @@ runtime = AgentRuntime(client, tools=registered_tools, tool_groups=groups)
 - `host_support/filesystem.py`：提供不跟随链接的描述符操作和 native 轻量文件服务；`tools/_internal/file_access.py` 为它注入工作区 `PathPolicy` 与只读目录约束。底层机制不替代工具层授权。
 - `tools/_internal/_file_io.py`：`FileSnapshot` 和 `read_snapshot()` 负责有上限的字节读取，按需计算 SHA-256；`snapshot_stat()` 与后续读取使用同一文件服务的元数据语义，避免 Windows 路径/句柄时间含义不同而误判。严格读取模式检查打开前后文件身份。`StagedWrites` 统一临时文件、同步落盘、权限复制、替换及失败/取消清理。文本编码与换行规则由工具决定。
 - `tools/_internal/_file_entries.py`：共享目录条目检查和内容搜索遍历。普通文件的一次元数据查询同时用于类型、大小和硬链接保护；符号链接单独查询目标，保留链接自身的类型信息。共享文件服务中的搜索候选借用当前 `DirectoryReader`，在目录作用域内复用父目录句柄；预算耗尽和异常退出会关闭作用域。
-- `host_support/file_scan.py`、`host_support/path_rules.py`：目录读取协议和名称匹配机制；实际保护名单继续由工具策略维护。目录身份固定不代表内容是原子快照，读取仍须校验实际打开的文件。
-- `tools/_internal/text_search.py`：对已完整解码、受大小限制的内容惰性分行，只将 CRLF、CR、LF 作为换行；不额外构造完整行列表，其他 Unicode 分隔符留在原行。文本搜索不调用 Rust 扩展或外部搜索程序。
+- `host_support/file_scan.py`、`host_support/path_rules.py`：目录扫描作用域、读取协议和名称匹配机制。`metadata_entries()` 默认每批读取最多 128 项，保留顺序及逐项错误；旧 reader 没有 `stat_many()` 时逐项调用 `stat()`。实际保护名单继续由工具策略维护。目录身份固定不代表内容是原子快照，读取仍须校验实际打开的文件。
+- `tools/_internal/text_search.py`：对已完整解码、受大小限制的内容惰性分行，只将 CRLF、CR、LF 作为换行；不额外构造完整行列表，其他 Unicode 分隔符留在原行。文本匹配不调用 Rust 或外部搜索程序；native 搜索的目录访问和批量元数据可由所选 Rust 后端提供。
+
+native 的 `FileAccess.walk/glob_entries` 和搜索在单次扫描内最多复用 32 个目录句柄，从最近已打开的祖先相对访问；根目录和活动 reader 另占少量句柄，写操作不使用这个缓存。`iterdir_entries/glob_entries` 将已获取的元数据传给 list/find，避免展示时重复查询。Rust 批量接口仍逐项执行相对 stat，并不将整个批次变成一次系统调用；查询结果也不能代替实际文件读取时的身份和权限检查。
 
 列目录、查找文件和搜索内容在每次调用时创建新的 `PathPolicy`，扫描中复用配置和当前条目的元数据，不跨调用缓存文件状态。搜索仍保留保护目录剪枝、隐藏文件规则和扫描预算；查找文件仍使用原有 glob 语义和精确总数。补丁提交前重新读取字节、校验身份和摘要，不再重复解码、分析换行或拆行；首次替换前的全量检查和每次替换前的检查都保留。
 

@@ -1,5 +1,7 @@
 # Rust 基础能力
 
+[文档首页](../docs/index.md) · [发行构建](../docs/distribution.md) · [原生沙箱](../docs/native-sandbox.md)
+
 项目的 Rust 构建根目录统一为 `rust/`，Cargo 和 Python 打包配置集中放在这里。
 当前只有一个 PyO3 扩展 crate，标准入口为 `src/lib.rs`。入口只负责注册各能力模块，
 共享错误转换、文件系统原语和策略扫描实现各自独立组织：
@@ -15,7 +17,9 @@ rust/
 └── src/
     ├── lib.rs                # Python 模块入口
     ├── error.rs              # 共享错误与 Python 异常转换
-    ├── filesystem/mod.rs     # fd 操作、枚举、macOS 工作区检查
+    ├── filesystem/
+    │   ├── mod.rs            # fd 操作、枚举、macOS 工作区检查
+    │   └── metadata.rs       # 相对 stat 与批量元数据
     └── policy_scan/
         ├── mod.rs            # 策略扫描绑定、输入转换与名称规则
         ├── directory.rs      # 策略扫描所需的目录事实读取
@@ -23,10 +27,11 @@ rust/
 ```
 
 Cargo/Python 发行包名统一为 **`rust-backend`**，Python 模块名为 **`rust_backend`**。
-wheel 文件按 Python 规范使用下划线，例如 `rust_backend-0.2.0-…whl`；动态库名称为
+wheel 文件按 Python 规范使用下划线，例如 `rust_backend-0.3.0-…whl`；动态库名称为
 `librust_backend.so`（Linux）或 `librust_backend.dylib`（macOS）。
 旧 `repo-agent-policy-scan`/`repo_agent_scan` 二进制不能仅改文件名继续使用，需重新构建
-并安装新包。扫描 API 与行为保持不变。目前不支持 Windows。
+并安装新包。Linux 策略扫描 API_VERSION=1；文件系统 FILESYSTEM_API_VERSION=2，
+新增批量元数据接口，旧文件系统扩展需重新构建。目前不支持 Windows。
 
 ## 编译和打包
 
@@ -45,10 +50,9 @@ python scripts/build_rust.py wheel
 
 ```text
 rust_wheels/
-├── 0.1.0/                    # 历史版本（保留原名称）
-└── 0.2.0/
-    ├── rust_backend-0.2.0-cp311-abi3-macosx_11_0_arm64.whl
-    ├── rust_backend-0.2.0-cp311-abi3-manylinux_2_28_x86_64.whl
+└── 0.3.0/
+    ├── rust_backend-0.3.0-cp311-abi3-macosx_11_0_arm64.whl
+    ├── rust_backend-0.3.0-cp311-abi3-manylinux_2_28_x86_64.whl
     ├── macos-arm64/librust_backend.dylib
     └── linux-x86_64/librust_backend.so
 ```
@@ -109,21 +113,34 @@ python scripts/build_rust.py build --target host
 跨编译产物不在构建机上尝试导入。`.github/workflows/policy-scan-wheels.yml` 继续在
 各目标系统上构建并运行扫描/文件工具契约测试；本机跨编译不替代目标系统的验证。
 
-## macOS Rust 文件系统后端
+## Linux/macOS Rust 文件系统后端
 
-安装 0.2.0 或更新的本机扩展并设置 `AGENT_NATIVE_SCANNER=rust`，重启 native 后端。
+安装当前 0.3.0 的本机扩展（策略 API 1、文件系统 API 2）并设置 `AGENT_NATIVE_SCANNER=rust`，重启 native 后端。
 默认仍为 Python；缺少扩展、文件系统 API 不兼容或扫描失败时显式报错，不静默回退。
 
-macOS 接入 `src/filesystem/mod.rs`：执行命令前检查完整工作区中的普通文件硬链接，
-文件工具通过 Rust 进行目录枚举和逐组件 `openat` 路径遍历。工作区 `.venv` 等依赖目录
-仍受检查，不扫描 Seatbelt 已通过规则保护的整个系统/Conda 目录。
+Linux/macOS native 文件工具都接入 `src/filesystem/mod.rs` 和 `metadata.rs`：通过 Rust
+进行目录枚举、逐组件 `openat` 路径遍历和批量元数据读取。两个平台使用相同的后端
+选择与公共 FileAccess 注入流程，local/Docker 模式不走这条 native 文件服务。
+
+执行命令前的检查仍按平台区分：Linux 使用 `policy_scan`，同时扫描读取根并验证
+工作区硬链接和特殊文件；macOS 使用 `filesystem::check_workspace` 检查工作区
+普通文件硬链接。工作区 `.venv` 等依赖目录仍受检查；macOS 不扫描 Seatbelt
+已通过规则保护的整个系统/Conda 目录。
 Seatbelt 的内核隔离策略保持原样，glob 匹配、路径保护判断、文本解码、匹配和预算仍由 Python 负责。
 
 目录打开拒绝符号链接；枚举使用独立目录偏移，重复读取不会漏项；fd 由 RAII/上下文清理。
 预检不跟随目录链接，失败关闭，目录扫描支持信号及应用取消；每次调用重新观察文件系统。
-工作区检查队列不保留目录 fd，因此深目录不会持有与深度等量的句柄，但仍需从根重新
-逐组件打开各目录，这是后续可以优化的开销。
+macOS 工作区预检与两平台文件工具遍历在单次扫描内最多缓存 32 个目录句柄，从最近已打开的祖先
+进行相对访问；超过上限时淘汰最久未用的句柄。根目录、活动 reader 和枚举临时句柄
+另占常数个 fd。扫描结束、提前停止或异常时关闭缓存，写操作仍重新验证父目录。
+
+文件工具通过 `stat_many` 每批最多读取 128 项元数据，保留每项错误、符号链接本身的
+属性及精确纳秒时间戳。list/find 复用候选元数据，避免终端匹配和展示时再次逐文件
+打开父目录。批量减少语言边界调用，并非把 128 次 fstatat 合并为一次系统调用。
+Linux 策略扫描的工作区文件检查也使用已打开目录的相对 fstatat。
 原有 `DirectoryReader` 的元数据和实际文件读取校验继续有效，不以枚举结果代替读取授权。
+
+## 安装与发行集成
 
 源码安装、手工命令和发行构建共用 `installer/rust_extension.py`。源码安装在核心
 安装成功后尝试构建并安装扩展，保留生成的 wheel 到源码根目录 `rust_wheels/<版本>/`。
@@ -142,4 +159,33 @@ python scripts/build_release.py --target macos-arm64 --require-rust
 完整发行归档仍输出到 `dist/`。最终用户安装发行包时仅安装经哈希校验的预编译扩展，
 不运行编译器。未显式设置 `AGENT_NATIVE_SCANNER=rust` 时仍使用 Python。
 
-扫描契约和测试方式见 [policy_scan](docs/policy-scan.md)。
+## 验证
+
+先将本机 wheel 安装到运行测试的 Agent Python，核验两个接口版本，再运行策略与文件工具契约：
+
+```sh
+python -c 'import rust_backend; assert rust_backend.API_VERSION == 1; assert rust_backend.FILESYSTEM_API_VERSION == 2'
+python -m pytest -q tests/test_rust_policy_scan.py tests/test_policy_scan_contract.py tests/test_rust_filesystem.py tests/test_directory_batches.py tests/test_search_scan_contract.py tests/test_native_file_layer.py tests/test_linux_native.py
+export CARGO_TARGET_DIR="$(mktemp -d)"
+export PYO3_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+cargo fmt --manifest-path rust/Cargo.toml --check
+cargo clippy --manifest-path rust/Cargo.toml --all-targets --locked -- -D warnings
+cargo test --manifest-path rust/Cargo.toml --locked
+```
+
+缺少扩展时部分 Python 用例会跳过，不能将这种结果当成 Rust 验证通过。真实隔离与 GPU 用例仍需[对应开关和环境](../docs/development.md#开发环境与验证)。Cargo 命令在依赖缓存齐全时可加 `--offline`（格式检查不需要下载依赖）。
+
+Rust 单元测试会嵌入 Python，除了头文件还需要可链接、可加载的 Python 共享库。受管独立 Python 的 `sysconfig` 可能保留构建时的 `/install/lib`，导致链接器找不到 `libpython`；应以实际运行时目录为准，将真实库目录加入链接搜索路径（`-L native=…`），并在 macOS 设置 `DYLD_FALLBACK_LIBRARY_PATH`、Linux 设置 `LD_LIBRARY_PATH`。这属于测试链接环境准备；不能用已经安装的扩展导入成功代替 Rust 源码单元测试。
+
+Linux 策略扫描接口与语义见 [policy_scan](docs/policy-scan.md)。
+
+## 目录优化基准
+
+```sh
+python scripts/benchmark_directory_io.py --repeats 7
+python scripts/benchmark_directory_io.py --engine python
+```
+
+临时构造宽目录和深目录，测量 list/find/search 完整文件工具调用及 Rust 工作区预检，
+输出 JSON 中位数并校验两个后端结果一致。比较改动前后时保持参数和主机负载一致；
+热缓存测量不包含隔离启动，也不能替代真实 WSL/Conda 环境的性能记录。

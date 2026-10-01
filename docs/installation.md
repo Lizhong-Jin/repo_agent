@@ -10,11 +10,11 @@
 
 维护者的构建产物位于 `dist/<版本>/<平台>/`，每个压缩包旁有对应的 `.sha256` 文件；构建器默认生成全部平台，只提供完整包。构建命令与目录结构见[构建与分发](distribution.md)。
 
-发行压缩包自带与文件名对应的顶层文件夹，直接解压即可，无需预先创建空目录。以下以源码当前版本 0.1.3 的 macOS ARM64 包名演示路径，实际操作须替换为所下载的版本与平台；示例不表示现有归档已包含工作区的未发布修改：
+发行压缩包自带与文件名对应的顶层文件夹，直接解压即可，无需预先创建空目录。以下以源码当前版本 0.1.4 的 macOS ARM64 包名演示路径，实际操作须替换为所下载的版本与平台；示例不表示现有归档已包含工作区的未发布修改：
 
 ```bash
-tar -xzf repo-agent-0.1.3-macos-arm64.tar.gz
-cd repo-agent-0.1.3-macos-arm64
+tar -xzf repo-agent-0.1.4-macos-arm64.tar.gz
+cd repo-agent-0.1.4-macos-arm64
 ./install-release.sh
 ./install-release.sh --check
 ```
@@ -24,9 +24,9 @@ cd repo-agent-0.1.3-macos-arm64
 已有源码时，也可以直接安装构建好的压缩包；更新后的安装器兼容新格式和旧版平铺格式：
 
 ```bash
-./install-release.sh --archive dist/0.1.3/macos-arm64/repo-agent-0.1.3-macos-arm64.tar.gz
+./install-release.sh --archive dist/0.1.4/macos-arm64/repo-agent-0.1.4-macos-arm64.tar.gz
 # 使用从可信发布来源取得的 SHA256 做整个压缩包校验
-./install-release.sh --archive dist/0.1.3/macos-arm64/repo-agent-0.1.3-macos-arm64.tar.gz --sha256 <SHA256>
+./install-release.sh --archive dist/0.1.4/macos-arm64/repo-agent-0.1.4-macos-arm64.tar.gz --sha256 <SHA256>
 ```
 
 默认位置：
@@ -74,8 +74,8 @@ repo-agent uninstall
 支持 Windows 10 1809+ / Windows 11 x86_64、Windows PowerShell 5.1+。ZIP 内置锁定的 Python 3.13、pip、venv 和 Windows 离线 wheels，不需要预装 Python 或管理员权限。只提供一个安装脚本 `install_release.ps1`，卸载、检查和恢复均由它的参数完成。
 
 ```powershell
-Expand-Archive .\repo-agent-0.1.3-windows-x86_64.zip -DestinationPath .
-Set-Location .\repo-agent-0.1.3-windows-x86_64
+Expand-Archive .\repo-agent-0.1.4-windows-x86_64.zip -DestinationPath .
+Set-Location .\repo-agent-0.1.4-windows-x86_64
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --check
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --offline
 ```
@@ -91,7 +91,7 @@ Windows 新构建包的运行时缓存按上游版本和发行清单区分，升
 卸载前退出该版本的所有 Agent 进程，在已安装版本目录（默认如下）运行同一个脚本：
 
 ```powershell
-Set-Location "$HOME/.local/share/repo-agent/versions/0.1.3"
+Set-Location "$HOME/.local/share/repo-agent/versions/0.1.4"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --recover
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --uninstall --dry-run
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --uninstall
@@ -113,7 +113,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --
 
 Linux/macOS 源码安装在核心安装成功后自动尝试编译并安装 Rust 策略扫描扩展。需要已有 Rust >= 1.85（cargo/rustc）和 C 链接器，安装器不会自动安装编译器；maturin 构建依赖在隔离环境中准备，Cargo 中间产物写入项目外的临时目录，最终 wheel 保留到源码根目录 `rust_wheels/<版本>/`。手工编译和打包入口见 [Rust 构建说明](../rust/README.md)。缺少工具、下载或编译失败、取消该可选步骤均只提示，不撤销核心安装。离线编译需要本地 maturin wheel 和已缓存的 Cargo 依赖，准备不足时跳过扩展。
 
-附带预编译扩展的发行包会直接安装并验证包内 Rust wheel，安装机不需要 Rust 编译器，也不联网编译。Windows 当前不支持此扩展。安装扩展不会修改扫描器配置，默认仍为 `AGENT_NATIVE_SCANNER=python`；Linux/macOS 用户可改为 `rust` 启用，macOS 文件系统后端需要 0.2.0 或更新扩展。若旧配置显式选择了 `rust` 而本次扩展安装失败，应改回 `python` 或补装扩展后再运行。详情见 [Rust 扫描器说明](../rust/docs/policy-scan.md)。
+附带预编译扩展的发行包会直接安装并验证包内 Rust wheel，安装机不需要 Rust 编译器，也不联网编译。Windows 当前不支持此扩展。安装扩展不会修改扫描器配置，默认仍为 `AGENT_NATIVE_SCANNER=python`；Linux/macOS 用户可改为 `rust` 启用，两平台 native 文件工具的 Rust 后端均需要 兼容 FILESYSTEM_API_VERSION=2 的扩展（当前版本 0.3.0）。若旧配置显式选择了 `rust` 而本次扩展安装失败，应改回 `python` 或补装扩展后再运行。详情见 [Rust 扫描器说明](../rust/docs/policy-scan.md)。
 
 首次在目标项目运行 `repo-agent` 时，若缺少模型或 Key，交互终端会引导设置；也可先运行 `repo-agent config model`。安装本身无需模型信息。已有用户配置会按新模板重建，保留仍有效的旧值（含显式空值），补充新增项，丢弃模板已移除的项；替换前自动备份。新模板与内置默认值的区别见[配置参考](configuration.md#模板与内置默认值)。
 

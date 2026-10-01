@@ -18,6 +18,7 @@ include rust/build.rs
 include rust/docs/policy-scan.md
 include rust/pyproject.toml
 include rust/src/error.rs
+include rust/src/filesystem/metadata.rs
 include rust/src/filesystem/mod.rs
 include rust/src/lib.rs
 include rust/src/policy_scan/directory.rs

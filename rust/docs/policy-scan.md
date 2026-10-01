@@ -1,76 +1,38 @@
 # Optional Rust policy scanner
 
 This companion extension implements `PolicyScanner.scan(plan, request)` for Linux
-native isolation. The companion now also includes a macOS native filesystem
+native isolation. The companion now also includes a Linux/macOS native filesystem
 backend in `rust/src/filesystem/`, described in [the build guide](../README.md).
-The application's Python scanner remains the default. Text matching stays in Python; macOS directory enumeration and path opening
-can use Rust under the existing scoped `DirectoryReader` contract.
+The application's Python scanner remains the default. Text matching stays in Python; directory enumeration, path opening and batched metadata
+for native file tools on both platforms can use Rust under the scoped `DirectoryReader` contract.
+Linux workspace preflight remains part of the policy scanner; it does not use the
+macOS-only hard-link preflight entry point.
 
 ## Build and select
 
-The crate and Python packaging root is `rust/`: `Cargo.toml`, `Cargo.lock`,
-`build.rs`, and `pyproject.toml` live there. The shared crate entry is `src/lib.rs`; scanner bindings and implementation
-live in `src/policy_scan/`, and shared errors live in `src/error.rs`.
+The crate and Python packaging root is `rust/`. The package is `rust-backend`
+and the imported module is `rust_backend`; the Linux scanner requires
+`API_VERSION=1`. Native file tools also require `FILESYSTEM_API_VERSION=2`
+(current extension version 0.3.0). Install the wheel into the Agent's Python,
+not only the task project's environment.
 
-Source installation automatically attempts to build and install this extension
-after the core installation commits. It requires Rust >= 1.85 (`cargo` and
-`rustc`), a C linker, and Python >= 3.11. The installer does not install a Rust
-toolchain. Missing tools, failed compilation, or cancelling the optional step
-produce a warning and leave the core installation usable with the default Python
-scanner. Build dependencies are isolated from the Agent environment; Cargo output
-uses a temporary directory outside the workspace. Offline builds require cached
-Cargo dependencies and local maturin wheels supplied through `--wheelhouse`.
+Build commands, target platforms, offline dependencies, source installation,
+release wheel selection and integrity checks are maintained in the
+[shared build guide](../README.md). Source installation attempts an optional
+build after committing the core installation. Release installation only uses a
+precompiled wheel if present; it never runs a Rust compiler on the user's machine.
 
-Release installation uses the precompiled wheel recorded in `release.json`, checks
-its hash, installs it without dependencies or network access, and verifies its API.
-It never invokes a compiler. Missing or unloadable optional wheels do not undo the
-core installation. Legacy releases without a wheel remain supported.
+`AGENT_NATIVE_SCANNER=python` is the default. After installing a compatible
+extension, set `AGENT_NATIVE_SCANNER=rust` and restart native mode. This selects
+Linux policy scanning and the native filesystem backend; on macOS the same setting
+selects filesystem operations and workspace preflight, while Seatbelt rules remain
+unchanged. Local and Docker modes do not use this native backend.
 
-Shared build entry points and offline options are documented in [rust/README.md](../README.md).
-Final artifacts are retained in `rust_wheels/<version>/`; temporary Cargo output is cleaned.
-
-To build manually from the repository root:
-
-```sh
-python scripts/build_rust.py build --target host
-python scripts/build_rust.py wheel --target host
-# Use the exact wheel path printed above, with the Agent's Python interpreter:
-python -m pip install --no-deps rust_wheels/<version>/<generated-wheel-filename>.whl
-export AGENT_NATIVE_SCANNER=rust
-```
-
-`AGENT_NATIVE_SCANNER=python` selects the reference implementation. Missing,
-incompatible, or failed Rust scans cause an error; they never silently switch to
-Python. Configuration is selected once per backend instance. No runtime build or
-executable lookup in the scanned workspace occurs.
-
-Use an external build directory: Cargo can create hardlinked artifacts, which the
-existing native workspace validator deliberately rejects. Do not relax workspace
-validation or exclude build trees to work around this.
-
-The extension is a separate platform wheel (`rust-backend`), with PyO3
-abi3 for CPython >= 3.11. Install it into the Agent's own Python environment.
-The main application's universal wheel remains separate from the native binary.
-Source archives include this directory. Do not copy a macOS wheel to WSL/Linux.
-
-The release builder accepts `--rust-wheelhouse DIR` (also searches `--wheelhouse`
-when omitted), then the repository `rust_wheels/` directory, selects wheels by extension version, ABI and target platform, and
-embeds them alongside the main wheel with integrity hashes. If no matching wheel
-exists, it attempts a build only for the build machine's own platform. Other
-targets require prebuilt wheels; there is no implicit cross compilation. Missing
-compatible wheels normally emit warnings. `--require-rust` makes them fatal for
-Linux/macOS targets before any release archives are replaced. Windows is excluded:
-this scanner is currently POSIX-only.
-
-`.github/workflows/policy-scan-wheels.yml` builds and tests companion artifacts for
-Linux/macOS x86_64 and arm64. Linux uses manylinux 2.28; macOS deployment floors are
-10.15 (x86_64) and 11.0 (arm64). Download the four workflow artifacts into one
-wheel directory for multi-platform release builds. The workflow does not publish
-to PyPI or create a release automatically.
-
-Installing the extension does not change `AGENT_NATIVE_SCANNER`: Python remains
-the default. An explicit `rust` setting is retained on reinstall; if optional
-installation fails, select `python` or repair the extension before using it.
+Explicit Rust selection never silently falls back after missing imports,
+incompatible APIs or scan failures. Configuration is selected once per backend
+instance. Installation does not change the setting; an existing explicit `rust`
+selection must be repaired or changed to `python` if extension installation fails.
+No runtime compilation or executable lookup in the scanned workspace occurs.
 
 ## Semantics
 
@@ -96,21 +58,20 @@ installation fails, select `python` or repair the extension before using it.
 
 ## Verify
 
+Run the import checks, Rust unit tests and native file contracts in the
+[shared verification guide](../README.md#验证). For policy-specific regression
+and measurement:
+
 ```sh
-python -m pytest -q tests/test_rust_policy_scan.py tests/test_policy_scan_contract.py
-export CARGO_TARGET_DIR="$(mktemp -d)"
-cargo test --manifest-path rust/Cargo.toml --locked
-cargo clippy --manifest-path rust/Cargo.toml --all-targets --locked -- -D warnings
+python -m pytest -q tests/test_rust_policy_scan.py tests/test_policy_scan_contract.py tests/test_linux_policy_scan.py tests/test_linux_merged_preflight.py
 python scripts/benchmark_policy_backends.py --files 20000 --repeats 7
 python scripts/benchmark_policy_backends.py --workspace /path/to/project --read-path /path/to/conda
 ```
 
 Use an unprivileged Linux account to test permission-denied behavior. The default
-Python test suite skips native differential cases when the companion is absent;
-CI must install and import the extension before running them. Filesystems that
-reject undecodable filenames skip that filesystem case; in-memory Rust tests
-still cover byte-preserving matching and ordering. Embedded Python Rust tests
-may need the interpreter's shared-library directory in `LD_LIBRARY_PATH` (Linux)
-or `DYLD_FALLBACK_LIBRARY_PATH` (macOS/Conda).
+Python suite skips differential cases when the companion is absent; CI imports
+and verifies the extension before running them. Filesystems that reject undecodable
+filenames skip that filesystem case; in-memory Rust tests still cover byte-preserving
+matching and ordering. A benchmark does not replace real native isolation tests.
 
 Binding reference: [PyO3 parallelism and GIL release](https://pyo3.rs/v0.27.2/parallelism).

@@ -29,7 +29,7 @@ repo-agent --sandbox native --sandbox-gpus all            # WSL2 仅支持 all
 设备权限或 CUDA kernel 启动自检异常时明确报错，不静默降级。macOS 不进行此 GPU 检测。
 驱动自检执行小型 PTX kernel，**不依赖也不验证 PyTorch、Triton 或 nvcc**。
 
-按任务提前准备 项目实际使用的 Python 环境和系统工具链。native 安装不自动安装 CUDA、
+按任务提前准备项目实际使用的 Python 环境和系统工具链。native 安装不自动安装 CUDA、
 PyTorch 或 Triton；不能把宿主机另一套 venv 中可导入的包当作 Agent 环境已具备的依赖。
 当前原生后端只读挂载解释器/依赖目录，命令断网；依赖由用户在沙箱外准备。
 不要将 Docker 镜像构建作为 native 的必经步骤。完整授权、工具链查找与限制见
@@ -157,7 +157,7 @@ Triton kernel 无法执行。native 启动驱动自检通过不等于框架和�
 两种模式的默认临时缓存都会在调用结束后清理，所以将同一候选的编译、正确性检查、预热
 和 benchmark 放在同一进程中；需要保留的实验结果写入工作区普通文件。
 
-两种模式命令均断网；Docker 依赖预装到镜像，native 依赖预装到 项目 Python 环境或允许的
+两种模式命令均断网；Docker 依赖预装到镜像，native 依赖预装到项目 Python 环境或允许的
 系统工具链位置。可选的主进程 Web 搜索/读取不改变命令网络权限。首次编译按
 `execution.tool_limits` 设置超时：GPU 模式的命令/Python 上限通常为 900 秒，默认仍为
 60/10 秒；standard 命令/Python 上限为 120/30 秒。native 没有 Docker 的外层容器总超时。

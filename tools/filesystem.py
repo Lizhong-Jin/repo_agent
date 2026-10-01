@@ -1698,27 +1698,35 @@ class ListFileTool(FileTool):
                 return tool_error(ToolErrorCode.NOT_A_DIRECTORY)
             entries: list[dict[str, Any]] = []
             access = current_file_access()
-            for entry in access.iterdir(target) if access else target.iterdir():
-                if not include_hidden and entry.name.startswith("."):
-                    continue
-                try:
-                    metadata = inspect_entry(entry, policy)
-                    if metadata is None:
+            candidates = (
+                access.iterdir_entries(target) if access else ((p, None) for p in target.iterdir())
+            )
+            with closing(candidates):
+                for entry, info in candidates:
+                    if not include_hidden and entry.name.startswith("."):
                         continue
-                    entry_type = metadata.kind
-                    size = metadata.info.st_size if entry_type == "file" else None
-                except OSError:
-                    entry_type = "other"
-                    size = None
-                relative = entry.relative_to(self.workspace_root).as_posix()
-                item = {
-                    "name": entry.name,
-                    "path": relative,
-                    "type": entry_type,
-                }
-                if size is not None:
-                    item["size"] = size
-                entries.append(item)
+                    try:
+                        if isinstance(info, OSError):
+                            if policy.protects_path(entry, entry.resolve()):
+                                continue
+                            raise info
+                        metadata = inspect_entry(entry, policy, info=info)
+                        if metadata is None:
+                            continue
+                        entry_type = metadata.kind
+                        size = metadata.info.st_size if entry_type == "file" else None
+                    except OSError:
+                        entry_type = "other"
+                        size = None
+                    relative = entry.relative_to(self.workspace_root).as_posix()
+                    item = {
+                        "name": entry.name,
+                        "path": relative,
+                        "type": entry_type,
+                    }
+                    if size is not None:
+                        item["size"] = size
+                    entries.append(item)
         except FileNotFoundError:
             return tool_error(ToolErrorCode.FILE_NOT_FOUND)
         except NotADirectoryError:
@@ -1875,36 +1883,42 @@ class FindFileTool(FileTool):
             matches: list[dict[str, Any]] = []
             total_matches = 0
             access = current_file_access()
-            for candidate in access.glob(target, pattern) if access else target.glob(pattern):
-                try:
-                    metadata = inspect_entry(candidate, policy)
-                    if metadata is None:
-                        continue
-                    if not metadata.resolved.is_relative_to(self.workspace_root):
-                        continue
-                    relative_to_search = candidate.relative_to(target)
-                    if not include_hidden:
-                        if any(part.startswith(".") for part in relative_to_search.parts):
+            candidates = (
+                access.glob_entries(target, pattern)
+                if access
+                else ((p, None) for p in target.glob(pattern))
+            )
+            with closing(candidates):
+                for candidate, info in candidates:
+                    try:
+                        metadata = inspect_entry(candidate, policy, info=info)
+                        if metadata is None:
                             continue
-                    candidate_type = metadata.kind
-                    if entry_type == "file" and candidate_type != "file":
+                        if not metadata.resolved.is_relative_to(self.workspace_root):
+                            continue
+                        relative_to_search = candidate.relative_to(target)
+                        if not include_hidden:
+                            if any(part.startswith(".") for part in relative_to_search.parts):
+                                continue
+                        candidate_type = metadata.kind
+                        if entry_type == "file" and candidate_type != "file":
+                            continue
+                        if entry_type == "directory" and candidate_type != "directory":
+                            continue
+                        total_matches += 1
+                        if total_matches > self.max_results:
+                            continue
+                        relative = candidate.relative_to(self.workspace_root).as_posix()
+                        item: dict[str, Any] = {
+                            "name": candidate.name,
+                            "path": relative,
+                            "type": candidate_type,
+                        }
+                        if candidate_type == "file":
+                            item["size"] = metadata.info.st_size
+                        matches.append(item)
+                    except (OSError, RuntimeError):
                         continue
-                    if entry_type == "directory" and candidate_type != "directory":
-                        continue
-                    total_matches += 1
-                    if total_matches > self.max_results:
-                        continue
-                    relative = candidate.relative_to(self.workspace_root).as_posix()
-                    item: dict[str, Any] = {
-                        "name": candidate.name,
-                        "path": relative,
-                        "type": candidate_type,
-                    }
-                    if candidate_type == "file":
-                        item["size"] = metadata.info.st_size
-                    matches.append(item)
-                except (OSError, RuntimeError):
-                    continue
         except FileNotFoundError:
             return tool_error(ToolErrorCode.FILE_NOT_FOUND)
         except NotADirectoryError:

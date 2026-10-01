@@ -61,7 +61,7 @@ python3 -m venv .venv
 | GPU | [算子验证](gpu-operators.md#验证边界) | Docker / native 各有开关，必须有实际 NVIDIA GPU 和所需依赖 |
 | 发行安装 | [安装验收](distribution.md#校验失败处理与安装验收) | 显式提供当前平台完整包，使用受管 Python 离线安装；测试以模拟 Docker 验证构建入口 |
 | Windows 文件与安装契约 | [Windows 文件服务](platform-adaptation.md#windows-文件服务) | 共享文件契约可跨平台运行；Windows 内核用例只能在 Windows 运行 |
-| 可选 Rust 扫描器（源码位于 `rust/`，产物位于 `rust_wheels/<版本>/`） | [构建与差分验证](../rust/docs/policy-scan.md#verify) | 单独安装扩展后运行差分测试；未安装时相关用例会跳过，主包不要求 Rust 编译器 |
+| 可选 Rust 后端 | [构建说明](../rust/README.md)、[契约验证](../rust/docs/policy-scan.md#verify) | 扩展含 Linux 策略扫描、macOS 预检和两平台文件服务；先核验接口版本，未安装时相关用例会跳过 |
 | Windows ZIP 实装 | [ZIP 验收](distribution.md#校验失败处理与安装验收) | Windows x86_64、PowerShell 5.1+，设置 `REPO_AGENT_WINDOWS_ARCHIVE` |
 | Windows Docker 回写 | [真实容器往返](platform-adaptation.md#windows-文件服务) | `RUN_WINDOWS_DOCKER_TESTS=1`；Git for Windows、Docker Desktop Linux 容器模式及本地镜像 |
 
@@ -87,6 +87,23 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py t
 将源码与此目录复制到目标机器，按[离线安装](installation.md#离线安装)执行。开发材料须与源码的锁文件匹配；依赖升级后重新生成。首次准备仍需联网，不把运行时和 wheels 提交到 Git。已具备材料时，准备脚本也支持 `--offline --runtime-archive ... --wheelhouse ...`。
 
 源码采用 editable 安装，修改代码后重启 Agent 即可加载；改动依赖声明或锁文件后重新安装。`.venv` 用于 Agent 开发和测试，任务项目的 Python 由 native 单独选择，见[环境规则](python-environments.md)。
+
+## 可选 Rust 后端开发
+
+主应用版本取自 `pyproject.toml`，扩展版本取自 `rust/pyproject.toml` 并与 `rust/Cargo.toml` 保持一致，两者独立。当前扩展为 `rust-backend` 0.3.0，模块名 `rust_backend`，策略 API 为 1，文件系统 API 为 2；新增批量元数据后旧文件系统扩展需要重新构建。
+
+```bash
+.venv/bin/python scripts/build_rust.py wheel --target host --check
+.venv/bin/python scripts/build_rust.py wheel --target host
+# 使用上一步输出的确切本机 wheel，不要一次安装目录中的全部平台 wheel
+.venv/bin/python -m pip install --no-deps rust_wheels/<版本>/<本机wheel文件名>.whl
+.venv/bin/python -c 'import rust_backend; assert rust_backend.API_VERSION == 1; assert rust_backend.FILESYSTEM_API_VERSION == 2'
+.venv/bin/python -m pytest -q tests/test_rust_policy_scan.py tests/test_rust_filesystem.py tests/test_directory_batches.py tests/test_search_scan_contract.py tests/test_native_file_layer.py tests/test_linux_native.py
+```
+
+`--check` 仅检查已安装工具链，不编译、不补齐依赖，也不证明 Cargo 缓存完整。省略 `--target` 会尝试四种 Linux/macOS 目标；某一目标未完成时命令返回非零，已成功产物保留。常规 Python 回归可能跳过未安装扩展的测试，因此需要上面的导入检查和独立 Rust CI。
+
+`prepare_python_bundle.py --with-dev` 只准备 Python 开发材料，不包含 Rust 工具链、Cargo 缓存、maturin 或扩展 wheel。离线编译和 Rust 单元测试另按 [Rust 构建说明](../rust/README.md)准备。仅重启 Agent 不会重新编译已安装的 Rust 扩展。
 
 ## 运行最小 Agent
 
@@ -213,5 +230,3 @@ Runtime 负责同步任务循环、轮数限制和输出截断恢复。CLI 通�
 见[统一分发清单](distribution.md#统一分发清单)。
 
 </details>
-
-Rust 编译：`python scripts/build_rust.py build`；wheel 打包：`python scripts/build_rust.py wheel`。默认构建全部四种目标，缺少工具链时提示安装；仅本机使用 `--target host`，环境检查使用 `--check`。构建与离线选项见 [Rust 构建入口](../rust/README.md)。

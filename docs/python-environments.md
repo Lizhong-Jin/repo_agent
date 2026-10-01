@@ -9,6 +9,7 @@ Agent 使用固定的解释器和依赖，用户项目继续使用已有的 venv
 | 组件 | Python 来源 |
 | --- | --- |
 | Agent、文件/Web 工具、可信 worker、Python 语言服务器 | 安装目录的 Agent `.venv` |
+| 可选 `rust-backend` 扩展 | Agent `.venv` 中的平台 wheel；装到项目 venv/Conda 不会使 Agent 自动获得扩展 |
 | Linux seccomp 启动器、CUDA 驱动 kernel 自检 | Agent Python；不依赖 PyTorch |
 | native `run_python`、项目命令中的 `python`/`python3` | 自动发现或显式指定的项目 Python |
 | 项目 PyTorch/Triton 探测 | 项目 Python |

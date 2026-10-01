@@ -14,7 +14,7 @@ from tools._internal.file_access import FileAccess
 @pytest.fixture
 def native():
     extension = pytest.importorskip("rust_backend")
-    if getattr(extension, "FILESYSTEM_API_VERSION", None) != 1:
+    if getattr(extension, "FILESYSTEM_API_VERSION", None) != 2:
         pytest.skip("Rebuild the filesystem extension")
     return RustFilesystem()
 
@@ -31,6 +31,7 @@ def test_directory_is_pinned_repeated_enumeration_and_reader_lifetime(tmp_path, 
             (root / "inside").symlink_to(root / "outside", target_is_directory=True)
             assert reader.names() == reader.names() == ["中文"]
             assert reader.stat("中文").st_size == 0
+            assert reader.stat_many(["中文"])[0].st_size == 0
             with reader.open_read("中文") as stream:
                 assert stream.read() == b""
         with pytest.raises(ValueError, match="closed"):
@@ -47,6 +48,8 @@ def test_rust_rejects_invalid_path_components(tmp_path, native, part):
     try:
         with pytest.raises(ValueError):
             native.native.open_directory_at(fd, [part])
+        with pytest.raises(ValueError):
+            native.native.stat_many(fd, [part])
         assert os.fstat(fd)
     finally:
         os.close(fd)
@@ -111,9 +114,7 @@ def test_selection_is_explicit_and_rejects_old_extension(monkeypatch):
     with pytest.raises(ValueError):
         select_directory_backend()
     monkeypatch.setenv("AGENT_NATIVE_SCANNER", "rust")
-    monkeypatch.setitem(
-        __import__("sys").modules, "rust_backend", SimpleNamespace(API_VERSION=1)
-    )
+    monkeypatch.setitem(__import__("sys").modules, "rust_backend", SimpleNamespace(API_VERSION=1))
     with pytest.raises(RuntimeError, match="版本"):
         select_directory_backend()
 

@@ -30,6 +30,37 @@ def test_missing_bubblewrap_never_falls_back(monkeypatch):
         LinuxNativeBackend("/not-used")
 
 
+@pytest.mark.parametrize("engine", [None, "python", "invalid", "missing", "old"])
+def test_linux_directory_backend_selection_and_fail_closed(monkeypatch, engine):
+    monkeypatch.setattr("sandbox.linux_native.sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr("sandbox.linux_native.shutil.which", lambda *a, **kw: "/usr/bin/bwrap")
+    monkeypatch.setattr("sandbox.linux_native.WSLDriverStore.detect", lambda: None)
+    if engine is None:
+        monkeypatch.delenv("AGENT_NATIVE_SCANNER", raising=False)
+    else:
+        monkeypatch.setenv(
+            "AGENT_NATIVE_SCANNER", "rust" if engine in {"missing", "old"} else engine
+        )
+    # Python selection must work without an installed extension; an explicit
+    # Rust selection must reject both missing and old filesystem APIs.
+    monkeypatch.setitem(
+        sys.modules,
+        "rust_backend",
+        SimpleNamespace(API_VERSION=1, FILESYSTEM_API_VERSION=1) if engine == "old" else None,
+    )
+    backend = object.__new__(LinuxNativeBackend)
+    backend.requested_profile, backend.requested_gpus = "standard", None
+    if engine in {None, "python"}:
+        backend._platform_setup()
+        assert backend.directory_backend is None
+    elif engine == "invalid":
+        with pytest.raises(ValueError, match="AGENT_NATIVE_SCANNER"):
+            backend._platform_setup()
+    else:
+        with pytest.raises(RuntimeError, match="版本" if engine == "old" else "未安装"):
+            backend._platform_setup()
+
+
 @pytest.fixture
 def linux_policy(tmp_path):
     backend = object.__new__(LinuxNativeBackend)

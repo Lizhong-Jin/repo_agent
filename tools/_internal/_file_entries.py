@@ -6,7 +6,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 
-from host_support.file_scan import DirectoryReader, DirectorySource
+from host_support.file_scan import DirectoryReader, DirectorySource, metadata_entries
 
 from .file_access import current_file_access
 from .file_policy import PathPolicy
@@ -86,14 +86,15 @@ def iter_search_candidates(
     if not S_ISDIR(info.st_mode):
         return
     if access:
-        yield from _native_search_candidates(
-            access,
-            workspace_root,
-            target,
-            include_hidden=include_hidden,
-            glob=glob,
-            policy=policy,
-        )
+        with access.scan_directories():
+            yield from _native_search_candidates(
+                access,
+                workspace_root,
+                target,
+                include_hidden=include_hidden,
+                glob=glob,
+                policy=policy,
+            )
         return
     walk = os.walk(target, followlinks=False)
     for root, dirnames, filenames in walk:
@@ -135,7 +136,7 @@ def _native_search_candidates(
     """One scoped reader per directory; reuse enumeration metadata for reads.
 
     Keep file order, directory pruning and unreadable-entry behavior identical
-    to the descriptor walk. Only descendants are queued, never open handles.
+    to the descriptor walk. The source bounds directory handles within this scan.
     """
     pending = [target]
     while pending:
@@ -143,13 +144,12 @@ def _native_search_candidates(
         children = []
         try:
             with access.read_directory(root) as directory:
-                for name in sorted(directory.names(), key=lambda name: (name.casefold(), name)):
-                    if not include_hidden and name.startswith("."):
-                        continue
+                names = sorted(directory.names(), key=lambda name: (name.casefold(), name))
+                if not include_hidden:
+                    names = [name for name in names if not name.startswith(".")]
+                for name, info in metadata_entries(directory, names):
                     candidate = root / name
-                    try:
-                        info = directory.stat(name)
-                    except OSError:
+                    if isinstance(info, OSError):
                         continue
                     if S_ISDIR(info.st_mode):
                         if not policy.is_protected(candidate, candidate.resolve(), info=info):

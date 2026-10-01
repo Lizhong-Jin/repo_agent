@@ -36,6 +36,9 @@ class LinuxNativeBackend(NativeBackendBase):
     def _platform_setup(self):
         if sys.platform != "linux":
             raise ValueError("Linux native 后端只能在 Linux 上运行")
+        from host_support.rust_filesystem import select_directory_backend
+
+        self.directory_backend = select_directory_backend()
         # Do not search the workspace or a model-controlled PATH for the launcher.
         executable = shutil.which("bwrap", path="/usr/bin:/bin:/usr/local/bin")
         if not executable:

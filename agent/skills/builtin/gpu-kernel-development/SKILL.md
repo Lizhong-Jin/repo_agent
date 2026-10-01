@@ -26,8 +26,9 @@ description: 编写、调试或优化 CUDA C++、Triton 和 PyTorch 自定义算
 
 - Linux / WSL2 native：默认 auto 检测 NVIDIA CUDA GPU；standard 明确关闭 GPU。
   使用原项目的真实路径，修改立即生效，没有 `/apply` 或 Docker 回写备份。
-  使用 Agent 解释器中已有的框架及允许访问的系统工具链；不要假定激活的项目 venv、
-  宿主机任意 CUDA_HOME/LD_LIBRARY_PATH 或 CUDA_VISIBLE_DEVICES 会自动继承。
+  使用环境报告中选定的项目 Python 及其框架；Agent Python 负责可信 worker 和驱动自检。
+  项目环境按启动时的显式配置或 venv/Conda 发现规则选择，不要假定当前激活环境必然被选中，
+  也不要假定宿主机任意 CUDA_HOME/LD_LIBRARY_PATH 或 CUDA_VISIBLE_DEVICES 会自动继承。
   缺依赖时说明所需环境准备，不在只读解释器目录或断网命令中反复尝试安装。
 - Docker：使用容器 `/workspace` 路径和镜像内依赖，修改先留在副本中，沿用应用回写流程。
   镜像构建、依赖预装和 GPU 选择由宿主机配置；不要把 Docker 配额套用到 native。

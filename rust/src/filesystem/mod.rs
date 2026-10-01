@@ -1,7 +1,10 @@
 //! Descriptor-relative primitives for trusted file tools and macOS preflight.
+pub(crate) mod metadata;
+
 use crate::{Error, Result};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
+use std::collections::VecDeque;
 use std::ffi::{CStr, CString, OsString};
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::os::unix::ffi::OsStringExt;
@@ -32,17 +35,54 @@ fn open_at(fd: i32, name: &[u8], path: Option<&Path>) -> Result<OwnedFd> {
         path,
     )
 }
+fn validate_component(part: &[u8]) -> Result<()> {
+    if part.is_empty() || part == b"." || part == b".." || part.contains(&b'/') || part.contains(&0)
+    {
+        return Err(Error::value("Expected a single directory entry name", None));
+    }
+    Ok(())
+}
+
+// Per-scan handles only; bounded independently of tree width and depth.
+struct DirectoryCache {
+    root: OwnedFd,
+    handles: VecDeque<(Vec<Vec<u8>>, OwnedFd)>,
+}
+impl DirectoryCache {
+    fn open(&mut self, parts: &[Vec<u8>], check: &mut Check) -> Result<OwnedFd> {
+        let nearest = self
+            .handles
+            .iter()
+            .enumerate()
+            .filter(|(_, (key, _))| parts.starts_with(key))
+            .max_by_key(|(_, (key, _))| key.len())
+            .map(|(index, _)| index);
+        let (depth, mut fd) = if let Some(index) = nearest {
+            let (key, handle) = self.handles.remove(index).unwrap();
+            let depth = key.len();
+            let fd = duplicate(handle.as_raw_fd())?;
+            self.handles.push_back((key, handle));
+            (depth, fd)
+        } else {
+            (0, duplicate(self.root.as_raw_fd())?)
+        };
+        for index in depth..parts.len() {
+            check.run(false)?;
+            fd = open_at(fd.as_raw_fd(), &parts[index], None)?;
+            self.handles
+                .push_back((parts[..=index].to_vec(), duplicate(fd.as_raw_fd())?));
+            if self.handles.len() > 32 {
+                self.handles.pop_front();
+            }
+        }
+        Ok(fd)
+    }
+}
+
 fn descend(fd: i32, parts: &[Vec<u8>]) -> Result<OwnedFd> {
     let mut owned = duplicate(fd)?;
     for part in parts {
-        if part.is_empty()
-            || part == b"."
-            || part == b".."
-            || part.contains(&b'/')
-            || part.contains(&0)
-        {
-            return Err(Error::value("Expected a single directory entry name", None));
-        }
+        validate_component(part)?;
         owned = open_at(
             owned.as_raw_fd(),
             part,
@@ -157,29 +197,25 @@ fn check_workspace(py: Python<'_>, root: Vec<u8>, cancellation: Option<Py<PyAny>
     let result = py.detach(|| -> Result<()> {
         let path = PathBuf::from(OsString::from_vec(root.clone()));
         let root_fd = open_at(libc::AT_FDCWD, &root, Some(&path))?;
+        let mut cache = DirectoryCache {
+            root: root_fd,
+            handles: VecDeque::new(),
+        };
         let mut pending = vec![(Vec::<Vec<u8>>::new(), path)];
         let mut check = Check::new(cancellation)?;
-        // Queue paths, not open descriptors: fd use stays bounded on deep/wide trees.
+        // Queue paths; a bounded cache avoids reopening every ancestor.
         while let Some((parts, path)) = pending.pop() {
             check.run(false)?;
-            let directory = descend(root_fd.as_raw_fd(), &parts)?;
+            let directory = cache
+                .open(&parts, &mut check)
+                .map_err(|error| match error {
+                    Error::Io(errno, _) => Error::Io(errno, Some(path.clone())),
+                    other => other,
+                })?;
             for name in names(directory.as_raw_fd(), &mut check)? {
                 check.run(false)?;
                 let child = path.join(OsString::from_vec(name.clone()));
-                let c_name = CString::new(name.clone()).unwrap();
-                let mut info = std::mem::MaybeUninit::<libc::stat>::uninit();
-                let rc = unsafe {
-                    libc::fstatat(
-                        directory.as_raw_fd(),
-                        c_name.as_ptr(),
-                        info.as_mut_ptr(),
-                        libc::AT_SYMLINK_NOFOLLOW,
-                    )
-                };
-                if rc != 0 {
-                    return Err(Error::io(std::io::Error::last_os_error(), Some(&child)));
-                }
-                let info = unsafe { info.assume_init() };
+                let info = metadata::stat_at(directory.as_raw_fd(), &name, Some(&child))?;
                 let kind = info.st_mode & libc::S_IFMT;
                 if kind == libc::S_IFREG && info.st_nlink > 1 {
                     return Err(Error::value(
@@ -200,9 +236,63 @@ fn check_workspace(py: Python<'_>, root: Vec<u8>, cancellation: Option<Py<PyAny>
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add("FILESYSTEM_API_VERSION", 1)?;
+    m.add("FILESYSTEM_API_VERSION", 2)?;
+    m.add_function(wrap_pyfunction!(metadata::stat_many, m)?)?;
     m.add_function(wrap_pyfunction!(open_directory_at, m)?)?;
     m.add_function(wrap_pyfunction!(list_directory, m)?)?;
     m.add_function(wrap_pyfunction!(check_workspace, m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::ffi::OsStrExt;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn scan_cache_is_bounded_and_uses_pinned_ancestors() {
+        let root = std::env::temp_dir().join(format!(
+            "directory-cache-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        struct Tree(PathBuf);
+        impl Drop for Tree {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        std::fs::create_dir(&root).unwrap();
+        let tree = Tree(root);
+        let root_fd = open_at(libc::AT_FDCWD, tree.0.as_os_str().as_bytes(), None).unwrap();
+        let mut cache = DirectoryCache {
+            root: root_fd,
+            handles: VecDeque::new(),
+        };
+        let mut path = tree.0.clone();
+        let mut parts = Vec::new();
+        let mut check = Check::new(None).unwrap();
+        for _ in 0..80 {
+            path.push("d");
+            std::fs::create_dir(&path).unwrap();
+            parts.push(b"d".to_vec());
+            cache.open(&parts, &mut check).unwrap();
+            assert!(cache.handles.len() <= 32);
+        }
+        // Both the cached leaf and its next child are opened relative to the
+        // pinned directory, even after the lexical ancestor disappears.
+        std::fs::rename(tree.0.join("d"), tree.0.join("moved")).unwrap();
+        cache.open(&parts, &mut check).unwrap();
+        let moved = tree
+            .0
+            .join("moved")
+            .join(parts[1..].iter().map(|_| "d").collect::<PathBuf>());
+        std::fs::create_dir(moved.join("child")).unwrap();
+        parts.push(b"child".to_vec());
+        cache.open(&parts, &mut check).unwrap();
+    }
 }

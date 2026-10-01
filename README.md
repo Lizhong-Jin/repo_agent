@@ -16,6 +16,8 @@ macOS/Linux（含 WSL2）开发者在源码目录安装，首次通常联网准�
 
 原生安装默认准备 Python 语言服务，并询问是否补齐语言工具链和语言服务（回车跳过）。Linux 请先用发行版包管理器准备这些系统工具链，安装器只安装虚拟环境内的语言服务，不自动调用 sudo。可用 `--with-toolchains` / `--skip-toolchains` 免交互选择。安装后执行 `repo-agent toolchains list` 查看状态，`repo-agent toolchains install go` 补齐单个语言，`repo-agent toolchains install all` 补齐全部；已有可用依赖会复用。只需文件/Git 工具可用 `./install.sh --mode local`。详见[模式与依赖](docs/installation.md#模式与依赖)。
 
+Linux/macOS native 可选用 Rust 后端处理目录访问、批量元数据和执行前检查，默认仍为 Python。源码安装会尝试编译扩展；完整发行包可携带预编译 wheel，最终用户安装不需要 Rust 编译器。离线材料和启用方式见 [Rust 构建与后端说明](rust/README.md)。
+
 Agent 与项目 Python 分开管理；native 自动使用已激活的 venv/Conda 或项目 `.venv`，也可用 `--project-python` 指定，见 [Python 环境](docs/python-environments.md)。
 
 打开新终端，进入要处理的项目：

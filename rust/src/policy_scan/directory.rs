@@ -49,6 +49,14 @@ impl Directory {
         Ok(Self(dir))
     }
 
+    pub fn metadata(&self, name: &std::ffi::OsStr, path: &Path) -> Result<libc::stat> {
+        crate::filesystem::metadata::stat_at(
+            unsafe { libc::dirfd(self.0) },
+            name.as_bytes(),
+            Some(path),
+        )
+    }
+
     fn kind(&self, name: &CStr, dtype: u8, path: &Path) -> Result<(bool, bool)> {
         if dtype != libc::DT_UNKNOWN {
             return Ok((dtype == libc::DT_DIR, dtype == libc::DT_LNK));

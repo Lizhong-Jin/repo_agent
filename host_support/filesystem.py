@@ -9,12 +9,17 @@ import os
 import stat
 import sys
 import uuid
-from contextlib import contextmanager
+from collections import OrderedDict
+from contextlib import closing, contextmanager
 from contextvars import ContextVar
 from fnmatch import fnmatchcase
 from pathlib import Path
 
-from .file_scan import DirectoryReader
+from .cancellation import checkpoint
+from .file_scan import DirectoryReader, metadata_entries
+
+_scan_directories = ContextVar("scan_directories", default=None)
+_SCAN_DIRECTORY_LIMIT = 32
 
 _active_access = ContextVar("native_file_access", default=None)
 
@@ -228,10 +233,32 @@ class FileAccess:
             yield Path(path) / name
 
     @contextmanager
+    def scan_directories(self):
+        """Bounded, read-only handle reuse, isolated to this traversal's context.
+
+        Cached handles pin identities; they are not fresh path observations.
+        Writes and standalone directory/stat calls never consult this cache.
+        """
+        cache = _ScanDirectories(self)
+        token = _scan_directories.set(cache)
+        try:
+            yield
+        finally:
+            _scan_directories.reset(token)
+            cache.close()
+
+    def iterdir_entries(self, path):
+        with self.read_directory(path) as reader:
+            for name, info in metadata_entries(reader, reader.names()):
+                yield Path(path) / name, info
+
+    @contextmanager
     def read_directory(self, path):
         """Pin one directory for a batch of reads; never cache it across calls."""
         path = Path(path)
-        with self.directory(path) as fd:
+        cache = _scan_directories.get()
+        source = cache.directory(path) if cache and cache.access is self else self.directory(path)
+        with source as fd:
             reader = _DescriptorDirectoryReader(self, path, fd)
             try:
                 yield reader
@@ -239,16 +266,18 @@ class FileAccess:
                 reader.closed = True
 
     def walk(self, path):
+        with self.scan_directories():
+            yield from self._walk(path)
+
+    def _walk(self, path):
         pending = [Path(path)]
         while pending:
             root = pending.pop()
             dirs, files = [], []
             try:
                 with self.read_directory(root) as directory:
-                    for name in directory.names():
-                        try:
-                            info = directory.stat(name)
-                        except OSError:
+                    for name, info in metadata_entries(directory, directory.names()):
+                        if isinstance(info, OSError):
                             continue
                         (dirs if stat.S_ISDIR(info.st_mode) else files).append(name)
             except OSError:
@@ -258,44 +287,51 @@ class FileAccess:
             pending.extend(root / name for name in reversed(dirs))
 
     def glob(self, root, pattern):
+        with closing(self.glob_entries(root, pattern)) as entries:
+            for path, _ in entries:
+                yield path
+
+    def glob_entries(self, root, pattern):
+        with self.scan_directories():
+            yield from self._glob_entries(root, pattern)
+
+    def _glob_entries(self, root, pattern):
         parts = Path(pattern).parts
         if Path(pattern).is_absolute() or ".." in parts:
             raise ValueError("Glob must stay inside the search directory")
-        pending = [(Path(root), 0)]
+        pending = [(Path(root), 0, None)]
         visited = set()
         directories_only = pattern.endswith("/")
         while pending:
-            path, index = pending.pop()
+            path, index, info = pending.pop()
             if (path, index) in visited:
                 continue
             visited.add((path, index))
             if index == len(parts):
                 try:
-                    info = self.stat(path)
+                    info = self.stat(path) if info is None else info
                     if not directories_only or stat.S_ISDIR(info.st_mode):
-                        yield path
+                        yield path, info
                 except OSError:
                     pass
                 continue
             part = parts[index]
             if part == "**":
-                pending.append((path, index + 1))
+                pending.append((path, index + 1, info))
             try:
                 with self.read_directory(path) as directory:
-                    for name in directory.names():
+                    for name, info in metadata_entries(directory, directory.names()):
                         entry = path / name
-                        try:
-                            info = directory.stat(name)
-                        except OSError:
+                        if isinstance(info, OSError):
                             continue
                         if part == "**":
                             if stat.S_ISDIR(info.st_mode):
-                                pending.append((entry, index))
+                                pending.append((entry, index, info))
                             elif index == len(parts) - 1 and sys.version_info >= (3, 13):
-                                pending.append((entry, index + 1))
+                                pending.append((entry, index + 1, info))
                         elif fnmatchcase(name, part):
                             if index + 1 == len(parts) or stat.S_ISDIR(info.st_mode):
-                                pending.append((entry, index + 1))
+                                pending.append((entry, index + 1, info))
             except OSError:
                 continue
 
@@ -359,6 +395,51 @@ class FileAccess:
             raise
 
 
+class _ScanDirectories:
+    """LRU of at most 32 owned descriptors, using the nearest pinned ancestor."""
+
+    def __init__(self, access):
+        self.access = access
+        self.handles = OrderedDict()
+
+    def close(self):
+        while self.handles:
+            _, fd = self.handles.popitem()
+            os.close(fd)
+
+    @contextmanager
+    def directory(self, path):
+        parts = self.access._parts(path)
+        ancestor = parts
+        while ancestor and ancestor not in self.handles:
+            ancestor = ancestor[:-1]
+        if ancestor:
+            parent = self.handles[ancestor]
+            self.handles.move_to_end(ancestor)
+        else:
+            parent = self.access.root_fd
+        fd = os.dup(parent)
+        try:
+            for index in range(len(ancestor), len(parts)):
+                checkpoint()
+                backend = self.access.directory_backend
+                child = (
+                    backend.directory(fd, [parts[index]])
+                    if backend is not None
+                    else open_directory(parts[index], dir_fd=fd)
+                )
+                os.close(fd)
+                fd = child
+                key = parts[: index + 1]
+                self.handles[key] = os.dup(fd)
+                if len(self.handles) > _SCAN_DIRECTORY_LIMIT:
+                    _, expired = self.handles.popitem(last=False)
+                    os.close(expired)
+            yield fd
+        finally:
+            os.close(fd)
+
+
 class _DescriptorDirectoryReader(DirectoryReader):
     """Directory-local operations with the same policy and opened-file checks."""
 
@@ -372,7 +453,12 @@ class _DescriptorDirectoryReader(DirectoryReader):
         if name is not None:
             if name in {"", ".", ".."} or Path(name).name != name or "\x00" in name:
                 raise ValueError("Expected a single directory entry name")
-            self.access._parts(self.path / name)
+            # read_directory already checked the parent is within the root;
+            # a validated single component cannot escape it. Keep the child
+            # policy check without repeating two relative_to walks per entry.
+            path = self.path / name
+            if self.access.policy.protects_path(path, path):
+                raise PermissionError("Protected path")
 
     def names(self):
         self._check()
@@ -381,6 +467,32 @@ class _DescriptorDirectoryReader(DirectoryReader):
     def stat(self, name):
         self._check(name)
         return stat_at(name, dir_fd=self.fd)
+
+    def stat_many(self, names):
+        self._check()
+        checkpoint()
+        results, allowed, positions = [None] * len(names), [], []
+        for index, name in enumerate(names):
+            try:
+                self._check(name)
+            except OSError as error:
+                results[index] = error
+            else:
+                allowed.append(name)
+                positions.append(index)
+        backend = self.access.directory_backend
+        if backend is not None:
+            observed = backend.stat_many(self.fd, allowed)
+        else:
+            observed = []
+            for name in allowed:
+                try:
+                    observed.append(stat_at(name, dir_fd=self.fd))
+                except OSError as error:
+                    observed.append(error)
+        for index, info in zip(positions, observed, strict=True):
+            results[index] = info
+        return results
 
     @contextmanager
     def open_read(self, name):

@@ -8,7 +8,7 @@
 
 | 模块 | 主要文件 | 职责 |
 | --- | --- | --- |
-| 宿主平台服务 | [host_support/](host_support/)、[平台适配边界](docs/platform-adaptation.md) | 标准库实现的平台标识、目录和解释器布局、安全文件操作、锁、原子写入、进程生命周期、工具链清单与诊断 |
+| 宿主平台服务 | [host_support/](host_support/)、[平台适配边界](docs/platform-adaptation.md) | 平台标识、目录和解释器布局、文件操作、锁、原子写入、进程生命周期与诊断；默认标准库实现，可选 Rust 文件系统适配器延迟加载 |
 | Windows 适配 | [host_support/windows_files.py](host_support/windows_files.py)、[host_support/windows_install.py](host_support/windows_install.py)、[install_release.ps1](install_release.ps1) | 句柄相对文件操作、文件锁、用户命令归属与 PATH、ZIP 运行时引导；不提供原生进程隔离 |
 | 命令入口 | [cli/main.py](cli/main.py)、[cli/arguments.py](cli/arguments.py)、[cli/commands.py](cli/commands.py)、[cli/startup.py](cli/startup.py) | 装配入口、参数校验、独立子命令和配置启动流程 |
 | 应用装配 | [cli/application.py](cli/application.py)、[cli/execution_environment.py](cli/execution_environment.py)、[cli/runtime_setup.py](cli/runtime_setup.py) | 后端与 Runtime 装配、交互/单任务执行、保存和资源生命周期 |
@@ -28,14 +28,15 @@
 | Web 工具 | [tools/web_tools.py](tools/web_tools.py)、[tools/_internal/](tools/_internal/) | 主进程受控搜索、网页抓取和分页缓存，按配置启用 |
 | 系统提示词 | [agent/prompt.py](agent/prompt.py) | 通用任务规则；代码工作流程由 `coding` 等技能按需补充 |
 | 原生沙箱 | [sandbox/native.py](sandbox/native.py)、[sandbox/native_common.py](sandbox/native_common.py)、[sandbox/macos_native.py](sandbox/macos_native.py)、[sandbox/linux_native.py](sandbox/linux_native.py) | 显式选择后端、共享调用生命周期、各平台隔离策略与实际自检 |
-| 策略扫描 | [sandbox/policy_scan.py](sandbox/policy_scan.py)、[sandbox/policy_scanners.py](sandbox/policy_scanners.py)、[sandbox/rust_policy.py](sandbox/rust_policy.py) | Linux 策略扫描批量协议；默认 Python，可显式选择单独安装的 Rust 扩展；每次重新观察文件系统 |
+| 策略扫描 | [sandbox/policy_scan.py](sandbox/policy_scan.py)、[sandbox/policy_scanners.py](sandbox/policy_scanners.py)、[sandbox/rust_policy.py](sandbox/rust_policy.py) | Linux 策略扫描批量协议；默认 Python，可显式选择已安装的 Rust 扩展；每次重新观察文件系统 |
+| Rust 基础能力 | [rust/](rust/)、[host_support/rust_filesystem.py](host_support/rust_filesystem.py) | `rust-backend` 平台扩展：Linux 策略扫描、macOS 工作区预检、两平台 native 文件工具的目录访问和批量元数据；Python 继续执行工具策略与文本匹配 |
 | 目录与文本扫描 | [host_support/file_scan.py](host_support/file_scan.py)、[host_support/path_rules.py](host_support/path_rules.py)、[tools/_internal/text_search.py](tools/_internal/text_search.py) | 目录作用域读取、名称匹配与惰性分行；工具层保留权限、预算和输出协议 |
 | 项目 Python | [sandbox/project_python.py](sandbox/project_python.py) | 选择项目解释器、构造读取范围和项目进程环境；可信 worker 继续使用 Agent Python |
 | Docker 沙箱 | [sandbox/session.py](sandbox/session.py)、[sandbox/docker.py](sandbox/docker.py)、[sandbox/writeback.py](sandbox/writeback.py) | 工作副本、容器、回写检查、备份与恢复 |
 | 追踪 | [agent/Tracing.py](agent/Tracing.py) | 模型/工具事件、计时、任务与运行片段统计 |
 | 构建与分发 | [build_manifest.py](build_manifest.py)、[build_support.py](build_support.py)、[scripts/build_release.py](scripts/build_release.py) | 统一文件清单、生成构建配置、校验 wheel / sdist / Docker 上下文与发行包 |
 | 配置服务 | [configuration/environment.py](configuration/environment.py)、[configuration/storage.py](configuration/storage.py)、[cli/config_command.py](cli/config_command.py) | 配置加载、保存与备份由 configuration 管理；参数交互与校验命令由 CLI 装配 |
-| 安装与分发服务 | [installer/](installer/)、[cli/doctor.py](cli/doctor.py) | 安装、卸载、依赖、事务、资源和发行清单；诊断命令由 CLI 汇总 |
+| 安装与分发服务 | [installer/](installer/)、[cli/doctor.py](cli/doctor.py) | 安装、卸载、依赖、事务、配置模板合并、可选 Rust 构建/安装及发行清单；诊断命令由 CLI 汇总 |
 | 受管运行时与离线材料 | [runtime/python.lock](runtime/python.lock)、[scripts/bootstrap-python.sh](scripts/bootstrap-python.sh)、[scripts/prepare_python_bundle.py](scripts/prepare_python_bundle.py) | 固定平台 Python 归档与校验值、引导运行时、准备平台依赖；源码安装另包含开发依赖 |
 
 ## 一次任务的流程
@@ -70,7 +71,7 @@ Agent 安装默认使用受管 Python；native 可另选项目 Python 执行用�
 
 Runtime 按 `ExecutionKind` 调度工具。CLI 默认只向模型公开通用工具与加载器，`file_editing`、`coding` 两组通过 `load_tool_group` 按需加载；加载状态随会话保存，不能增加当前后端未授权的能力。完整边界见[工具调度](docs/tools.md#工具执行调度)与[工具组](docs/tools.md#按需加载工具组)。
 
-平台公共服务集中在 `host_support`，不依赖 Agent、CLI、工具或沙箱业务模块。安装引导和恢复可在未加载第三方依赖时导入它；文件工具为共享文件机制注入工作区策略。会话、Skills、配置与 Docker 回写按需复用文件描述符、锁或原子替换机制，工具、LSP 和安装下载共享进程生命周期机制，并保留各自协议与环境策略。
+平台公共服务集中在 `host_support`，不依赖 Agent、CLI、工具或沙箱业务模块。默认路径只需要标准库；显式选择 Rust 后由适配器延迟导入 `rust_backend`。安装引导和恢复可在未加载第三方依赖时导入它；文件工具为共享文件机制注入工作区策略。会话、Skills、配置与 Docker 回写按需复用文件描述符、锁或原子替换机制，工具、LSP 和安装下载共享进程生命周期机制，并保留各自协议与环境策略。
 
 `sandbox/native.py` 的 `create_native_backend` 显式选择后端；macOS 与 Linux 共同继承 `native_common.NativeBackendBase`，Linux 不继承 macOS 策略。`macos_native.py` 保留 Seatbelt 实现，Linux 的挂载、seccomp、GPU 与 WSL 专用模块保持独立。平台识别和能力描述不授予执行权限，也不表示 Windows 原生执行已得到支持。详见[平台适配边界](docs/platform-adaptation.md)。
 

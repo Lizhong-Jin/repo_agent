@@ -59,26 +59,26 @@ macOS/Linux 发行包仅提供顶层 `install-release.sh`，安装、恢复和�
 
 Windows ZIP 同样使用 schema 4（旧版为 schema 3），记录 `windows-x86_64` 目标并仅提供顶层 `install_release.ps1`；同一脚本通过 `--uninstall`、`--check`、`--recover` 完成维护，不附带另一份卸载入口或 POSIX Shell 安装脚本。共用 Python 安装事务、配置保留和归属检查。
 
-默认输出到 `dist/<版本>/<平台>/`；`--output` 仅替换 `dist` 这一层，版本来自 `pyproject.toml`。以下以源码当前版本 0.1.3 演示目录，不表示已有产物与未提交修改同步：
+默认输出到 `dist/<版本>/<平台>/`；`--output` 仅替换 `dist` 这一层，版本来自 `pyproject.toml`。以下以源码当前版本 0.1.4 演示目录，不表示已有产物与未提交修改同步：
 
 ```text
 dist/
-└── 0.1.3/
+└── 0.1.4/
     ├── macos-arm64/
-    │   ├── repo-agent-0.1.3-macos-arm64.tar.gz
-    │   └── repo-agent-0.1.3-macos-arm64.tar.gz.sha256
+    │   ├── repo-agent-0.1.4-macos-arm64.tar.gz
+    │   └── repo-agent-0.1.4-macos-arm64.tar.gz.sha256
     ├── macos-x86_64/
-    │   ├── repo-agent-0.1.3-macos-x86_64.tar.gz
-    │   └── repo-agent-0.1.3-macos-x86_64.tar.gz.sha256
+    │   ├── repo-agent-0.1.4-macos-x86_64.tar.gz
+    │   └── repo-agent-0.1.4-macos-x86_64.tar.gz.sha256
     ├── linux-arm64/
-    │   ├── repo-agent-0.1.3-linux-arm64.tar.gz
-    │   └── repo-agent-0.1.3-linux-arm64.tar.gz.sha256
+    │   ├── repo-agent-0.1.4-linux-arm64.tar.gz
+    │   └── repo-agent-0.1.4-linux-arm64.tar.gz.sha256
     ├── linux-x86_64/
-    │   ├── repo-agent-0.1.3-linux-x86_64.tar.gz
-    │   └── repo-agent-0.1.3-linux-x86_64.tar.gz.sha256
+    │   ├── repo-agent-0.1.4-linux-x86_64.tar.gz
+    │   └── repo-agent-0.1.4-linux-x86_64.tar.gz.sha256
     └── windows-x86_64/
-        ├── repo-agent-0.1.3-windows-x86_64.zip
-        └── repo-agent-0.1.3-windows-x86_64.zip.sha256
+        ├── repo-agent-0.1.4-windows-x86_64.zip
+        └── repo-agent-0.1.4-windows-x86_64.zip.sha256
 ```
 
 Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独输出到发布目录。每个压缩包只有一个 `repo-agent-<版本>-<平台>/` 顶层文件夹，内含运行时锁文件、平台标记和 `wheelhouse/`。macOS/Linux 内含固定的 `runtime/python.tar.gz`；Windows 上游 tar.gz 经固定 SHA256 校验后在构建阶段展开为 `runtime/python/python.exe` 等文件，避免安装引导依赖系统 Python 或 tar。当前构建器会移除有对应源码的 `.pyc`，遇到无源码字节码则拒绝构建；Windows 维护入口也校验和清理运行时缓存，具体边界见[安装说明](installation.md#windows-x86_64-zip-安装)。Windows 只收集 local/Docker 核心依赖，并按 Windows 目标评估锁文件的平台条件，不携带 native 语言服务依赖。完整包不包含项目的 PyTorch/CUDA 依赖、系统工具链或开发用 pytest/Ruff；后者通过源码开发材料准备。
@@ -87,11 +87,13 @@ Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独
 
 安装时从内层归档（Windows 为已展开文件）部署共享运行时，再在最终路径创建 `.venv`，不搬迁已经创建的虚拟环境。构建输出目录与安装目录是两回事；安装后仍位于用户数据目录的 `repo-agent/versions/<版本>/`。
 
+## Rust 扩展与发行集成
+
 Rust 源码统一位于 `rust/`。手工编译使用 `python scripts/build_rust.py build`，构建 wheel 使用 `python scripts/build_rust.py wheel`，两者默认尝试全部四种 Linux/macOS 目标，缺少工具链时提示安装并返回非零状态，`--target host` 可仅构建本机。最终产物默认写入 `rust_wheels/<版本>/`；完整发行归档仍写入 `dist/`。详见 [Rust 构建入口](../rust/README.md)。
 
-可选 Rust 策略扫描器以独立的平台 wheel `rust-backend` 随完整发行包分发，主应用仍为通用 Python wheel。构建器优先从 `--rust-wheelhouse` 指定目录选择扩展；未指定时先搜索 `--wheelhouse`；随后搜索项目 `rust_wheels/<当前版本>/`。显式目录支持版本子目录结构或平铺的 wheelhouse。按扩展版本、目标平台和 CPython ABI3 筛选，Linux 只接受符合当前发行基线的 manylinux wheel，不接受依赖本机环境的 `linux_*` 标签。找到后复制到包内 `wheels/`，通过 `release.json` 的 `rust_wheel` 字段和文件哈希登记。
+可选 Rust 后端以独立的平台 wheel `rust-backend` 按构建材料随完整发行包分发，主应用仍为通用 Python wheel。构建器优先从 `--rust-wheelhouse` 指定目录选择扩展；未指定时先搜索 `--wheelhouse`；随后搜索项目 `rust_wheels/<当前版本>/`。显式目录支持版本子目录结构或平铺的 wheelhouse。按扩展版本、目标平台和 CPython ABI3 筛选，Linux 只接受符合当前发行基线的 manylinux wheel，不接受依赖本机环境的 `linux_*` 标签。找到后复制到包内 `wheels/`，通过 `release.json` 的 `rust_wheel` 字段和文件哈希登记。
 
-没有匹配的预编译 wheel 时，只对与构建机相同的平台尝试本机编译，生成的 wheel 保存在 `rust_wheels/<版本>/`；其他平台需要预先提供 wheel，不会自动跨平台编译。缺少编译器、构建失败或没有兼容产物时，默认提示并生成仅含 Python 扫描器的包。正式发布可使用 `--require-rust`，确保全部 Linux/macOS 目标含 Rust 扩展；任一缺失都会在替换发行归档前失败。Windows 当前不支持此扩展，不要求也不附带它。
+没有匹配的预编译 wheel 时，只对与构建机相同的平台尝试本机编译，生成的 wheel 保存在 `rust_wheels/<版本>/`；其他平台需要预先提供 wheel，不会自动跨平台编译。缺少编译器、构建失败或没有兼容产物时，默认提示并生成仅含 Python 扫描器的包。正式发布可使用 `--require-rust`，确保所选 Linux/macOS 目标均含 Rust 扩展；任一缺失都会在替换发行归档前失败。Windows 当前不支持此扩展，不要求也不附带它。
 
 ```bash
 # 将 CI 产出的各平台 Rust wheel 汇总到项目 rust_wheels/<版本>/ 后打包
@@ -102,9 +104,18 @@ Rust 源码统一位于 `rust/`。手工编译使用 `python scripts/build_rust.
 
 工作流 `.github/workflows/policy-scan-wheels.yml` 构建 Linux/macOS 的 x86_64、arm64 四种 wheel，执行加载及差分测试后保存为工作流产物；不自动发布。Linux 使用 manylinux 2.28，macOS 最低版本为 x86_64 的 10.15 和 arm64 的 11.0。源码归档仍包含构建输入。构建细节见 [Rust 扫描器说明](../rust/docs/policy-scan.md)。
 
-发行包安装直接安装已登记并校验的 Rust wheel，不下载、不编译，也不需要用户安装 Rust/Cargo/maturin。扩展为可选组件，安装或加载失败不会撤销核心安装；旧发行包没有 `rust_wheel` 字段时继续按 Python 扫描器安装。默认扫描器仍为 `python`，安装成功后可显式选择 `rust`。
+发行包安装直接安装已登记并校验的 Rust wheel，不下载、不编译，也不需要用户安装 Rust/Cargo/maturin。扩展为可选组件，安装或加载失败不会撤销核心安装；未附带扩展的发行包没有 `rust_wheel` 字段，可继续安装核心程序。若清单已登记扩展但文件缺失或哈希不符，发行完整性校验会拒绝安装；这不同于核心安装提交后可选扩展的安装/导入失败。默认扫描器仍为 `python`，安装成功后可显式选择 `rust`。
 
 ## 离线构建
+
+离线安装、组装发行包和编译 Rust 的依赖不同：
+
+| 操作 | 提前准备 | 是否需要 Rust 编译器 |
+| --- | --- | --- |
+| 最终用户安装完整包 | 对应平台归档、所选模式的系统依赖；Docker 模式另备镜像 | 不需要；包内若含扩展则安装预编译 wheel |
+| 从源码组装主发行包 | 构建机 Python 3.13、uv、运行时原始归档、构建及目标运行依赖 wheels | 核心打包不需要；缺少本机扩展 wheel 时会尝试可选编译，失败默认告警 |
+| 组装必须包含 Rust 的包 | 上述材料及每个所选 Linux/macOS 目标的匹配扩展 wheel，使用 `--require-rust` | 提供齐全的预编译 wheel 时不需要 |
+| 从源码编译扩展 | Rust 工具链、链接器/SDK、目标标准库、Cargo 依赖缓存；wheel 构建另需 maturin | 需要；跨目标 Linux 构建还需 Zig |
 
 单平台构建沿用本地运行时文件和 wheelhouse：
 
@@ -113,6 +124,17 @@ Rust 源码统一位于 `rust/`。手工编译使用 `python scripts/build_rust.
   --runtime-archive /path/to/kit/runtime/python.tar.gz \
   --wheelhouse /path/to/kit/wheelhouse
 ```
+
+如需同时保证包含 Rust，先取得当前扩展版本的对应平台 wheel，再使用：
+
+```bash
+.venv/bin/python scripts/build_release.py --target linux-x86_64 --offline \
+  --runtime-archive /path/to/kit/runtime/python.tar.gz \
+  --wheelhouse /path/to/kit/wheelhouse \
+  --rust-wheelhouse /path/to/rust_wheels --require-rust
+```
+
+显式 `--rust-wheelhouse` 也作为尝试本机扩展编译时的 Python 构建依赖来源；若依赖该编译步骤，目录中还需提供 maturin wheel，不能只准备主应用的四份锁文件。已提供匹配扩展时直接使用，不会调用编译器。Rust 自身的 Cargo 缓存不由 Python wheelhouse 替代。
 
 全平台离线构建将 `--runtime-archive` 指向目录，文件名必须与平台对应：
 
@@ -148,14 +170,14 @@ Rust 源码统一位于 `rust/`。手工编译使用 `python scripts/build_rust.
 真实安装验收选择与当前机器匹配的完整包。以下示例使用临时用户目录和受管 Python 离线安装，删除下载目录后检查启动、配置恢复、doctor、Docker 构建上下文和卸载；Docker 入口使用模拟程序，不构建真实镜像、不调用模型 API：
 
 ```bash
-REPO_AGENT_TEST_ARCHIVE="$PWD/dist/0.1.3/macos-arm64/repo-agent-0.1.3-macos-arm64.tar.gz" \
+REPO_AGENT_TEST_ARCHIVE="$PWD/dist/0.1.4/macos-arm64/repo-agent-0.1.4-macos-arm64.tar.gz" \
   .venv/bin/python -m pytest -q tests/test_release_distribution.py
 ```
 
 Windows 在真实 Windows 主机上执行以下验收，覆盖 PowerShell 5.1 引导、离线安装、删除下载目录后运行 `.exe`、重装保留配置、恢复与卸载：
 
 ```powershell
-$env:REPO_AGENT_WINDOWS_ARCHIVE = (Resolve-Path 'dist/0.1.3/windows-x86_64/repo-agent-0.1.3-windows-x86_64.zip').Path
+$env:REPO_AGENT_WINDOWS_ARCHIVE = (Resolve-Path 'dist/0.1.4/windows-x86_64/repo-agent-0.1.4-windows-x86_64.zip').Path
 python -m pytest -q tests/test_windows_release.py
 ```
 
@@ -171,6 +193,7 @@ python -m pytest -q tests/test_windows_release.py
 
 - 在已有源码包内增删 `.py` 文件会自动改变分发文件集合；新增顶层包需修改 `PACKAGES`。
 - 保持包内相对路径的 JSON、模板等资源，加入 `PACKAGE_RESOURCES`；复制到 wheel 内特定位置的资源，加入 `RESOURCE_FILES` 的来源／目标映射。
+- Rust 的构建配置、源码和说明由 `NATIVE_SOURCES` 显式列出；新增模块时补充清单，并同步生成分发配置。
 - 构建辅助文件在 `BUILD_FILES` 中声明；安装和恢复脚本在 `INSTALL_SCRIPTS` 中声明。wheel/Docker 输入与安装器文件按用途组合，安装脚本不必放进 wheel。
 
 新增、删除模块或调整上述声明后执行：

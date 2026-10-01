@@ -276,14 +276,15 @@ impl Scanner {
                     }
                     if !entry.directory {
                         let path = directory.join(&entry.name);
-                        let info = self.metadata(&path, false)?;
-                        if info.is_file() && info.nlink() > 1 {
+                        let info = fd.metadata(&entry.name, &path)?;
+                        let kind = info.st_mode & libc::S_IFMT;
+                        if kind == libc::S_IFREG && info.st_nlink > 1 {
                             return Err(Error::value(
                                 "Native 工作区含硬链接，拒绝执行：",
                                 Some(&path),
                             ));
                         }
-                        if !(info.is_file() || info.is_symlink()) {
+                        if !(kind == libc::S_IFREG || kind == libc::S_IFLNK) {
                             return Err(Error::value(
                                 "Linux native 工作区含 socket/FIFO/设备等特殊文件，拒绝执行",
                                 None,

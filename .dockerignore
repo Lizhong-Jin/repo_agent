@@ -184,6 +184,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !rust/docs/policy-scan.md
 !rust/pyproject.toml
 !rust/src/error.rs
+!rust/src/filesystem/metadata.rs
 !rust/src/filesystem/mod.rs
 !rust/src/lib.rs
 !rust/src/policy_scan/directory.rs

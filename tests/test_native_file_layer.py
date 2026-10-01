@@ -5,6 +5,7 @@ import os
 import sys
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,19 +18,35 @@ from tools.factory import create_file_tools
 
 
 @pytest.fixture(
-    params=[(NativeBackend, False), (LinuxNativeBackend, False), (NativeBackend, True)],
-    ids=["macos-python", "linux-python", "macos-rust"],
+    params=[
+        (NativeBackend, False),
+        (LinuxNativeBackend, False),
+        (NativeBackend, True),
+        (LinuxNativeBackend, True),
+    ],
+    ids=["macos-python", "linux-python", "macos-rust", "linux-rust"],
 )
 def backend(tmp_path, request, monkeypatch):
     cls, rust = request.param
     backend = object.__new__(cls)
     if rust:
         native = pytest.importorskip("rust_backend")
-        if getattr(native, "FILESYSTEM_API_VERSION", None) != 1:
+        if getattr(native, "FILESYSTEM_API_VERSION", None) != 2:
             pytest.skip("Rebuild the filesystem extension")
         from host_support.rust_filesystem import RustFilesystem
 
-        backend.directory_backend = RustFilesystem()
+        if cls is not LinuxNativeBackend:
+            backend.directory_backend = RustFilesystem()
+    if cls is LinuxNativeBackend:
+        # Exercise the actual Linux selection/injection, including on macOS.
+        # Only platform discovery is stubbed; filesystem operations stay real.
+        with monkeypatch.context() as setup:
+            setup.setattr("sandbox.linux_native.sys", SimpleNamespace(platform="linux"))
+            setup.setattr("sandbox.linux_native.shutil.which", lambda *a, **kw: "/usr/bin/bwrap")
+            setup.setattr("sandbox.linux_native.WSLDriverStore.detect", lambda: None)
+            setup.setenv("AGENT_NATIVE_SCANNER", "rust" if rust else "python")
+            backend.requested_profile, backend.requested_gpus = "standard", None
+            backend._platform_setup()
     backend.workspace = tmp_path / "project"
     backend.workspace.mkdir()
     backend.python = Path(sys.executable)
@@ -44,6 +61,36 @@ def backend(tmp_path, request, monkeypatch):
 
 def call(backend, name, **arguments):
     return backend.execute(backend.workspace, name, arguments)
+
+
+def test_file_scans_use_selected_rust_primitives(backend, monkeypatch):
+    directory_backend = getattr(backend, "directory_backend", None)
+    if directory_backend is None:
+        return
+    parent = backend.workspace / "src"
+    parent.mkdir()
+    (parent / "file.txt").write_text("needle")
+    calls = []
+
+    def observe(name):
+        original = getattr(directory_backend, name)
+
+        def run(*args, **kwargs):
+            calls.append(name)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(directory_backend, name, run)
+
+    for method in ("directory", "names", "stat_many"):
+        observe(method)
+    for name, arguments in (
+        ("list_files", {"path": "src"}),
+        ("find_files", {"pattern": "**/*.txt"}),
+        ("search_files", {"query": "needle"}),
+    ):
+        calls.clear()
+        assert call(backend, name, **arguments).success
+        assert set(calls) == {"directory", "names", "stat_many"}
 
 
 def test_all_file_tools_work_without_processes_or_global_scans(backend, monkeypatch):
@@ -351,7 +398,7 @@ def test_directory_swap_never_enumerates_external_tree(backend, monkeypatch, nam
     outside = root.parent / "outside-dir"
     outside.mkdir()
     (outside / "SYNTHETIC_SECRET_NAME").write_text("SYNTHETIC_SECRET")
-    method = "iterdir" if name == "list_files" else "read_directory"
+    method = "read_directory"
     original = getattr(FileAccess, method)
     changed = False
 
@@ -362,17 +409,13 @@ def test_directory_swap_never_enumerates_external_tree(backend, monkeypatch, nam
             (root / "src").rename(root / "old-src")
             (root / "src").symlink_to(outside, target_is_directory=True)
 
-    def race(self, path):
-        replace_directory()
-        yield from original(self, path)
-
     @contextmanager
     def race_reader(self, path):
         replace_directory()
         with original(self, path) as reader:
             yield reader
 
-    monkeypatch.setattr(FileAccess, method, race if name == "list_files" else race_reader)
+    monkeypatch.setattr(FileAccess, method, race_reader)
     result = backend.execute(root, name, args)
     assert changed
     assert "SYNTHETIC_SECRET_NAME" not in str(result)

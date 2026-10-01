@@ -20,6 +20,7 @@ Windows ARM64 未列为发行目标；WSL2 属于 Linux 执行环境。表中列
 | `paths` | XDG 用户目录、安装命令与 Python 环境布局 | 配置优先级、资源归属、创建/删除时机 |
 | `python_environments` | 按原优先级选择项目解释器，不执行项目代码 | `sandbox/project_python.py` 决定允许读取的目录并拒绝过宽授权 |
 | `filesystem`、`file_scan`、`path_rules` | 无链接跟随的描述符操作、作用域内目录读取、元数据快照与名称匹配机制 | 工具路径策略、文件类型/大小检查、回写冲突与备份 |
+| `rust_filesystem` | Linux/macOS 可选目录后端：API 版本核验、文件系统字节路径转换、批量元数据与错误适配 | 工具授权和 native 平台策略；Windows 不启用该扩展 |
 | `windows_install` | Windows 用户命令 `.exe` 及归属记录、HKCU PATH 比较后更新/恢复 | 与共用安装事务和卸载归属检查配合，不修改系统 PATH |
 | `windows_files` | Windows 句柄相对操作、重解析点防护、目录枚举、重命名与锁 | Windows 文件名限制、平台验收；不能降级为先检查路径再按绝对路径写入 |
 | `locking`、`storage` | 文件描述符锁、同目录暂存与原子替换 | 锁持有期限、序列化、刷新要求、多文件事务和恢复 |
@@ -30,7 +31,7 @@ Windows ARM64 未列为发行目标；WSL2 属于 Linux 执行环境。表中列
 | `diagnostics`、`probes` | 结构化诊断与平台依赖可用性检查 | 展示、修复流程及后端的实际隔离自检 |
 | `archives` | 归档路径采用统一的 POSIX 表示并拒绝跨平台歧义 | 清单版本、哈希、解压大小和必要文件检查 |
 
-公共模块不反向导入 `cli`、`agent`、`tools` 或 `sandbox`。运行时服务只依赖标准库；`ReleaseTarget.wheel_platforms()` 中的 `packaging` 是延迟导入的构建依赖，安装引导不调用它。
+公共模块不反向导入 `cli`、`agent`、`tools` 或 `sandbox`。默认运行时服务只依赖标准库，`rust_filesystem` 在显式选择 Rust 时延迟导入可选扩展；`ReleaseTarget.wheel_platforms()` 中的 `packaging` 是延迟导入的构建依赖，安装引导不调用它。
 
 不要将所有文件访问统一为同一种授权策略。local 文件工具、native 可信文件服务、Docker 工作副本的操作位置与保证不同。`tools/_internal/file_access.py` 为底层文件服务注入 `PathPolicy`，保护文件名和工作区规则仍属于工具层。新增平台必须实现所需的文件保护；不支持安全描述符操作时明确报错，不删除无链接跟随检查来继续执行。
 
@@ -89,7 +90,9 @@ python -m pytest -q tests/test_host_file_contracts.py tests/test_windows_files.p
 
 工作流还配置了 Linux/macOS × Python 3.11/3.13 的四组默认全量回归，准备仓库 `.venv` 和安装入口后运行整个 `tests/` 目录。默认全量仍按平台、依赖和开关跳过真实环境用例；Windows 仍限定为上述契约及发行安装测试。另有独立 Ruff 检查与格式检查作业；lint 和默认回归安装锁定的开发依赖。CI 未配置真实 Docker Desktop 回写测试，Windows Docker 回写需下面的独立开关与镜像。
 
-可选扫描器还有 `.github/workflows/policy-scan-rust.yml`：Linux/macOS × Python 3.11/3.13，检查 Rust 格式、Clippy 和单元测试，构建并导入扩展后运行 Python/Rust 差分与策略集成契约。macOS 在这里用于扫描器等价性验证，Seatbelt 后端仍使用自身策略；该作业不提供 Windows Rust 后端或真实 Linux 隔离验收。
+可选扫描器还有 `.github/workflows/policy-scan-rust.yml`：Linux/macOS × Python 3.11/3.13，检查 Rust 格式、Clippy 和单元测试，构建并导入扩展后运行 Python/Rust 差分与策略集成契约。覆盖 Linux 策略扫描、两平台文件系统/目录批量协议及 native 文件工具。macOS 还使用 Rust 做自身工作区硬链接预检，内核隔离规则仍由 Seatbelt 提供；该作业不提供 Windows Rust 后端，未开启真实隔离开关的用例仍跳过。
+
+`.github/workflows/policy-scan-wheels.yml` 另为 Linux/macOS 的 x86_64、arm64 构建 ABI3 wheel，在目标系统加载扩展并执行文件工具和扫描契约，成功后上传产物。Linux 使用 manylinux 2.28；macOS 最低版本分别为 Intel 10.15、ARM64 11.0。工作流不自动创建 GitHub Release，也不发布 PyPI 包。
 
 工作流配置不等于运行成功。发布前应检查对应提交的实际作业结果，而非将本地模拟测试或上传配置当作实机证据。
 
