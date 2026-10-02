@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "rust-backend"
-version = "0.3.0"
+version = "0.5.0"
 requires-python = ">=3.11"
 description = "Rust policy and descriptor filesystem backend for repo-agent (Linux/macOS)"
 

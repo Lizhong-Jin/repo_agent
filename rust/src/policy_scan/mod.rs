@@ -64,6 +64,7 @@ fn scan(py: Python<'_>, config: &Bound<'_, PyDict>) -> PyResult<Py<PyDict>> {
     scanner.finish(start);
     let result = PyDict::new(py);
     result.set_item("metrics", scanner.metrics(py)?)?;
+    result.set_item("diagnostics", scanner.diagnostics(py)?)?;
     match outcome {
         Ok((masks, git_paths)) => {
             for (name, paths) in [("masks", masks), ("git_paths", git_paths)] {

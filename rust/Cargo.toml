@@ -1,6 +1,6 @@
 [package]
 name = "rust-backend"
-version = "0.3.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.85"
 
@@ -9,6 +9,7 @@ name = "rust_backend"
 crate-type = ["cdylib", "rlib"]
 
 [features]
+allocation-profile = []
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]

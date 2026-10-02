@@ -27,6 +27,7 @@ class RustPolicyScanner:
         if rust_backend.API_VERSION != 1:
             raise RuntimeError("Rust 扫描扩展接口版本不兼容，请重新构建 rust/ 下的扩展")
         self._native = rust_backend
+        self.last_diagnostics = None
 
     def scan(self, plan: PolicyPlan, request: ScanRequest) -> ScanResult:
         table = MountTable(request.mount_snapshot)
@@ -51,6 +52,7 @@ class RustPolicyScanner:
             "ignore_stat_errors": sys.version_info >= (3, 14),
             "cancellation": current_cancellation(),
         }
+        self.last_diagnostics = None
         started = perf_counter()
         try:
             result = self._native.scan(config)
@@ -60,6 +62,7 @@ class RustPolicyScanner:
             raise ScanFailure(
                 error, {"complete": False, "scan_ms": (perf_counter() - started) * 1000}
             ) from error
+        self.last_diagnostics = result.get("diagnostics")
         if result["error"] is not None:
             raise ScanFailure(result["error"], result["metrics"])
         return ScanResult(

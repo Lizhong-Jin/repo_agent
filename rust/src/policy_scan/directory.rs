@@ -1,14 +1,9 @@
 //! Unix directory enumeration pinned by fd. Never follow the final component.
+use crate::directory_batch::Batch;
 use crate::{Error, Result};
 use std::ffi::{CStr, CString, OsString};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::Path;
-
-pub struct Entry {
-    pub name: OsString,
-    pub directory: bool,
-    pub symlink: bool,
-}
 
 pub struct Directory(*mut libc::DIR);
 impl Drop for Directory {
@@ -49,15 +44,11 @@ impl Directory {
         Ok(Self(dir))
     }
 
-    pub fn metadata(&self, name: &std::ffi::OsStr, path: &Path) -> Result<libc::stat> {
-        crate::filesystem::metadata::stat_at(
-            unsafe { libc::dirfd(self.0) },
-            name.as_bytes(),
-            Some(path),
-        )
+    pub fn metadata(&self, name: &CStr) -> Result<libc::stat> {
+        crate::filesystem::metadata::stat_cstr(unsafe { libc::dirfd(self.0) }, name, None)
     }
 
-    fn kind(&self, name: &CStr, dtype: u8, path: &Path) -> Result<(bool, bool)> {
+    pub fn kind(&self, name: &CStr, dtype: u8, path: &Path) -> Result<(bool, bool)> {
         if dtype != libc::DT_UNKNOWN {
             return Ok((dtype == libc::DT_DIR, dtype == libc::DT_LNK));
         }
@@ -89,55 +80,14 @@ impl Directory {
         ))
     }
 
-    pub fn entries(
+    pub fn read_batch(
         &mut self,
         path: &Path,
-        mut checkpoint: impl FnMut() -> Result<()>,
-    ) -> Result<Vec<Entry>> {
-        let mut entries = Vec::new();
-        loop {
-            if entries.len() % 1024 == 0 {
-                checkpoint()?;
-            }
-            // SAFETY: directory is live and exclusively borrowed. Clear errno so
-            // readdir's NULL can distinguish EOF from an I/O failure.
-            unsafe { *errno_location() = 0 };
-            let raw = unsafe { libc::readdir(self.0) };
-            if raw.is_null() {
-                let error = std::io::Error::last_os_error();
-                if error.raw_os_error() != Some(0) {
-                    return Err(Error::io(error, Some(path)));
-                }
-                break;
-            }
-            // Copy before readdir can overwrite its storage.
-            let item = unsafe { &*raw };
-            let bytes = unsafe { CStr::from_ptr(item.d_name.as_ptr()) }.to_bytes();
-            if bytes == b"." || bytes == b".." {
-                continue;
-            }
-            let (directory, symlink) = self.kind(
-                unsafe { CStr::from_ptr(item.d_name.as_ptr()) },
-                item.d_type,
-                path,
-            )?;
-            entries.push(Entry {
-                name: OsString::from_vec(bytes.to_vec()),
-                directory,
-                symlink,
-            });
-        }
-        Ok(entries)
+        batch: &mut Batch,
+        checkpoint: impl FnMut() -> Result<()>,
+    ) -> Result<bool> {
+        unsafe { batch.read(self.0, Some(path), checkpoint) }
     }
-}
-
-#[cfg(target_os = "linux")]
-unsafe fn errno_location() -> *mut libc::c_int {
-    libc::__errno_location()
-}
-#[cfg(target_os = "macos")]
-unsafe fn errno_location() -> *mut libc::c_int {
-    libc::__error()
 }
 
 #[cfg(test)]

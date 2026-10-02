@@ -6,7 +6,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 
-from host_support.file_scan import DirectoryReader, DirectorySource, metadata_entries
+from host_support.file_scan import DirectoryReader, DirectorySource, ScanMetadata, metadata_entries
 
 from .file_access import current_file_access
 from .file_policy import PathPolicy
@@ -16,7 +16,7 @@ from .file_policy import PathPolicy
 class FileEntry:
     path: Path
     resolved: Path
-    info: os.stat_result
+    info: os.stat_result | ScanMetadata
 
     @property
     def kind(self) -> str:
@@ -34,7 +34,7 @@ class SearchCandidate:
     """Read immediately; directory is borrowed until iteration advances/closes."""
 
     path: Path
-    info: os.stat_result | None
+    info: os.stat_result | ScanMetadata | None
     directory: DirectoryReader | None = None
 
 
@@ -42,7 +42,7 @@ def inspect_entry(
     path: Path,
     policy: PathPolicy,
     *,
-    info: os.stat_result | None = None,
+    info: os.stat_result | ScanMetadata | None = None,
 ) -> FileEntry | None:
     """Resolve once and reuse lstat for type, size and hard-link protection.
 

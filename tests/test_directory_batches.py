@@ -109,13 +109,13 @@ def test_batching_bounds_lookahead_and_search_closes_cache(tmp_path, backend, mo
     for index in range(300):
         (root / str(index)).write_text("needle")
     batches = []
-    original = host_fs._DescriptorDirectoryReader.stat_many
+    original = host_fs._DescriptorDirectoryReader.scan_metadata
 
     def stat_many(reader, names):
         batches.append(len(names))
         return original(reader, names)
 
-    monkeypatch.setattr(host_fs._DescriptorDirectoryReader, "stat_many", stat_many)
+    monkeypatch.setattr(host_fs._DescriptorDirectoryReader, "scan_metadata", stat_many)
     with FileAccess(root, directory_backend=backend).activate():
         result = SearchFilesTool(root, max_results=1).execute({"query": "needle"})
         assert host_fs._scan_directories.get() is None

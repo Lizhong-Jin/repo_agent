@@ -11,6 +11,18 @@ from pathlib import Path
 from typing import BinaryIO, Protocol
 
 
+class ScanMetadata(Protocol):
+    """Minimum immutable lstat observation for classification and content guards."""
+
+    st_mode: int
+    st_dev: int
+    st_ino: int
+    st_nlink: int
+    st_size: int
+    st_mtime_ns: int
+    st_ctime_ns: int
+
+
 class DirectoryReader(Protocol):
     """Single-entry names only; stat and open_read must not follow symlinks.
 
@@ -38,12 +50,13 @@ class DirectorySource(Protocol):
 def metadata_entries(reader: DirectoryReader, names, *, batch_size=128):
     """Bound lookahead; preserve order and report individual metadata failures.
 
+    Compact readers may return ScanMetadata; stat_many still returns full stat_result.
     Older/custom readers can implement only stat. A batch never grants read
     permission: consumers must still validate the file actually opened.
     """
     iterator = iter(names)
     while batch := list(islice(iterator, batch_size)):
-        method = getattr(reader, "stat_many", None)
+        method = getattr(reader, "scan_metadata", None) or getattr(reader, "stat_many", None)
         if method is not None:
             results = method(batch)
         else:

@@ -11,6 +11,13 @@ pub(crate) enum Error {
     Python(PyErr),
 }
 impl Error {
+    pub(crate) fn at_path(self, path: &Path) -> Self {
+        match self {
+            Self::Io(code, _) => Self::Io(code, Some(path.to_path_buf())),
+            other => other,
+        }
+    }
+
     pub(crate) fn io(error: std::io::Error, path: Option<&Path>) -> Self {
         Self::Io(
             error.raw_os_error().unwrap_or(libc::EIO),

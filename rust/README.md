@@ -17,6 +17,10 @@ rust/
 └── src/
     ├── lib.rs                # Python 模块入口
     ├── error.rs              # 共享错误与 Python 异常转换
+    ├── directory_batch.rs    # 可复用目录名称块
+    ├── path_nodes.rs         # 可回收的父节点/名称存储
+    ├── scan_diagnostics.rs   # 结构与容量高水位
+    ├── allocation_profile.rs # 可选开发分配统计
     ├── filesystem/
     │   ├── mod.rs            # fd 操作、枚举、macOS 工作区检查
     │   └── metadata.rs       # 相对 stat 与批量元数据
@@ -27,7 +31,7 @@ rust/
 ```
 
 Cargo/Python 发行包名统一为 **`rust-backend`**，Python 模块名为 **`rust_backend`**。
-wheel 文件按 Python 规范使用下划线，例如 `rust_backend-0.3.0-…whl`；动态库名称为
+wheel 文件按 Python 规范使用下划线，例如 `rust_backend-0.5.0-…whl`；动态库名称为
 `librust_backend.so`（Linux）或 `librust_backend.dylib`（macOS）。
 旧 `repo-agent-policy-scan`/`repo_agent_scan` 二进制不能仅改文件名继续使用，需重新构建
 并安装新包。Linux 策略扫描 API_VERSION=1；文件系统 FILESYSTEM_API_VERSION=2，
@@ -50,9 +54,9 @@ python scripts/build_rust.py wheel
 
 ```text
 rust_wheels/
-└── 0.3.0/
-    ├── rust_backend-0.3.0-cp311-abi3-macosx_11_0_arm64.whl
-    ├── rust_backend-0.3.0-cp311-abi3-manylinux_2_28_x86_64.whl
+└── 0.5.0/
+    ├── rust_backend-0.5.0-cp311-abi3-macosx_11_0_arm64.whl
+    ├── rust_backend-0.5.0-cp311-abi3-manylinux_2_28_x86_64.whl
     ├── macos-arm64/librust_backend.dylib
     └── linux-x86_64/librust_backend.so
 ```
@@ -115,7 +119,7 @@ python scripts/build_rust.py build --target host
 
 ## Linux/macOS Rust 文件系统后端
 
-安装当前 0.3.0 的本机扩展（策略 API 1、文件系统 API 2）并设置 `AGENT_NATIVE_SCANNER=rust`，重启 native 后端。
+安装当前 0.5.0 的本机扩展（策略 API 1、文件系统 API 2）并设置 `AGENT_NATIVE_SCANNER=rust`，重启 native 后端。
 默认仍为 Python；缺少扩展、文件系统 API 不兼容或扫描失败时显式报错，不静默回退。
 
 Linux/macOS native 文件工具都接入 `src/filesystem/mod.rs` 和 `metadata.rs`：通过 Rust
@@ -189,3 +193,23 @@ python scripts/benchmark_directory_io.py --engine python
 临时构造宽目录和深目录，测量 list/find/search 完整文件工具调用及 Rust 工作区预检，
 输出 JSON 中位数并校验两个后端结果一致。比较改动前后时保持参数和主机负载一致；
 热缓存测量不包含隔离启动，也不能替代真实 WSL/Conda 环境的性能记录。
+
+
+## 0.4.0 内存布局与诊断
+
+0.4.0 增加可复用的 256 项目录工作块、可回收路径节点、固定布局统计、ASCII 匹配缓冲区，
+以及文件工具内部使用的精简元数据。原 `stat/stat_many`、Linux API_VERSION=1 和
+FILESYSTEM_API_VERSION=2 保持兼容；旧 API 2 扩展继续使用原有完整 Rust 元数据路径。
+普通发行 wheel 不启用分配统计，开发构建可选择 `allocation-profile`。
+
+测量命令、指标口径、资源边界与后续有序并行设计见 [内存布局与测量](docs/memory-layout.md)。
+
+## 0.5.0 有限并行预检与策略扫描
+
+Rust 后端新增 `AGENT_SCAN_WORKERS=2`，默认上限 2，允许 1～8；1 保持串行扫描。
+只在有目录分支可并行时启动每次调用的线程池，Linux 工作区/系统读取根策略扫描和
+macOS 工作区预检均接入。文件工具搜索/读取仍按原顺序执行。
+
+配置、无序汇总后的稳定策略顺序、取消回收、资源上限及跨线程计时口径见
+[有限并行扫描](docs/scan-parallel.md)。分支目录基准：
+`python scripts/benchmark_scan_parallel.py --workers 1 2 4`。

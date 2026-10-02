@@ -225,3 +225,17 @@ def test_installed_entry_can_set_show_and_get_path(tmp_path):
         if args == ["path"]:
             assert result.stdout.strip() == str(user_config_path())
     assert not (tmp_path / "logs").exists()
+
+
+def test_scan_worker_setting_is_saved_loaded_and_validated(tmp_path, capsys):
+    from configuration.environment import configured_environment
+
+    config_command.main(["set", "AGENT_SCAN_WORKERS", "4"])
+    with configured_environment(tmp_path):
+        assert os.environ["AGENT_SCAN_WORKERS"] == "4"
+    (tmp_path / ".env").write_text("AGENT_SCAN_WORKERS=\n")
+    config_command.main(["show"])
+    assert 'AGENT_SCAN_WORKERS = "2"' in capsys.readouterr().out
+    for invalid in ("0", "9", "-1", "many", "2.5"):
+        with pytest.raises(ValueError):
+            config_command.validate_value("AGENT_SCAN_WORKERS", invalid)

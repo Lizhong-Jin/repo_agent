@@ -21,8 +21,9 @@ from scripts.benchmark_linux_policy import policy_backend
 from tools._internal.file_policy import PROTECTED_NAME_RULES
 
 
-@pytest.fixture
-def engines():
+@pytest.fixture(params=[1, 2, 4])
+def engines(monkeypatch, request):
+    monkeypatch.setenv("AGENT_SCAN_WORKERS", str(request.param))
     pytest.importorskip("rust_backend")
     return PythonPolicyScanner(), RustPolicyScanner()
 
@@ -54,8 +55,15 @@ def counts(metrics):
 def equivalent(engines, compiled, call):
     results = [engine.scan(compiled, call) for engine in engines]
     assert results[0].masks == results[1].masks
-    assert results[0].git_paths == results[1].git_paths
-    assert counts(results[0].metrics) == counts(results[1].metrics)
+    if engines[1].last_diagnostics.get("workers", 1) == 1:
+        assert results[0].git_paths == results[1].git_paths
+        assert counts(results[0].metrics) == counts(results[1].metrics)
+    else:
+        assert sorted(results[0].git_paths, key=str) == list(results[1].git_paths)
+        left, right = (counts(result.metrics) for result in results)
+        for metrics in (left, right):
+            metrics["by_root_mount"].sort(key=lambda b: (b["root"], b["mount"] or ""))
+        assert left == right
     assert results[0].metrics.keys() == results[1].metrics.keys()
     return results[1]
 

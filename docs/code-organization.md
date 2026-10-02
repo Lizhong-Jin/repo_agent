@@ -157,6 +157,11 @@ ASCII 名称匹配在 Rust 执行，非 ASCII 名称通过当前解释器的文�
 
 Linux/macOS native 都在 `_platform_setup()` 中选择 `host_support/rust_filesystem.py` 后端，并通过公共 `_execute_file()` 注入 `FileAccess`，使用 `rust/src/filesystem/mod.rs` 的目录枚举和 fd 相对路径打开。macOS 工作区硬链接检查也使用此模块；Linux 工作区预检仍合并在 `policy_scan` 引擎中。`DirectoryReader.stat_many` 批量传递元数据与逐项错误，`rust/src/filesystem/metadata.rs` 提供相对 fstatat；Python 保留策略与实际读取校验。文本匹配仍由 Python 实现：搜索在目录作用域内复用已打开的父目录，并从同一打开文件获取内容与元数据；`tools/_internal/text_search.py` 逐行迭代，避免另建完整行列表。名称、路径保护、读取预算和结果语义仍由原工具负责，Rust 不改变 Seatbelt 规则，也不接管文本匹配。`FileAccess.walk/glob_entries` 和搜索在一次扫描内最多复用 32 个目录句柄，元数据按 128 项批量获取；`iterdir_entries/glob_entries` 向 list/find 传递已有元数据，避免重复打开和检查。写操作不共享扫描缓存。
 
+Rust 0.4.0 以 `directory_batch.rs` 复用目录名称块，`path_nodes.rs` 管理可回收的父节点/名称，
+`scan_diagnostics.rs` 输出结构高水位；`allocation_profile.rs` 仅在开发 feature 中统计分配。
+文件工具可选 `scan_metadata` 七字段观察值，原 `stat_many` 保留完整 stat_result。
+详见 [内存布局与测量](../rust/docs/memory-layout.md)。
+
 ## 安装兼容与打包
 
 以下入口保持可用：
@@ -178,3 +183,5 @@ wheel 内配置模板、依赖锁和 Docker 上下文现在位于 `installer/res
 ```
 
 正式发行包需要按新结构重新构建；目录迁移不会自动更新已有下载包。不要用同一已交付版本号覆盖内容不同的发行包。
+
+Rust `src/scan_pool.rs` 提供每次调用的有界线程池；`policy_scan/engine.rs` 和 `filesystem/mod.rs` 分别协调 Linux 策略与 macOS 预检。工作线程读取目录事实，主协调者维护路径节点、缓存与最终安全检查。详见 [有限并行扫描](../rust/docs/scan-parallel.md)。

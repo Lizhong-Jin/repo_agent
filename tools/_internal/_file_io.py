@@ -8,7 +8,7 @@ from functools import cached_property
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from host_support.file_scan import DirectoryReader
+from host_support.file_scan import DirectoryReader, ScanMetadata
 
 from .base import ToolResult
 from .errors import ToolErrorCode, tool_error
@@ -29,7 +29,7 @@ def snapshot_stat(path: Path, *, follow_symlinks: bool = False) -> os.stat_resul
     )
 
 
-def file_signature(info: os.stat_result) -> tuple[int, ...]:
+def file_signature(info: os.stat_result | ScanMetadata) -> tuple[int, ...]:
     # Windows path stat infers execute bits from .exe/.bat extensions; handle
     # stat does not. They describe the same file and must compare consistently.
     mode = info.st_mode & ~0o111 if os.name == "nt" else info.st_mode
@@ -62,7 +62,7 @@ class FileSnapshot:
 def read_snapshot(
     candidate: Path,
     target: Path,
-    info: os.stat_result,
+    info: os.stat_result | ScanMetadata,
     max_bytes: int,
     *,
     verify_identity: bool = False,

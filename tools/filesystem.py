@@ -352,7 +352,7 @@ class WriteFileTool(FileTool):
                     },
                     "create_parents": {
                         "type": "boolean",
-                        "default": False,
+                        "default": True,
                         "description": "Whether to create parent directories if they do not exist.",
                     },
                 },
@@ -386,7 +386,7 @@ class WriteFileTool(FileTool):
                 "content must not contain NUL bytes.",
             )
         overwrite = arguments.get("overwrite", False)
-        create_parents = arguments.get("create_parents", False)
+        create_parents = arguments.get("create_parents", True)
         if type(overwrite) is not bool:
             return tool_error(ToolErrorCode.INVALID_ARGUMENTS, "overwrite must be a boolean.")
         if type(create_parents) is not bool:

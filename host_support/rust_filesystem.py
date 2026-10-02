@@ -39,6 +39,18 @@ class RustFilesystem:
             for name, item in zip(names, results, strict=True)
         ]
 
+    def scan_metadata(self, fd, names):
+        method = getattr(self.native, "scan_metadata", None)
+        if method is None:
+            # API 2 wheels predating the compact capability remain compatible.
+            return self.stat_many(fd, names)
+        packed = b"\0".join(os.fsencode(name) for name in names) + b"\0" if names else b""
+        results = method(fd, packed, current_cancellation())
+        return [
+            OSError(item, os.strerror(item), name) if isinstance(item, int) else item
+            for name, item in zip(names, results, strict=True)
+        ]
+
     def check_workspace(self, root):
         self.native.check_workspace(os.fsencode(root), current_cancellation())
 

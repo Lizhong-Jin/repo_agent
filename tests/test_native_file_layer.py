@@ -81,7 +81,7 @@ def test_file_scans_use_selected_rust_primitives(backend, monkeypatch):
 
         monkeypatch.setattr(directory_backend, name, run)
 
-    for method in ("directory", "names", "stat_many"):
+    for method in ("directory", "names", "scan_metadata"):
         observe(method)
     for name, arguments in (
         ("list_files", {"path": "src"}),
@@ -90,7 +90,7 @@ def test_file_scans_use_selected_rust_primitives(backend, monkeypatch):
     ):
         calls.clear()
         assert call(backend, name, **arguments).success
-        assert set(calls) == {"directory", "names", "stat_many"}
+        assert set(calls) == {"directory", "names", "scan_metadata"}
 
 
 def test_all_file_tools_work_without_processes_or_global_scans(backend, monkeypatch):

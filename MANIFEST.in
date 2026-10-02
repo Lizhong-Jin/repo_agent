@@ -15,15 +15,22 @@ include rust/Cargo.lock
 include rust/Cargo.toml
 include rust/README.md
 include rust/build.rs
+include rust/docs/memory-layout.md
 include rust/docs/policy-scan.md
+include rust/docs/scan-parallel.md
 include rust/pyproject.toml
+include rust/src/allocation_profile.rs
+include rust/src/directory_batch.rs
 include rust/src/error.rs
 include rust/src/filesystem/metadata.rs
 include rust/src/filesystem/mod.rs
 include rust/src/lib.rs
+include rust/src/path_nodes.rs
 include rust/src/policy_scan/directory.rs
 include rust/src/policy_scan/engine.rs
 include rust/src/policy_scan/mod.rs
+include rust/src/scan_diagnostics.rs
+include rust/src/scan_pool.rs
 include scripts/build_rust.py
 include uv.lock
 recursive-include agent *.py

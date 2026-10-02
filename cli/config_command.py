@@ -38,6 +38,7 @@ BUILTINS.update(
         "AGENT_SANDBOX_WRITEBACK": "manual",
         "AGENT_SANDBOX_VERIFY_COMMAND": "",
         "AGENT_NATIVE_SCANNER": "python",
+        "AGENT_SCAN_WORKERS": "2",
         "AGENT_WEB_SEARCH_PROVIDER": "off",
         "AGENT_WEB_FETCH_ENABLED": "false",
     }
@@ -99,7 +100,12 @@ CONFIG_GROUPS = (
     ),
     (
         "沙箱与回写",
-        ("AGENT_NATIVE_SCANNER", "AGENT_SANDBOX_WRITEBACK", "AGENT_SANDBOX_VERIFY_COMMAND"),
+        (
+            "AGENT_NATIVE_SCANNER",
+            "AGENT_SCAN_WORKERS",
+            "AGENT_SANDBOX_WRITEBACK",
+            "AGENT_SANDBOX_VERIFY_COMMAND",
+        ),
     ),
     ("提示词与日志", ("AGENT_SYSTEM_PROMPT", "AGENT_LOG_DIR")),
     ("高级请求参数", ("LLM_EXTRA_JSON",)),
@@ -164,6 +170,10 @@ def validate_value(key, value):
     try:
         if key == "LLM_PROVIDER":
             return get_provider(value).name
+        if key == "AGENT_SCAN_WORKERS":
+            if value not in {str(n) for n in range(1, 9)}:
+                raise ValueError
+            return value
         if key == "AGENT_WEB_SEARCH_PROVIDER":
             if value.lower() not in {"off", "brave"}:
                 raise ValueError

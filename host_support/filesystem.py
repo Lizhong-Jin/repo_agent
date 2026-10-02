@@ -469,6 +469,12 @@ class _DescriptorDirectoryReader(DirectoryReader):
         return stat_at(name, dir_fd=self.fd)
 
     def stat_many(self, names):
+        return self._metadata_many(names, compact=False)
+
+    def scan_metadata(self, names):
+        return self._metadata_many(names, compact=True)
+
+    def _metadata_many(self, names, *, compact):
         self._check()
         checkpoint()
         results, allowed, positions = [None] * len(names), [], []
@@ -482,7 +488,12 @@ class _DescriptorDirectoryReader(DirectoryReader):
                 positions.append(index)
         backend = self.access.directory_backend
         if backend is not None:
-            observed = backend.stat_many(self.fd, allowed)
+            method = (
+                getattr(backend, "scan_metadata", backend.stat_many)
+                if compact
+                else backend.stat_many
+            )
+            observed = method(self.fd, allowed)
         else:
             observed = []
             for name in allowed:
