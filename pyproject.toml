@@ -48,3 +48,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+# scripts/rust_wheels.py is local even when the rust_wheels/ artifact directory is absent.
+known-first-party = ["rust_wheels"]

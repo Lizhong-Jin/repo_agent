@@ -17,15 +17,15 @@ jobs:
         python: ['3.11', '3.13']
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
-    env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/policy-scan-target
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Read backend version
-        run: python -c 'from pathlib import Path; from installer.rust_extension import rust_version; print("RUST_BACKEND_VERSION=" + rust_version(Path.cwd()))' >> "$GITHUB_ENV"
+      - name: Initialize build environment
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/policy-scan-target" >> "$GITHUB_ENV"
+          python -c 'from pathlib import Path; from installer.rust_extension import rust_version; print("RUST_BACKEND_VERSION=" + rust_version(Path.cwd()))' >> "$GITHUB_ENV"
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --component clippy --component rustfmt
       - name: Prepare Python tools

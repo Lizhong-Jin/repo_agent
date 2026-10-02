@@ -294,6 +294,8 @@ def test_windows_path_rollback_after_interrupted_install(tmp_path, windows_host)
     reason="Requires built Windows ZIP and a real Windows kernel",
 )
 def test_real_windows_release_survives_download_removal_and_uninstalls(tmp_path):
+    from configuration.literal import parse_config
+    from configuration.storage import backups
     from installer.paths import extract_files
     from installer.release_install import locate_release_root
     from installer.release_manifest import read_release
@@ -374,7 +376,10 @@ def test_real_windows_release_survives_download_removal_and_uninstalls(tmp_path)
 
     cache = verify_runtime_sources()
     config = tmp_path / "config/repo-agent/.env"
-    config.write_text("LLM_MODEL=keep\n", encoding="utf-8")
+    previous_config = "LLM_MODEL=keep\nLLM_TIMEOUT=\nRETIRED_SETTING=discard\n"
+    config.write_text(previous_config, encoding="utf-8")
+    template = root / ".env.example"
+    defaults = parse_config(template.read_text(encoding="utf-8"), source=template)
     shutil.rmtree(download)
     info = json.loads(run([bins / "repo-agent.exe", "version"]))
     assert info["installation"] == str(root) and info["kind"] == "release"
@@ -386,7 +391,10 @@ def test_real_windows_release_survives_download_removal_and_uninstalls(tmp_path)
     run(script(root, "--offline", "--no-path", "--bin-dir", bins))
     assert not stale.exists()
     verify_runtime_sources()
-    assert config.read_text(encoding="utf-8") == "LLM_MODEL=keep\n"
+    # Reinstall refreshes the template while retaining supported values, including blanks.
+    values = parse_config(config.read_text(encoding="utf-8"), source=config)
+    assert values == {**defaults, "LLM_MODEL": "keep", "LLM_TIMEOUT": ""}
+    assert backups(config)[0].read_text(encoding="utf-8") == previous_config
     run(script(root, "--recover"))
     run(script(root, "--uninstall", "--dry-run"))
     assert (root / ".venv").is_dir()
