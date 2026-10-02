@@ -7,7 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 from agent.Tracing import RunStats
-from cli.interactive import finish_writeback, run_interactive
+from cli.interactive import run_interactive
+from cli.writeback import finish_writeback
 from configuration.environment import read_config
 from sandbox import SandboxSession
 from tools._internal.base import ToolResult
@@ -155,10 +156,11 @@ def test_backup_failure_never_changes_original(session, monkeypatch):
 
 
 def test_interrupted_task_does_not_leak_into_later_completed_task(session, monkeypatch):
-    tasks = iter(["change", "hello", "/exit"])
+    tasks = iter(["change", "hello", "/queue resume", "/exit"])
     monkeypatch.setattr("builtins.input", lambda _: next(tasks))
 
     class Runtime:
+        llm = None
         count = 0
 
         def run(self, *args, **kwargs):
@@ -166,7 +168,12 @@ def test_interrupted_task_does_not_leak_into_later_completed_task(session, monke
             if self.count == 1:
                 raise KeyboardInterrupt
             return SimpleNamespace(
-                status="completed", stats=RunStats(2), text="hi", undisplayed_text="hi", history=()
+                status="completed",
+                notice=None,
+                stats=RunStats(2),
+                text="hi",
+                undisplayed_text="hi",
+                history=(),
             )
 
     run_interactive(Runtime(), sandbox=session, writeback="on-success")
@@ -289,6 +296,7 @@ def test_single_task_cli_applies_after_run_and_signals_failure(
         record(session, 1 if failed else 0)
         return SimpleNamespace(
             status="completed",
+            notice=None,
             stats=RunStats(1),
             text="done",
             undisplayed_text="done",
@@ -322,6 +330,7 @@ def test_interactive_applies_between_tasks(session, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _: next(tasks))
 
     class Runtime:
+        llm = None
         count = 0
 
         def run(self, task, **kwargs):
@@ -331,6 +340,7 @@ def test_interactive_applies_between_tasks(session, monkeypatch):
                 (session.workspace / "a").write_text("second")
             return SimpleNamespace(
                 status="completed",
+                notice=None,
                 stats=RunStats(self.count),
                 text="done",
                 undisplayed_text="done",
@@ -374,10 +384,12 @@ def test_failed_read_only_task_does_not_poison_next_interactive_edit(session, mo
     from llm import LLMTimeoutError
 
     (session.workspace / "a").write_text("before")
-    tasks = iter(["inspect", "edit", "/exit"])
+    tasks = iter(["inspect", "edit", "/queue resume", "/exit"])
     monkeypatch.setattr("builtins.input", lambda _: next(tasks))
 
     class Runtime:
+        llm = None
+
         def run(self, task, **kwargs):
             if task == "inspect":
                 record(session, 2)
@@ -385,6 +397,7 @@ def test_failed_read_only_task_does_not_poison_next_interactive_edit(session, mo
             (session.workspace / "a").write_text("edited")
             return SimpleNamespace(
                 status="completed",
+                notice=None,
                 stats=RunStats(2),
                 text="done",
                 undisplayed_text="done",

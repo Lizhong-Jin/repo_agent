@@ -6,7 +6,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from host_support.cancellation import cancellation_scope, checkpoint
+from host_support.cancellation import cancellation_scope, checkpoint, current_cancellation
+from host_support.execution_receipt import ExecutionUncertainError, PersistenceError, receipt_scope
 from llm import LLM, InvalidResponseError, LLMError, LLMRequest, LLMResponse, Message, ToolCall
 from llm.token_estimation import estimate_context_tokens
 from tools import Tool, ToolResult
@@ -193,6 +194,11 @@ class AgentRuntime:
             raise ValueError("task must be non-empty text")
         self._task_number += 1
         trace = RunTrace(self._task_number, self.on_event)
+        ledger = getattr(self, "execution_ledger", None)
+        if ledger is not None:
+            identity = getattr(self, "execution_identity", {})
+            trace.stats.task_id = identity.get("attempt_id") or trace.stats.task_id
+            ledger.begin(trace.stats.task_id, identity)
         self.last_stats = trace.stats
         with trace:
             result = self._run(task, history, trace)
@@ -353,10 +359,13 @@ class AgentRuntime:
                 raise InvalidResponseError("Model returned missing or reused tool call IDs")
             used_call_ids.update(ids)
             exposed_names = frozenset(definition.name for definition in request.tools)
+            ledger = getattr(self, "execution_ledger", None)
+            if ledger is not None:
+                ledger.prepare(stats.task_id, response.message)
             for call in response.tool_calls:
                 self.check_cancelled()
                 with trace.tool(step, call) as record:
-                    observation = self._execute(call, exposed_names=exposed_names)
+                    observation = self._execute_recorded(call, stats.task_id, exposed_names)
                     messages.append(observation)
                     trace.tool_result(record, observation)
                     if (
@@ -404,6 +413,39 @@ class AgentRuntime:
             event("usage", "", record.response_seconds or 0.0)
         return response
 
+    def _execute_recorded(self, call, run_id, exposed_names):
+        ledger = getattr(self, "execution_ledger", None)
+        if ledger is None:
+            return self._execute(call, exposed_names=exposed_names)
+        ledger.start(run_id, call.id)
+        recorded = False
+
+        def receipt(result, effects):
+            nonlocal recorded
+            ledger.finish(run_id, call.id, result.to_message(call), effects)
+            recorded = True
+            if result.data.get("cleanup_status") == "unknown" or result.data.get("cleanup_error"):
+                context = current_cancellation()
+                if context is not None:
+                    context.record_cleanup("unknown", source=call.name, call_id=call.id)
+                raise ExecutionUncertainError("进程清理未确认；已保存返回结果，停止执行")
+
+        with receipt_scope(receipt):
+            observation = self._execute(call, exposed_names=exposed_names)
+        if not recorded:
+            payload = json.loads(observation.content)
+            uncertain = payload.get("error", {}).get("code") == "TOOL_EXECUTION_ERROR"
+            ledger.finish(
+                run_id,
+                call.id,
+                observation,
+                {"effects": "unknown" if uncertain else "not_executed"},
+                certain=not uncertain,
+            )
+            if uncertain:
+                raise OSError("工具异常退出，外部效果待核实；执行已停止，请查看 /ledger")
+        return observation
+
     def _execute(self, call: ToolCall, *, exposed_names: frozenset[str] | None = None) -> Message:
         tool = self._tools.get(call.name)
         if tool is None:
@@ -429,6 +471,8 @@ class AgentRuntime:
             if not isinstance(result, ToolResult):
                 raise TypeError("Tools must return ToolResult")
             return result.to_message(call)
+        except (PersistenceError, ExecutionUncertainError):
+            raise
         except Exception as error:
             # Interrupts (KeyboardInterrupt/SystemExit) are intentionally not swallowed.
             return ToolResult(

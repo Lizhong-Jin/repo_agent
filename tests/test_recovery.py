@@ -292,7 +292,7 @@ def test_no_text_and_repeated_continuation_stop_early(replies, expected_calls):
 
 
 def test_console_retains_recovery_history_for_next_task(monkeypatch, capsys):
-    inputs(monkeypatch, ["task", "继续", "/exit"])
+    inputs(monkeypatch, ["task", "继续", "/queue resume", "/exit"])
     model = ScriptedLLM([reply("partial", finish="length"), reply("continued")])
     run_interactive(AgentRuntime(model, max_recoveries=0))
     output = capsys.readouterr().out
@@ -415,8 +415,8 @@ def test_full_tui_preserves_partial_text_and_history_after_recovery_limit():
                 "pending": ui.pending_text,
                 "history": ui.history,
             }
-            assert ui.history and ui.phase == "任务尚未完成，可输入“继续”"
-            pipe.send_text("继续\r")
+            assert ui.history and ui.controller.queue.paused
+            pipe.send_text("继续\r/queue resume\r")
             await until(lambda: len(model.requests) == 2 and not ui.busy)
             await ui.worker
             assert any(m.content == "partial" for m in model.requests[-1].messages)
@@ -450,19 +450,22 @@ def test_tui_completion_drains_output_before_delayed_ui_wakeups():
             runtime.on_event = lambda name, stats: ui.dispatch(
                 ui.progress, "模型 #1 · 等待响应…", ""
             )
-            ui.busy = True
-            await ui.execute("task")
+            ui.editor.text = "task"
+            ui.submit()
+            await ui.worker
             assert not ui.busy and ui.history
             assert "尚未完成" in ui.transcript and ui.transcript.count("partial") == 1
-            assert ui.phase == "任务尚未完成，可输入“继续”"
-            ui.busy = True
-            await ui.execute("继续")
+            assert ui.controller.queue.paused
+            ui.controller.resume()
+            ui.editor.text = "继续"
+            ui.submit()
+            await ui.worker
             assert any(m.content == "partial" for m in model.requests[-1].messages)
             for callback, args in delayed:
                 callback(*args)
             ui.flush_text()
             assert ui.transcript.count("partial") == ui.transcript.count("continued") == 1
-            assert ui.phase == "就绪"
+            assert ui.phase == "任务已完成"
             assert not ui.pending_text and ui.worker_events.empty()
 
     asyncio.run(run())

@@ -3,6 +3,7 @@
 import asyncio
 from queue import Empty, SimpleQueue
 from time import perf_counter
+from uuid import uuid4
 
 from prompt_toolkit.document import Document
 from prompt_toolkit.utils import get_cwidth
@@ -18,6 +19,7 @@ from ..output import LiveOutput
 from ..runtime_events import RuntimeEventBridge
 from ..sessions_command import new_name, ui_command
 from ..shortcuts import shortcut_help, shortcut_label
+from ..task_controller import TaskController
 from ..task_execution import TaskRunner
 from ..thinking_display import ThinkingDisplay
 from .layout import build_layout
@@ -63,6 +65,17 @@ class ConversationUI:
         self.follow = True
         self.loop = None
         self.worker = None
+        self._queued_ticket = None
+        self._submission = None
+        self.controller = TaskController(
+            runtime,
+            conversation=conversation,
+            sandbox=sandbox,
+            writeback=writeback,
+            write=self.write,
+            write_model=self.write_model,
+            status=status,
+        )
         self.transcript = ""
         self.pending_text = []
         self.worker_events = SimpleQueue()
@@ -117,6 +130,8 @@ class ConversationUI:
 
     def phase_text(self):
         text = " " + self.phase
+        queue = self.controller.queue
+        text += f" · 队列 {len(queue.pending)} 项" + ("（已暂停）" if queue.paused else "")
         if not self.follow:
             text += f" · 正在查看历史 · {shortcut_label('Ctrl+End')} 回到最新"
         if self.busy and self.model_started_at is not None:
@@ -267,9 +282,43 @@ class ConversationUI:
             self.editor.text = ""
             self.display_command(task)
             return
-        if self.busy:
-            self.phase = "任务运行中，输入已保留；完成后按 Enter 发送"
+        if task.split()[0] == "/queue":
+            try:
+                self.append(self.controller.command(task) + "\n")
+                self.editor.text = ""
+                self._start_next()
+            except (ValueError, OSError) as error:
+                self.phase = str(error)
             return
+        if not task.startswith("/"):
+            if self._submission is None or self._submission[0] != task:
+                self._submission = (task, uuid4().hex)
+            try:
+                ticket = self.controller.enqueue(task, submission_id=self._submission[1])
+                self.editor.text = ""
+                self._submission = None
+                self.phase = f"已加入队列 #{ticket['number']}，当前任务不会收到这条消息"
+                self._start_next()
+            except (ValueError, OSError) as error:
+                self.phase = str(error)
+            return
+        if self.busy:
+            self.phase = "任务运行中；可输入普通任务排队，或使用 /queue 管理"
+            return
+        if task.split()[0] in {
+            "/model",
+            "/new",
+            "/clear",
+            "/apply",
+            "/compact",
+            "/thinking",
+            "/context",
+        }:
+            try:
+                self.controller.require_idle_configuration()
+            except ValueError as error:
+                self.phase = str(error)
+                return
         self.editor.text = ""
         self.follow = True
         self.append("\n")
@@ -285,7 +334,7 @@ class ConversationUI:
             except (ValueError, OSError, LLMError) as error:
                 self.append(f"无法读取模型配置：{error}\n")
             return
-        if task.split()[0] in {"/rename", "/sessions", "/logs"} and self.conversation:
+        if task.split()[0] in {"/rename", "/sessions", "/logs", "/ledger"} and self.conversation:
             try:
                 self.append(ui_command(self.conversation, task) + "\n")
                 self.refresh_footer()
@@ -305,6 +354,7 @@ class ConversationUI:
                 self.append(str(error) + "\n")
             return
         if task == "/clear":
+            self.controller.reset_history()
             self.history = ()
             if self.conversation:
                 self.conversation.clear(transcript=self.blocks, emit=self.append)
@@ -341,17 +391,64 @@ class ConversationUI:
         ):
             self.append("未知会话命令，请输入 /help。\n")
             return
-        if self.conversation and task not in {"/diff", "/apply", "/compact"}:
-            try:
-                self.conversation.start_task(task, transcript=self.blocks)
-            except OSError as error:
-                self.append(str(error) + "\n")
-                return
         self.busy = True
         self.cancellation = CancellationContext()
         self.cancelled = self.cancellation.event
         self.phase = "开始执行…"
         self.worker = asyncio.create_task(self.execute(task))
+
+    def _start_next(self):
+        if self.busy or self.controller.closing:
+            return
+        try:
+            ticket = self.controller.start_next()
+        except (OSError, ValueError) as error:
+            self.phase = str(error)
+            self.append(str(error) + "\n")
+            return
+        if ticket is None:
+            return
+        self._queued_ticket = ticket
+        self.history = self.controller.history
+        if self.conversation:
+            self.render_transcript()
+        else:
+            self.append(f"\n你> {ticket['text']}\n", user=True)
+        self.busy = True
+        self.cancellation = self.controller.cancellation
+        self.cancelled = self.cancellation.event
+        self.phase = f"正在执行 #{ticket['number']}"
+        self.worker = asyncio.create_task(self.execute(ticket["text"]))
+
+    def stop_task(self):
+        self.cancelled.set()
+        try:
+            self.controller.stop()
+        except (OSError, ValueError) as error:
+            self.append(str(error) + "\n")
+
+    async def _execute_queued(self, ticket):
+        try:
+            outcome = await asyncio.to_thread(self.work, ticket["text"])
+            self.flush_text()
+            state = self.controller.finish(ticket, outcome, transcript=self.blocks)
+            self.history = self.controller.history
+            if state != "completed":
+                self.append("\n" + self.controller.queue.data["reason"] + "\n")
+                self.phase = "队列已暂停；/queue 查看，/queue resume 继续"
+            else:
+                self.phase = "任务已完成"
+        except Exception as error:
+            self.phase = "队列已暂停：保存或调度失败"
+            self.controller.persistence_blocked = True
+            self.controller.queue.pause("任务收尾未确认，请检查会话状态后恢复")
+            self.append(str(error) + "\n")
+        finally:
+            self.history = self.controller.history
+            self._queued_ticket = None
+            self.busy = False
+            self.refresh_footer()
+        self._start_next()
 
     def cancel_model(self):
         self.model_wizard = None
@@ -375,6 +472,7 @@ class ConversationUI:
                 self.model_wizard = None
                 self.model_picker = None
                 self.history = ()
+                self.controller.reset_history()
                 self.phase = "就绪"
                 self.append("\n" + message + "\n")
                 self.refresh_footer()
@@ -388,6 +486,8 @@ class ConversationUI:
         self.cancellation.check()
 
     def work(self, task):
+        if self._queued_ticket is not None:
+            return self.controller.execute(self._queued_ticket)
         return TaskRunner(
             runtime=self.runtime,
             cancellation=self.cancellation,
@@ -400,8 +500,11 @@ class ConversationUI:
         ).run(task, history=self.history)
 
     async def execute(self, task):
+        if self._queued_ticket is not None:
+            return await self._execute_queued(self._queued_ticket)
         try:
-            kind, value = await asyncio.to_thread(self.work, task)
+            outcome = await asyncio.to_thread(self.work, task)
+            kind, value = outcome
             self.flush_text()
             notice_text = cancellation_notice(value.report) if kind == "cancelled" else str(value)
             if task == "/compact":
@@ -448,6 +551,11 @@ class ConversationUI:
                 self.phase = "任务执行失败，可重新输入"
             elif kind == "result" and value.status != "completed":
                 self.phase = "任务尚未完成，可输入“继续”" if value.resumable else "任务未完成"
+            if kind in {"error", "cancelled"}:
+                self.controller.pause("会话操作未完成，请检查后 /queue resume")
+            if outcome.cleanup_status == "unknown":
+                self.controller.cleanup_blocked = True
+                self.controller.pause("进程清理未确认")
         finally:
             try:
                 if self.conversation:
@@ -457,6 +565,7 @@ class ConversationUI:
             finally:
                 self.busy = False
                 self.refresh_footer()
+        self._start_next()
 
     async def run_async(self):
         self.loop = asyncio.get_running_loop()
@@ -475,6 +584,9 @@ class ConversationUI:
             try:
                 await self.app.run_async()
             finally:
+                self.controller.closing = True
+                if self.controller.active or self.controller.queue.pending:
+                    self.controller.queue.pause("会话已退出；恢复后请明确继续")
                 self.cancelled.set()
                 try:
                     if self.worker:

@@ -129,6 +129,10 @@ def ui_command(conversation, task):
     """Shared, bounded command output. Does not add log views to the chat journal."""
     parts = task.split(maxsplit=1)
     command, argument = parts[0], parts[1] if len(parts) > 1 else ""
+    if command == "/ledger":
+        if argument.strip():
+            raise ValueError("用法：/ledger；完整记录可用 sessions ledger <序号> --json")
+        return display_text(conversation.ledger.describe())
     if command == "/rename":
         words = shlex.split(argument)
         if not words:
@@ -176,6 +180,13 @@ def main(argv=None):
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("list", help="列出会话")
+    ledger = commands.add_parser("ledger", help="查看持久化工具执行证据")
+    ledger.add_argument("session", nargs="?", default="latest")
+    ledger.add_argument("--limit", type=int, default=100)
+    ledger.add_argument("--before", type=int, help="只显示此事件序号之前的记录，用于翻页")
+    ledger.add_argument(
+        "--json", action="store_true", help="输出完整结构化结果（可能包含文件内容）"
+    )
     rename = commands.add_parser("rename", help="更改会话名称")
     rename.add_argument("session")
     rename.add_argument("name")
@@ -191,6 +202,29 @@ def main(argv=None):
             row = catalog.resolve(args.session)
             name = catalog.rename(row["session_id"], args.name)
             print(f"会话名称已更新：{name} · #{row['sequence']}")
+        elif args.command == "ledger":
+            import json
+
+            from agent.execution_ledger import ExecutionLedger
+
+            if not 1 <= args.limit <= 10000:
+                raise ValueError("--limit 支持 1–10000")
+            if args.before is not None and not 0 < args.before < 2**63:
+                raise ValueError("--before 必须是有效的正整数事件序号")
+            store = SessionStore(Path(root_args.root))
+            store.id = catalog.resolve(args.session)["session_id"]
+            journal = ExecutionLedger(store)
+            print(
+                display_text(
+                    json.dumps(
+                        journal.evidence(limit=args.limit, before=args.before),
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                if args.json
+                else display_text(journal.describe(limit=args.limit, before=args.before))
+            )
         else:
             show_log(catalog, args)
     except KeyboardInterrupt:

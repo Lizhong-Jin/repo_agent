@@ -5,6 +5,7 @@ not an isolation boundary for third-party Python plugins already in the host.
 """
 
 from host_support.cancellation import checkpoint, current_cancellation, defer_cancellation
+from host_support.execution_receipt import record_result
 
 from ._internal.base import ExecutionKind, ToolResult, execution_kind_of
 
@@ -71,6 +72,8 @@ class ToolDispatcher:
                 "bytes_written",
                 "sha256_before",
                 "sha256_after",
+                "exit_code",
+                "timed_out",
                 "cleanup_status",
                 "cleanup_error",
             }
@@ -84,6 +87,7 @@ class ToolDispatcher:
             "move_file",
         }:
             record["effects"] = "reported"
+        record_result(result, record)
         checkpoint()
         return result
 

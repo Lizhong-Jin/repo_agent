@@ -13,8 +13,10 @@ from uuid import uuid4
 from host_support.filesystem import open_file, set_file_mode
 from host_support.locking import lock_descriptor
 from host_support.paths import session_state_root
-from host_support.storage import atomic_write
+from host_support.storage import atomic_write, sync_directory
 from llm import LLMError, LLMRequest, Message
+
+from .task_queue import validate_queue
 
 SESSION_ID = re.compile(r"[0-9a-f]{32}")
 MAX_BYTES = 64 * 1024 * 1024
@@ -114,6 +116,41 @@ def validate_loaded_tool_groups(names):
         raise ValueError("无效的已加载工具组列表")
 
 
+def validate_record(data, project, sid):
+    try:
+        if (
+            data["version"] != 1
+            or data["session_id"] != sid
+            or data["project"] != str(project)
+            or not isinstance(data["model"], dict)
+            or not isinstance(data["status"], dict)
+            or not isinstance(data["transcript"], list)
+            or data["mode"] not in {"local", "native", "docker"}
+            or type(data.get("sandbox_healthy")) is not bool
+            or (
+                data["mode"] == "docker"
+                and (
+                    not isinstance(data.get("sandbox"), str)
+                    or not Path(data["sandbox"]).is_absolute()
+                )
+            )
+            or set(data["model"]) != {"provider", "model", "endpoint"}
+            or not all(isinstance(v, str) and v for v in data["model"].values())
+            or (data["pending_task"] is not None and not isinstance(data["pending_task"], str))
+            or type(data["task_number"]) is not int
+            or data["task_number"] < 0
+        ):
+            raise ValueError
+        validate_queue(data.get("task_queue"))
+        if type(data.get("ledger_cursor", 0)) is not int or data.get("ledger_cursor", 0) < 0:
+            raise ValueError("无效的执行账本序号")
+        validate_history(data["history"])
+        validate_compaction(data.get("compaction"), data["history"])
+        validate_loaded_tool_groups(data.get("loaded_tool_groups", []))
+    except (KeyError, TypeError, ValueError, LLMError):
+        raise ValueError("无效的会话提交内容") from None
+
+
 class SessionStore:
     def __init__(self, project, *, new=False, directory=None, name=None):
         self.project = Path(project).resolve(strict=True)
@@ -145,6 +182,9 @@ class SessionStore:
                 lock_descriptor(self._lock_fd, blocking=False)
             except BlockingIOError:
                 raise ValueError("此项目已有 Agent 会话运行，请退出该会话后再启动") from None
+            # Repair an interrupted multi-file commit before choosing a session.
+            with self.catalog.locked():
+                pass
             if not self.new:
                 self._load()
             if self.data is not None and self.requested_name is not None:
@@ -165,32 +205,7 @@ class SessionStore:
             if not isinstance(sid, str) or not SESSION_ID.fullmatch(sid):
                 raise ValueError
             data = _read(self.directory / f"{sid}.json")
-            if (
-                data["version"] != 1
-                or data["session_id"] != sid
-                or data["project"] != str(self.project)
-                or not isinstance(data["model"], dict)
-                or not isinstance(data["status"], dict)
-                or not isinstance(data["transcript"], list)
-                or data["mode"] not in {"local", "native", "docker"}
-                or type(data.get("sandbox_healthy")) is not bool
-                or (
-                    data["mode"] == "docker"
-                    and (
-                        not isinstance(data.get("sandbox"), str)
-                        or not Path(data["sandbox"]).is_absolute()
-                    )
-                )
-                or set(data["model"]) != {"provider", "model", "endpoint"}
-                or not all(isinstance(v, str) and v for v in data["model"].values())
-                or (data["pending_task"] is not None and not isinstance(data["pending_task"], str))
-                or type(data["task_number"]) is not int
-                or data["task_number"] < 0
-            ):
-                raise ValueError
-            validate_history(data["history"])
-            validate_compaction(data.get("compaction"), data["history"])
-            validate_loaded_tool_groups(data.get("loaded_tool_groups", []))
+            validate_record(data, self.project, sid)
             self.id, self.data = sid, data
         except (KeyError, TypeError, ValueError, OSError, LLMError) as error:
             raise ValueError(
@@ -203,6 +218,7 @@ class SessionStore:
         if len(content) > MAX_BYTES:
             raise ValueError("会话记录超过 64 MiB，无法保存；请启动新会话")
         atomic_write(path, content, prefix=".session-", sync=True)
+        sync_directory(path.parent)
 
     def save(self, data):
         if self._lock_fd is None:
@@ -214,17 +230,18 @@ class SessionStore:
             "project": str(self.project),
             "updated_at": datetime.now(UTC).isoformat(),
         }
+        validate_queue(record.get("task_queue"))
         validate_history(record["history"])
         validate_compaction(record.get("compaction"), record["history"])
         validate_loaded_tool_groups(record.get("loaded_tool_groups", []))
         with self.catalog.locked() as index:
             metadata = index["sessions"][self.id]
             record.update({key: metadata[key] for key in ("name", "sequence", "created_at")})
-            self._write(self.directory / f"{self.id}.json", record)
-            metadata["updated_at"] = record["updated_at"]
-            index["active_id"] = self.id
-            self.catalog.write_index(index)
-            self._write(self.directory / "latest.json", {"session_id": self.id})
+            record["commit_revision"] = index.get("commit_revision", 0) + 1
+            validate_record(record, self.project, self.id)
+            # Durable redo record is the authority while publication is incomplete.
+            self._write(self.directory / ".pending-save", record)
+            self.catalog.complete_commit(index, record)
         self.data = record
 
     def close(self):
@@ -275,6 +292,40 @@ class SessionCatalog:
     def write_index(self, index):
         self._write(self.directory / "index", index)
 
+    def complete_commit(self, index, record):
+        if not isinstance(record, dict):
+            raise ValueError("无效的会话提交记录")
+        sid = record.get("session_id")
+        validate_record(record, self.project, sid)
+        if (
+            not isinstance(sid, str)
+            or not SESSION_ID.fullmatch(sid)
+            or record["project"] != str(self.project)
+            or type(record.get("commit_revision")) is not int
+            or record["commit_revision"] < 1
+            or record["commit_revision"] < index.get("commit_revision", 0)
+        ):
+            raise ValueError("会话提交记录无效，请保留 .pending-save 并修复")
+        if sid not in index["sessions"]:
+            # A missing index may be reconstructed only with non-conflicting metadata.
+            if any(row["sequence"] == record["sequence"] for row in index["sessions"].values()):
+                raise ValueError("待恢复会话序号冲突")
+            validate_name(record["name"])
+            index["sessions"][sid] = {
+                key: record[key] for key in ("name", "sequence", "created_at", "updated_at")
+            }
+            index["next_sequence"] = max(index["next_sequence"], record["sequence"] + 1)
+        metadata = index["sessions"][sid]
+        record.update({key: metadata[key] for key in ("name", "sequence", "created_at")})
+        self._write(self.directory / f"{sid}.json", record)
+        metadata["updated_at"] = record["updated_at"]
+        index["active_id"] = sid
+        index["commit_revision"] = max(index.get("commit_revision", 0), record["commit_revision"])
+        self.write_index(index)
+        self._write(self.directory / "latest.json", {"session_id": sid})
+        (self.directory / ".pending-save").unlink()
+        sync_directory(self.directory)
+
     @contextmanager
     def locked(self):
         if self.directory.is_symlink():
@@ -291,6 +342,8 @@ class SessionCatalog:
                     or index.get("version") != 1
                     or type(index.get("next_sequence")) is not int
                     or not isinstance(index.get("sessions"), dict)
+                    or type(index.get("commit_revision", 0)) is not int
+                    or index.get("commit_revision", 0) < 0
                 ):
                     raise ValueError("会话索引损坏，请保留记录并修复 index")
                 numbers = set()
@@ -311,6 +364,9 @@ class SessionCatalog:
                     raise ValueError("会话序号索引损坏")
             else:
                 index = {"version": 1, "next_sequence": 1, "sessions": {}}
+            pending = self.directory / ".pending-save"
+            if pending.exists() or pending.is_symlink():
+                self.complete_commit(index, _read(pending))
             changed = False
             self.warnings = []
             # Old snapshots receive numbers once, oldest recorded activity first.
@@ -330,7 +386,11 @@ class SessionCatalog:
                     when = data.get("updated_at")
                     if not isinstance(when, str):
                         raise ValueError("缺少更新时间")
+                    revision = data.get("commit_revision", 0)
+                    if type(revision) is not int or revision < 0:
+                        raise ValueError("无效的会话提交版本")
                     self._allocate(index, path.stem, when=when)
+                    index["commit_revision"] = max(index.get("commit_revision", 0), revision)
                     changed = True
                 except (OSError, ValueError, AttributeError) as error:
                     self.warnings.append(f"无法读取旧会话 {path.stem[:8]}：{error}")

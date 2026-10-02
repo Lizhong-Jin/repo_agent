@@ -44,6 +44,7 @@ def create_bindings(ui):
             ui.phase = "任务运行中；结束后可切换思考设置"
         elif ui.thinking:
             try:
+                ui.controller.require_idle_configuration()
                 ui.thinking.cycle()
                 ui.refresh_footer()
             except (ValueError, OSError, LLMError) as error:
@@ -81,7 +82,7 @@ def create_bindings(ui):
             ui.cancel_model()
             return
         if ui.busy:
-            ui.cancelled.set()
+            ui.stop_task()
             ui.phase = "正在停止；正在取消请求并等待安全收尾…"
         else:
             ui.editor.text = ""
@@ -96,7 +97,7 @@ def create_bindings(ui):
             ui.cancel_model()
             return
         if ui.busy:
-            ui.cancelled.set()
+            ui.stop_task()
             ui.phase = "正在停止；结束后再次 Ctrl+D 退出"
         elif not ui.editor.text:
             ui.app.exit()

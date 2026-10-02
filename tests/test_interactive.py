@@ -164,7 +164,7 @@ def test_error_or_interrupt_after_write_resets_context_and_accepts_next_task(
             reply("recovered"),
         ]
     )
-    inputs(monkeypatch, ["write file", "next task", "/exit"])
+    inputs(monkeypatch, ["write file", "next task", "/queue resume", "/exit"])
     run_interactive(AgentRuntime(model, [WriteFileTool(tmp_path)]))
     assert (tmp_path / "a").read_text() == "kept"
     assert [m.role for m in model.requests[-1].messages] == ["system", "user"]
@@ -194,7 +194,7 @@ def test_continue_after_step_limit_has_a_fresh_budget(tmp_path, monkeypatch, cap
             reply("finished"),
         ]
     )
-    inputs(monkeypatch, ["read", "continue", "/exit"])
+    inputs(monkeypatch, ["read", "continue", "/queue resume", "/exit"])
     run_interactive(AgentRuntime(model, [ReadFileTool(tmp_path)], max_steps=1))
     assert model.requests[1].messages[-2].role == "tool"
     assert model.requests[1].messages[-1].content == "continue"

@@ -32,6 +32,7 @@
 | `terminal/application.py` | 全屏界面状态、命令交互、任务结果接收与退出协调 |
 | `terminal/layout.py`、`terminal/bindings.py`、`terminal/widgets.py` | 布局、快捷键、消息样式与滚动组件 |
 | `session_status.py`、`thinking_control.py` | 核心会话状态的终端描述、命令解析、偏好存储装配 |
+| `task_controller.py` | 三种入口共用的持久化队列调度、取消与结果提交 |
 | `runtime_events.py`、`task_execution.py`、`writeback.py` | 事件投递与回调恢复、后台执行、任务边界回写 |
 | `conversation_help.py` | 普通终端与 TUI 共用的帮助和提示 |
 | `config_command.py`、`models.py`、`model_picker.py` | 配置命令、模型选择流程与选择界面 |
@@ -185,3 +186,11 @@ wheel 内配置模板、依赖锁和 Docker 上下文现在位于 `installer/res
 正式发行包需要按新结构重新构建；目录迁移不会自动更新已有下载包。不要用同一已交付版本号覆盖内容不同的发行包。
 
 Rust `src/scan_pool.rs` 提供每次调用的有界线程池；`policy_scan/engine.rs` 和 `filesystem/mod.rs` 分别协调 Linux 策略与 macOS 预检。工作线程读取目录事实，主协调者维护路径节点、缓存与最终安全检查。详见 [有限并行扫描](../rust/docs/scan-parallel.md)。
+
+### 队列与任务执行
+
+`agent/task_queue.py` 保存纯状态；`cli/task_controller.py` 协调会话持久化和单项执行器，不依赖 TUI。`TaskRunner` 返回任务、回写、清理的结构化结果，控制器确认完整结果保存后才能推进下一项。工作线程的自动压缩和主线程的队列更新共用会话状态锁。详见[任务队列](task-queue.md)。
+
+### 工具执行证据与提交修复
+
+`agent/execution_ledger.py` 管理执行证据事务；Runtime 注入结果回执，分派器在取消检查前提交结果，工具和界面不直接访问数据库。会话记录通过 `ledger_cursor` 关联证据。`SessionStore` 使用 `.pending-save` 与单调提交版本修复会话、索引和最新指针的部分发布，保持原有名称权威规则。详见[执行账本与崩溃恢复](execution-ledger.md)。

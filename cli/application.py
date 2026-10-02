@@ -4,14 +4,13 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from agent.session import SessionStore
-from host_support.cancellation import RunCancelled, cancellation_scope
 from tools._internal.web_backend import WebBackend
 
 from .execution_environment import open_execution_environment
-from .interactive import display_result, run_interactive
+from .interactive import run_interactive
 from .models import ModelControl
 from .runtime_setup import open_runtime
-from .writeback import finish_writeback
+from .task_controller import TaskController
 
 
 def save_before_close(conversation):
@@ -20,23 +19,29 @@ def save_before_close(conversation):
 
 
 def run_single_task(args, session, sandbox):
-    if sandbox is not None and args.sandbox_writeback == "on-success":
-        sandbox.begin_task()
+    controller = TaskController(
+        session.runtime,
+        conversation=session.conversation,
+        sandbox=sandbox,
+        writeback=args.sandbox_writeback,
+        status=session.status,
+    )
+    if controller.queue.pending:
+        raise ValueError("已有待执行队列；请进入交互模式处理，或使用 --new-session")
+    controller.resume()  # --task is an explicit request; never resumes older queued work.
     print(session.thinking.describe())
-    session.conversation.start_task(args.task)
-    try:
-        with cancellation_scope(handle_sigint=True):
-            result = session.runtime.run(args.task, history=session.conversation.history)
-    except RunCancelled as error:
-        if sandbox is not None:
-            sandbox.guard.needs_review = True
-        session.conversation.fail_task(cancellation=error.report)
-        raise
-    display_result(result)
+    controller.enqueue(args.task)
+    task = controller.start_next()
+    if task is None:
+        return False
+    outcome = controller.execute(task)
+    state = controller.finish(task, outcome)
     print(session.status.describe())
-    writeback_ok = finish_writeback(sandbox, result, args.sandbox_writeback)
-    session.conversation.finish_task(result)
-    return result.status == "completed" and writeback_ok
+    if outcome.kind == "cancelled":
+        raise outcome.value
+    if state != "completed":
+        print(controller.queue.data["reason"])
+    return state == "completed"
 
 
 def run_application(args, capabilities):

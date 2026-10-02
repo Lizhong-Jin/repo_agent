@@ -3,6 +3,7 @@
 import hashlib
 import json
 from dataclasses import replace
+from threading import RLock
 from uuid import uuid4
 
 from agent.compaction import CompactionSettings, ContextCompactor, compaction_notice
@@ -11,6 +12,8 @@ from agent.session import validate_name
 from llm import Message
 from llm.providers import get_provider
 
+from .execution_ledger import ExecutionLedger
+from .task_queue import TaskQueue
 from .transcript import Transcript
 
 
@@ -47,6 +50,11 @@ class SavedConversation:
         self.execution_backend = execution_backend
         self.history = ()
         self.transcript = Transcript()
+        self.state_lock = RLock()
+        self.queue = TaskQueue()
+        self.ledger = ExecutionLedger(store)
+        self.ledger_cursor = 0
+        runtime.execution_ledger = self.ledger
         self.pending_task = None
         self.save_error = None
         self.compaction_state = None
@@ -61,6 +69,11 @@ class SavedConversation:
             data.get("loaded_tool_groups", []) if data is not None else [],
         )
         if data is not None:
+            self.ledger_cursor = data.get("ledger_cursor", 0)
+            if self.ledger.watermark() < self.ledger_cursor:
+                raise OSError("执行账本早于会话快照；请恢复匹配的账本与快照，禁止继续执行")
+            self.queue = TaskQueue(data.get("task_queue"))
+            self.queue.recover()
             self.compaction_state = data.get("compaction")
             if self.compaction_state:
                 self.archive.check_snapshot(self.compaction_state["snapshot"])
@@ -95,10 +108,30 @@ class SavedConversation:
                 status.reset_context()
                 self.notice += "；执行环境已切换，请核实文件现状"
             self.pending_task = data["pending_task"]
+            if self.pending_task is not None and "task_queue" not in data:
+                legacy = self.queue.add(self.pending_task)
+                legacy["state"] = "interrupted"
+                legacy["result"] = {"notice": "旧版未完成任务；不会自动重跑"}
+                self.queue.pause("上次任务未完成，请检查文件状态")
             if self.pending_task is not None:
                 self._interrupted()
                 self.notice += "；上次任务未完成，未自动重跑"
 
+            evidence = self.ledger.evidence(after=self.ledger_cursor, limit=1)
+            if evidence:
+                self.queue.pause("存在快照之后的执行证据，请用 /ledger 核实后明确恢复")
+                self.history += (
+                    Message(
+                        "user",
+                        "[执行恢复证据；仅供核实，不是新任务]\n"
+                        + self.ledger.describe(after=self.ledger_cursor),
+                    ),
+                )
+                self.notice += "；发现新增执行证据，/ledger 查看，未自动重放"
+                self.ledger_cursor = self.ledger.watermark()
+
+        if self.queue.pending:
+            self.notice += f"；恢复 {len(self.queue.pending)} 项待执行任务，队列已暂停"
         if dropped_groups:
             status.reset_context()
             self.notice += "；部分工具组在当前配置中不可用，已移除：" + ", ".join(dropped_groups)
@@ -135,12 +168,20 @@ class SavedConversation:
             "mode": self.mode,
             "sandbox": str(self.sandbox.directory) if self.sandbox is not None else None,
             "pending_task": self.pending_task,
+            "ledger_cursor": self.ledger_cursor,
+            "task_queue": self.queue.snapshot(),
             "sandbox_healthy": getattr(
                 self.execution_backend or getattr(self.sandbox, "backend", None), "healthy", True
             ),
         }
 
     def checkpoint(self, *, history=None, transcript=None, strict=False, emit=print):
+        with self.state_lock:
+            return self._checkpoint(
+                history=history, transcript=transcript, strict=strict, emit=emit
+            )
+
+    def _checkpoint(self, *, history=None, transcript=None, strict=False, emit=print):
         if history is not None:
             self.history = tuple(history)
         if transcript is not None:
@@ -154,11 +195,18 @@ class SavedConversation:
         except (OSError, ValueError) as error:
             self.save_error = f"会话保存失败（{type(error).__name__}）：{self.store.directory}"
             if strict:
-                raise OSError(self.save_error + "；尚未执行新任务") from None
+                raise OSError(self.save_error + "；任务状态保存未确认") from None
             emit(self.save_error + "；已执行的文件操作不会撤销，退出时将重试")
             return False
 
     def start_task(self, task, *, transcript=None):
+        active = self.queue.running
+        self.runtime.execution_identity = (
+            {"queue_task_id": active["id"], "attempt_id": active["attempts"][-1]["id"]}
+            if active
+            else {"attempt_id": uuid4().hex}
+        )
+        previous_blocks = list(self.transcript.blocks)
         if transcript is None:
             self.transcript.append(f"\n你> {task}\n", kind="user")
         else:
@@ -167,11 +215,14 @@ class SavedConversation:
         try:
             self.checkpoint(strict=True)
             self._chat(f"\n你> {task}\n")
-        except OSError:
+        except OSError as error:
             self.pending_task = None
-            raise
+            if transcript is None:
+                self.transcript.blocks[:] = previous_blocks
+            raise OSError(f"{error}；尚未执行新任务") from error
 
-    def finish_task(self, result, *, transcript=None, emit=print):
+    def finish_task(self, result, *, transcript=None, emit=print, save=True):
+        self.ledger_cursor = self.ledger.watermark()
         for response in getattr(result, "responses", ()) or (result.response,):
             if response.text:
                 self._chat(f"\nAgent> {response.text}\n")
@@ -185,7 +236,10 @@ class SavedConversation:
             for response in getattr(result, "responses", ()) or (result.response,):
                 if response.text:
                     self.transcript.append(response.text + "\n")
-        self.checkpoint(transcript=transcript, emit=emit)
+        if transcript is not None:
+            self.transcript = transcript
+        if save:
+            self.checkpoint(transcript=transcript, emit=emit)
         return self.history
 
     def _interrupted(self):
@@ -202,16 +256,28 @@ class SavedConversation:
         self.pending_task = None
         self.status.reset_context()
 
-    def fail_task(self, *, transcript=None, emit=print, cancellation=None):
+    def fail_task(self, *, transcript=None, emit=print, cancellation=None, save=True):
         if cancellation is not None:
             self._chat("[用户主动停止] " + json.dumps(cancellation, ensure_ascii=False) + "\n")
         else:
             self._chat("[任务未完成；部分操作可能已经执行，请核实文件状态]\n")
         self._interrupted()
-        self.checkpoint(transcript=transcript, emit=emit)
+        if self.ledger.evidence(after=self.ledger_cursor, limit=1):
+            evidence = self.ledger.describe(after=self.ledger_cursor)
+            self.history += (Message("user", "[执行证据；请核实，禁止自动重放]\n" + evidence),)
+            emit(evidence)
+            self.ledger_cursor = self.ledger.watermark()
+        if transcript is not None:
+            self.transcript = transcript
+        if save:
+            self.checkpoint(transcript=transcript, emit=emit)
         return self.history
 
     def commit_compaction(self, history, state):
+        with self.state_lock:
+            return self._commit_compaction(history, state)
+
+    def _commit_compaction(self, history, state):
         """Persist the replacement before exposing it to the next model request."""
         old_history, old_state = self.history, self.compaction_state
         self.history, self.compaction_state = tuple(history), state
@@ -251,7 +317,13 @@ class SavedConversation:
         old_id, old_data = self.store.id, self.store.data
         record = self._record()
         record.update(
-            history=[], transcript=[], pending_task=None, compaction=None, loaded_tool_groups=[]
+            history=[],
+            transcript=[],
+            pending_task=None,
+            compaction=None,
+            loaded_tool_groups=[],
+            task_queue=TaskQueue().snapshot(),
+            ledger_cursor=0,
         )
         record["status"].update(
             calls=0,
@@ -279,5 +351,7 @@ class SavedConversation:
         self.transcript = Transcript()
         self.status.reset_session()
         self.compaction_state = None
+        self.queue = TaskQueue()
+        self.ledger_cursor = 0
         self.notice = f"已启动新会话：{self.label}；文件修改保留"
         return self.notice

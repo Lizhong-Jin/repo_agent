@@ -428,6 +428,15 @@ def test_tui_cancel_stops_process_and_allows_fresh_task(tmp_path, monkeypatch):
                 assert runtime.last_stats.status == "cancelled"
                 assert first.report()["cleanup_status"] in {"confirmed", "unknown"}
                 pipe.send_text("second\r")
+                await until(lambda: len(ui.controller.queue.pending) == 1)
+                assert ui.controller.queue.paused and runtime.llm.calls == 1
+                pipe.send_text("/queue resume\r")
+                if first.report()["cleanup_status"] == "unknown":
+                    await until(lambda: "进程清理尚未确认" in ui.phase)
+                    assert runtime.llm.calls == 1
+                    pipe.send_text("\x04")
+                    await asyncio.wait_for(task, 5)
+                    return
                 await until(lambda: "fresh task complete" in ui.transcript)
                 await until(lambda: not ui.busy)
                 assert ui.cancellation is not first and not ui.cancelled.is_set()

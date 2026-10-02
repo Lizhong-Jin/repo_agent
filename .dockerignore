@@ -57,6 +57,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !agent/compaction_diagnostics.py
 !agent/compaction_summary.py
 !agent/conversation.py
+!agent/execution_ledger.py
 !agent/history.py
 !agent/prompt.py
 !agent/runtime.py
@@ -68,6 +69,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !agent/skills/builtin/gpu-kernel-development/SKILL.md
 !agent/skills/registry.py
 !agent/skills/tool.py
+!agent/task_queue.py
 !agent/thinking.py
 !agent/transcript.py
 !build_manifest.py
@@ -96,6 +98,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !cli/settings.py
 !cli/shortcuts.py
 !cli/startup.py
+!cli/task_controller.py
 !cli/task_execution.py
 !cli/terminal/__init__.py
 !cli/terminal/application.py
@@ -118,6 +121,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !host_support/cancellation.py
 !host_support/diagnostics.py
 !host_support/execution.py
+!host_support/execution_receipt.py
 !host_support/file_scan.py
 !host_support/filesystem.py
 !host_support/integration.py

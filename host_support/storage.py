@@ -8,6 +8,16 @@ from pathlib import Path
 from .filesystem import open_directory, open_file, rename_at, set_file_mode, unlink_at
 
 
+def sync_directory(path):
+    """Persist rename/unlink ordering on POSIX; Windows has no equivalent here."""
+    if os.name == "posix":
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
 def atomic_write(path, content, *, prefix=".state-", sync=False, mode=None, before_replace=None):
     path = Path(path)
     if os.name == "nt":
