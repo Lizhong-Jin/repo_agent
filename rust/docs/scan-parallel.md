@@ -1,6 +1,7 @@
 # 工作区预检与隔离策略的有限并行
 
-rust-backend 0.5.0 增加 `SCAN_PARALLEL_VERSION=1`，保持策略 API 1、文件系统 API 2。
+rust-backend 0.5.0 增加 `SCAN_PARALLEL_VERSION=1`，0.6.0 增加目录任务批处理和
+`SCAN_BATCH_VERSION=1`，保持策略 API 1、文件系统 API 2。
 仅在选择 Rust 后端时生效；Python 后端以及文件工具的 find/search/read 顺序不变。
 
 ## 配置
@@ -8,12 +9,21 @@ rust-backend 0.5.0 增加 `SCAN_PARALLEL_VERSION=1`，保持策略 API 1、文�
 ```dotenv
 AGENT_NATIVE_SCANNER=rust
 AGENT_SCAN_WORKERS=2
+AGENT_SCAN_BATCH_SIZE=32
 ```
 
 `AGENT_SCAN_WORKERS` 是每次扫描的并发上限，默认或空值为 2；1 使用原串行实现，
 允许范围为 1～8。可写入用户配置或项目 `.env`，也可以设置环境变量；配置命令支持
 查看、保存、校验。Rust 在每次扫描开始时再次检查非法值，出错拒绝执行。
-此选项需要 0.5.0 或更新扩展，旧扩展不会提供此能力。
+线程选项需要 0.5.0 或更新扩展。0.6.0 的 `AGENT_SCAN_BATCH_SIZE` 指每任务最多
+合并的目录数，默认/空值 32，范围 1～64；1 是逐目录派发对照，单线程不使用批处理。
+两个选项都接入配置命令和运行时校验。默认线程数仍为 2，没有按平台自动改成串行。
+
+批次只包含协调者已经发现、允许扫描的目录，不让工作线程自行递归扩张扫描范围。
+待扫描数量较小时，会按空闲工作槽位分摊，避免一个批次占完所有待处理目录。
+Linux 可合并独立目录；macOS 只合并连续的同父目录任务，共享一个固定的父句柄。
+每批目录顺序处理、整批返回；协调者归并完整批次后才补充该槽位。出现错误立即终止
+本批后续目录，所有已汇总结果仍需通过最终屏障才可用于执行。
 
 扫描首先在调用线程处理目录，只有出现至少两个待扫描目录时才创建线程池。
 单个大目录、空树和只有单条目录链的扫描不会因为该选项启动工作线程；目录内部仍按
@@ -27,8 +37,9 @@ AGENT_SCAN_WORKERS=2
   根目录依原计划依次处理，根内部并行；根之间共享单次调用的事实缓存，避免并行扫描
   别名根时重复读取相同目录。工作区仍不会错误复用外部根事实来跳过安全检查。
 - **macOS 工作区预检**：`src/filesystem/mod.rs`。
-  协调线程通过共享的 32 项目录句柄缓存相对打开目录，向任务移交独立 OwnedFd。
-  工作线程用独立 DIR 流枚举，对每个条目执行 nofollow fstatat，并检查普通文件硬链接。
+  协调线程通过共享的 32 项目录句柄缓存相对打开父目录，向每批移交独立 OwnedFd。
+  工作线程逐个相对打开子目录，用独立 DIR 流枚举，对每个条目执行 nofollow fstatat，
+  并检查普通文件硬链接；不会提前打开整批子目录。
   符号链接不递归；macOS 仍允许 FIFO，与 Linux 预检的特殊文件限制保持区别。
 - 共用执行器：`src/scan_pool.rs`。线程池仅存活于本次调用，不跨扫描缓存文件系统事实。
 
@@ -57,22 +68,33 @@ Linux 仍在扫描完成后复核根的 canonical/dev/ino、挂载布局及保�
 
 ## 资源边界与诊断
 
-- 在途窗口最多 W，涵盖排队、执行、已完成但未收取的任务。只有协调线程派发，工作
-  线程不会递归向任务队列追加工作。结果通道虽然采用非阻塞发送，但在途窗口限制其
-  最多保存 W 个目录结果，不会出现工作线程等待协调者派发而相互阻塞。
-- Linux 每个任务至多一个目录 fd；扫描期间上界 W。macOS 缓存是全扫描共享的 32 项，
-  不按线程复制；加根 fd、在途目录 fd/枚举流与打开瞬间临时 fd，上界为 `33 + 2W`。
-  所有上界均为本次扫描额外持有的句柄，不包括进程其他文件/库。
-- 每个线程复用一个 256 项枚举块与名称缓冲；路径节点仍按引用释放。macOS 并行路径
-  为每个目录任务保存一个错误定位路径，但不会为每个普通文件构造完整路径。
-- **整个扫描内存并非常数**：待发现目录 frontier、每目录保留的子目录/保护事实、结果集、
-  Linux 别名缓存仍随树大小增长；当前没有为这些结构设置全局字节配额。并行额外保留
-  最多 W 个目录的结果，超宽目录仍可能产生较大的结果对象。
+- 在途窗口最多 W **个批次**，涵盖排队、执行和已完成但未归并的结果，每批最多 B 个
+  目录，总目录数量上界 W×B。结果通道的发送不阻塞；协调者先归并完整已收取批次，
+  再派发新批次，避免已完成的结果在窗口之外无限堆积。工作线程不递归追加目录任务。
+- Linux 每个工作线程逐个打开本批目录，目录 fd 上界仍为 W，与 B 无关。macOS 每批
+  一个父目录 fd、一个当前子目录 fd、一个枚举流，加共享根及最多 32 个缓存，上界
+  为 `33 + 3W`。单线程仍为原实现的最多 35。这些是扫描自身的保守上界，不包括进程
+  其他调用；批大小不会将 fd 数扩大到 W×B。
+- 每个线程复用一个 256 项枚举块。路径节点仍按引用释放；macOS 每个待扫描目录保留
+  一个错误定位路径及组件名，不为每个普通文件构造完整路径。
+- 整个扫描内存并非常数：frontier、目录事实、保护结果、Linux 别名缓存随树增长。
+  返回缓冲最多保留 W×B 个目录的事实，没有全局字节配额；极宽目录产生的大对象仍
+  可能增加峰值。批大小是任务数量限制，不是所有结果的字节上限。
 
-`profile_workspace` / `RustPolicyScanner.last_diagnostics` 增加 `workers`（配置上限）和
-`in_flight_peak`（含已完成未收取的任务峰值，串行目录工作计为 1）。`directory_handles_peak`
-在并行模式是保守高水位上界，可能大于真正同时打开的数量。枚举块指标为单块峰值，
-不是全线程缓冲合计。`pending_tasks_peak` 仅统计尚未派发目录，与在途窗口分开。
+诊断来自 `profile_workspace` / `RustPolicyScanner.last_diagnostics`：
+
+| 字段 | 含义 |
+| --- | --- |
+| workers / batch_size | 配置的线程上限 / 每批目录上限；单线程不使用批处理 |
+| batches_submitted | 实际通过线程池派发的批次数；主线程直接扫描和别名缓存命中不计入 |
+| directories_submitted | 上述批次包含的目录总数；失败时可能包括未执行的批内剩余目录 |
+| batch_directories_peak | 单批目录数量峰值，≤ B |
+| in_flight_peak | 在途批次峰值，≤ W；主线程直接工作也将其至少记为 1 |
+| in_flight_directories_peak | 提交时在途目录数量峰值，≤ W×B |
+| directory_handles_peak | 串行实际峰值 / 并行保守 fd 高水位上界 |
+
+枚举缓冲指标仍为单块峰值，不是所有线程合计。pending_tasks_peak 是尚未派发目录的
+frontier 峰值，和在途批次分开。失败时所有统计可能仅覆盖部分工作。
 
 策略计数保持可与 Python 对照；失败时只覆盖已汇总工作。并行阶段的 enumeration/rules/
 metadata/workspace_validation 毫秒是累计工作耗时，不能相加后与 scan_ms 墙钟比较。
@@ -83,16 +105,31 @@ metadata/workspace_validation 毫秒是累计工作耗时，不能相加后与 s
 ## 测试与测量
 
 ```sh
-python -m pytest -q tests/test_rust_policy_scan.py tests/test_scan_parallel.py
-python scripts/benchmark_scan_parallel.py --workers 1 2 4 --repeats 11
-# 将临时树放在需要测试的真实文件系统上：
-python scripts/benchmark_scan_parallel.py --temporary-parent /path/to/test-filesystem
-# 单宽目录与深目录的内存/时间对照：
-AGENT_SCAN_WORKERS=1 python scripts/benchmark_scan_memory.py --operations policy workspace
-AGENT_SCAN_WORKERS=2 python scripts/benchmark_scan_memory.py --operations policy workspace
+python -m pytest -q tests/test_rust_policy_scan.py tests/test_scan_parallel.py tests/test_scan_benchmark.py
+# 默认 8192 个子目录，嵌套分支，每目录 4～12 个文件；交错比较 1/2/4 线程与批大小 1/16/32/64
+python scripts/benchmark_scan_parallel.py --repeats 7
+# WSL：把生成的树放在实际项目所在文件系统
+python scripts/benchmark_scan_parallel.py --temporary-parent /home/your-user --directories 43645
+# 只读扫描真实环境，不创建/修改其中的文件；默认仅比较 policy-read
+python scripts/benchmark_scan_parallel.py --root /home/your-user/anaconda3 --repeats 7
+# 保留此前“少量宽目录”基准，默认 128 目录 × 128 文件
+python scripts/benchmark_scan_parallel.py --shape wide
+# 旧版 wheel 没有批处理能力时，只比较线程数
+python scripts/benchmark_scan_parallel.py --extension-dir /tmp/old-extension --batch-sizes 1
 ```
 
-策略差分覆盖 1/2/4 线程；资源上限覆盖 1/2/4/8；包括别名、保护路径、Unicode、拒绝访问、
-特殊文件、硬链接、多次取消后的 fd 回收、无序完成、worker panic。基准单独子进程测量，
-临时生成并删除数据，含每次调用的线程启停，使用热缓存中位数。实际提升取决于目录分布、
-元数据延迟及文件系统争用，不能由 macOS 合成树推断 WSL2/Conda 的收益。
+串行基线 w1-b1 始终加入；每个场景在独立子进程内复用扫描器，预热各配置后每轮按
+固定随机种子交错配置顺序，记录每次采样及中位数/范围。计时包括线程创建、扫描和回收，
+不包括建树、结果指纹验证、命令进程或账本。CPU 与主动/被动上下文切换取同次调用的
+RUSAGE_SELF 差值，包含进程全部线程；不能据此直接归因某把锁。诊断及策略计数保留
+最后一次采样值，策略扫描每次结果的掩蔽/Git 集合与全局计数必须和串行基线一致，否则终止基准。
+真实树若在测量中变化也可能导致对照失败；只读扫描可能更新文件系统访问时间。
+
+small-dirs 是参考 WSL 报告构造的**合成树**，并不是复制真实 Conda 环境。真实目录
+模式只测指定读取根和空工作区，不自动加入完整 native 命令的系统/解释器读取根；
+在 macOS 上运行不能替代 Linux/WSL 的实测。
+真实根作为外部读取根使用，不会因其中的包缓存硬链接而被当作工作区拒绝；显式选择
+workspace/policy 场景时则照常执行对应的工作区安全检查。
+
+测试覆盖批大小 1/16/32/64、线程 1/2/4/8、别名缓存、保护路径、Unicode、权限拒绝、
+特殊文件、硬链接、取消与 fd 回收、批内父目录固定及替换符号链接拒绝。

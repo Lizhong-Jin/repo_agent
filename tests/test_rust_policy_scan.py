@@ -21,9 +21,11 @@ from scripts.benchmark_linux_policy import policy_backend
 from tools._internal.file_policy import PROTECTED_NAME_RULES
 
 
-@pytest.fixture(params=[1, 2, 4])
+@pytest.fixture(params=[(1, 1), (2, 1), (2, 16), (2, 32), (4, 64)])
 def engines(monkeypatch, request):
-    monkeypatch.setenv("AGENT_SCAN_WORKERS", str(request.param))
+    workers, batch = request.param
+    monkeypatch.setenv("AGENT_SCAN_WORKERS", str(workers))
+    monkeypatch.setenv("AGENT_SCAN_BATCH_SIZE", str(batch))
     pytest.importorskip("rust_backend")
     return PythonPolicyScanner(), RustPolicyScanner()
 

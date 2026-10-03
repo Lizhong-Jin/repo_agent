@@ -276,12 +276,46 @@ struct WorkspaceOutput {
     children: Vec<Vec<u8>>,
     stats: Diagnostics,
 }
-fn workspace_directory(
+struct WorkspaceEntry {
+    node: NodeId,
+    name: Option<CString>,
+    path: PathBuf,
+}
+struct WorkspaceTask {
+    // One pinned parent for an entire sibling batch; children open only as used.
+    parent: OwnedFd,
+    entries: Vec<WorkspaceEntry>,
+}
+fn workspace_directories(
     batch: &mut Batch,
-    job: WorkspaceJob,
+    task: WorkspaceTask,
     stop: &std::sync::atomic::AtomicBool,
-) -> Result<WorkspaceOutput> {
-    workspace_read(batch, job, || crate::scan_pool::checkpoint(stop))
+) -> Result<Vec<WorkspaceOutput>> {
+    workspace_batch_read(batch, task, || crate::scan_pool::checkpoint(stop))
+}
+fn workspace_batch_read(
+    batch: &mut Batch,
+    task: WorkspaceTask,
+    mut check: impl FnMut() -> Result<()>,
+) -> Result<Vec<WorkspaceOutput>> {
+    let mut outputs = Vec::with_capacity(task.entries.len());
+    for entry in task.entries {
+        check()?;
+        let directory = match entry.name {
+            Some(name) => open_cstr(task.parent.as_raw_fd(), &name, Some(&entry.path))?,
+            None => duplicate(task.parent.as_raw_fd())?,
+        };
+        outputs.push(workspace_read(
+            batch,
+            WorkspaceJob {
+                node: entry.node,
+                directory,
+                path: entry.path,
+            },
+            &mut check,
+        )?);
+    }
+    Ok(outputs)
 }
 fn workspace_read(
     batch: &mut Batch,
@@ -326,6 +360,7 @@ fn workspace_parallel(
     root: Vec<u8>,
     cancellation: Option<Py<PyAny>>,
     workers: usize,
+    batch_size: usize,
 ) -> Result<Diagnostics> {
     let mut check = Check::new(cancellation)?;
     let root_path = PathBuf::from(OsString::from_vec(root.clone()));
@@ -338,66 +373,103 @@ fn workspace_parallel(
     let mut pending = vec![paths.root()];
     let mut stats = Diagnostics {
         workers,
+        batch_size,
         pending_tasks_peak: 1,
         ..Diagnostics::default()
     };
-    let mut pool: Option<crate::scan_pool::Pool<WorkspaceJob, WorkspaceOutput>> = None;
+    let mut pool: Option<crate::scan_pool::Pool<WorkspaceTask, Vec<WorkspaceOutput>>> = None;
     let mut serial_batch = Batch::default();
+    let mut in_flight_directories = 0;
     let (mut path, mut scratch) = (PathBuf::new(), Vec::new());
     while !pending.is_empty() || pool.as_ref().is_some_and(|p| p.outstanding != 0) {
         if pool.is_none() && pending.len() >= 2 {
             pool = Some(crate::scan_pool::Pool::new(
                 workers,
                 |_| Batch::default(),
-                workspace_directory,
+                workspace_directories,
             )?);
         }
         let mut ready = None;
         while !pending.is_empty() && pool.as_ref().is_none_or(|p| p.outstanding < workers) {
             check.run(false)?;
+            let count = pool.as_ref().map_or(1, |p| {
+                crate::scan_pool::batch_target(pending.len(), workers - p.outstanding, batch_size)
+            });
             let node = pending.pop().unwrap();
-            let directory = cache
-                .open(&mut paths, node, &mut check, &mut stats)
+            let parent_node = paths.parent(node);
+            let parent = cache
+                .open(
+                    &mut paths,
+                    parent_node.unwrap_or(node),
+                    &mut check,
+                    &mut stats,
+                )
                 .map_err(|error| {
                     paths.write_path(node, &root_path, &mut path, &mut scratch);
                     error.at_path(&path)
                 })?;
-            paths.write_path(node, &root_path, &mut path, &mut scratch);
-            stats.path_materialized_bytes += path.as_os_str().len();
-            // Conservative bound: root/cache + two fds for each in-flight job,
-            // including transient opens in the coordinator. Not per-process fd usage.
-            stats.directory_handles_peak = stats
-                .directory_handles_peak
-                .max(cache.handles.len() + 3 + 2 * pool.as_ref().map_or(0, |p| p.outstanding));
-            let job = WorkspaceJob {
-                node,
-                directory,
-                path: path.clone(),
-            };
+            let mut entries = Vec::with_capacity(count);
+            let mut next = Some(node);
+            while let Some(node) = next {
+                check.run(false)?;
+                paths.write_path(node, &root_path, &mut path, &mut scratch);
+                stats.path_materialized_bytes += path.as_os_str().len();
+                entries.push(WorkspaceEntry {
+                    node,
+                    name: parent_node.map(|_| paths.name(node).to_owned()),
+                    path: path.clone(),
+                });
+                next = if entries.len() < count
+                    && pending
+                        .last()
+                        .is_some_and(|n| paths.parent(*n) == parent_node)
+                {
+                    pending.pop()
+                } else {
+                    None
+                };
+            }
+            // One parent, one current child, one stream per batch; never B child fds.
+            stats.directory_handles_peak = stats.directory_handles_peak.max(
+                cache.handles.len() + 1 + 3 * (pool.as_ref().map_or(0, |p| p.outstanding) + 1),
+            );
+            let count = entries.len();
+            let task = WorkspaceTask { parent, entries };
             if let Some(pool) = pool.as_mut() {
-                pool.submit(job)?;
-                stats.in_flight_peak = stats.in_flight_peak.max(pool.outstanding);
+                pool.submit(task)?;
+                in_flight_directories += count;
+                stats.submitted(count, in_flight_directories, pool.outstanding);
             } else {
                 stats.in_flight_peak = stats.in_flight_peak.max(1);
-                ready = Some(workspace_read(&mut serial_batch, job, || check.run(false))?);
+                ready = Some(workspace_batch_read(&mut serial_batch, task, || {
+                    check.run(false)
+                })?);
                 break;
             }
         }
-        let output = match ready {
-            Some(output) => output,
-            None => pool.as_mut().unwrap().receive(|| check.run(false))?,
+        let outputs = match ready {
+            Some(outputs) => outputs,
+            None => {
+                let outputs = pool.as_mut().unwrap().receive(|| check.run(false))?;
+                in_flight_directories -= outputs.len();
+                outputs
+            }
         };
-        stats.enumeration_entries_peak = stats
-            .enumeration_entries_peak
-            .max(output.stats.enumeration_entries_peak);
-        stats.enumeration_buffer_bytes_peak = stats
-            .enumeration_buffer_bytes_peak
-            .max(output.stats.enumeration_buffer_bytes_peak);
-        for name in output.children {
-            pending.push(paths.child(output.node, &name));
+        // Keep the completed batch's slot unavailable until all its facts are merged.
+        for output in outputs {
+            check.run(false)?;
+            stats.enumeration_entries_peak = stats
+                .enumeration_entries_peak
+                .max(output.stats.enumeration_entries_peak);
+            stats.enumeration_buffer_bytes_peak = stats
+                .enumeration_buffer_bytes_peak
+                .max(output.stats.enumeration_buffer_bytes_peak);
+            for name in output.children {
+                pending.push(paths.child(output.node, &name));
+            }
+            stats.pending_tasks_peak = stats.pending_tasks_peak.max(pending.len());
+            paths.release(output.node);
         }
-        stats.pending_tasks_peak = stats.pending_tasks_peak.max(pending.len());
-        paths.release(output.node);
     }
     drop(pool);
     cache.clear(&mut paths);
@@ -407,13 +479,15 @@ fn workspace_parallel(
 }
 fn workspace_dispatch(root: Vec<u8>, cancellation: Option<Py<PyAny>>) -> Result<Diagnostics> {
     let workers = crate::scan_pool::workers()?;
+    let batch_size = crate::scan_pool::batch_size()?;
     if workers == 1 {
         let mut stats = workspace_scan(root, cancellation)?;
         stats.workers = 1;
+        stats.batch_size = batch_size;
         stats.in_flight_peak = 1;
         Ok(stats)
     } else {
-        workspace_parallel(root, cancellation, workers)
+        workspace_parallel(root, cancellation, workers, batch_size)
     }
 }
 #[pyfunction]
@@ -450,6 +524,82 @@ mod tests {
     use super::*;
     use std::os::unix::ffi::OsStrExt;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn sibling_batch_keeps_parent_pinned_and_rejects_replacement_symlink() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!(
+            "batch-parent-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        struct Tree(PathBuf);
+        impl Drop for Tree {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let tree = Tree(root);
+        std::fs::create_dir_all(tree.0.join("parent/a")).unwrap();
+        std::fs::create_dir_all(tree.0.join("parent/b")).unwrap();
+        std::fs::create_dir_all(tree.0.join("outside")).unwrap();
+        let fd = open_at(
+            libc::AT_FDCWD,
+            tree.0.join("parent").as_os_str().as_bytes(),
+            None,
+        )
+        .unwrap();
+        std::fs::rename(tree.0.join("parent"), tree.0.join("moved")).unwrap();
+        symlink(tree.0.join("outside"), tree.0.join("parent")).unwrap();
+        let entries = ["a", "b"]
+            .into_iter()
+            .enumerate()
+            .map(|(node, name)| WorkspaceEntry {
+                node,
+                name: Some(CString::new(name).unwrap()),
+                path: tree.0.join("parent").join(name),
+            })
+            .collect();
+        let outputs = workspace_batch_read(
+            &mut Batch::default(),
+            WorkspaceTask {
+                parent: fd,
+                entries,
+            },
+            || Ok(()),
+        )
+        .unwrap();
+        assert_eq!(outputs.len(), 2);
+        std::fs::remove_dir(tree.0.join("moved/b")).unwrap();
+        symlink(tree.0.join("outside"), tree.0.join("moved/b")).unwrap();
+        let fd = open_at(
+            libc::AT_FDCWD,
+            tree.0.join("moved").as_os_str().as_bytes(),
+            None,
+        )
+        .unwrap();
+        let entries = ["a", "b"]
+            .into_iter()
+            .enumerate()
+            .map(|(node, name)| WorkspaceEntry {
+                node,
+                name: Some(CString::new(name).unwrap()),
+                path: tree.0.join("moved").join(name),
+            })
+            .collect();
+        assert!(workspace_batch_read(
+            &mut Batch::default(),
+            WorkspaceTask {
+                parent: fd,
+                entries
+            },
+            || Ok(())
+        )
+        .is_err());
+    }
 
     #[test]
     fn scan_cache_is_bounded_and_uses_pinned_ancestors() {

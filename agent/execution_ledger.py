@@ -6,6 +6,7 @@ import sqlite3
 import stat
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from threading import RLock
 
 from host_support.execution_receipt import PersistenceError
 from host_support.filesystem import open_file, set_file_mode
@@ -17,12 +18,19 @@ def encoded(value):
 
 class ExecutionLedger:
     def __init__(self, store):
+        self._lock = RLock()
         self.store = store
         self.path = (store.directory / "execution.sqlite3").absolute()
         self.required = bool((store.data or {}).get("ledger_cursor", 0))
 
     @contextmanager
     def connect(self, *, write=False):
+        with self._lock:
+            with self._connect(write=write) as db:
+                yield db
+
+    @contextmanager
+    def _connect(self, *, write=False):
         db = None
         try:
             if self.required and not self.path.exists():

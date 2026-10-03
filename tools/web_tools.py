@@ -15,10 +15,12 @@ from ._internal.web_backend import (
     normalize_domain,
 )
 from ._internal.web_http import MAX_URL_CHARS
+from .scheduling import INDEPENDENT
 
 
 class WebSearchTool:
     execution_kind = ExecutionKind.TRUSTED_NETWORK
+    scheduling_policy = INDEPENDENT
 
     def __init__(self, backend: WebBackend):
         self.backend = backend
@@ -107,6 +109,7 @@ class WebSearchTool:
 
 class WebFetchTool:
     execution_kind = ExecutionKind.TRUSTED_NETWORK
+    scheduling_policy = INDEPENDENT
 
     def __init__(self, backend: WebBackend):
         self.backend = backend

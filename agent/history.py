@@ -14,6 +14,7 @@ from host_support.filesystem import open_file, set_file_mode
 from llm import Message, ToolDefinition
 from llm.token_estimation import estimate_context_tokens
 from tools import ExecutionKind, ToolResult
+from tools.scheduling import INDEPENDENT
 
 from .session import SESSION_ID, validate_history
 
@@ -211,6 +212,7 @@ class HistoryArchive:
 
 class HistoryTool:
     execution_kind = ExecutionKind.HOST_CONTROL
+    scheduling_policy = INDEPENDENT
 
     def __init__(self, archive, operation):
         self.archive, self.operation = archive, operation

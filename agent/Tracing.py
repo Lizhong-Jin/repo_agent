@@ -68,6 +68,12 @@ class RunStats:
 
     task_id: str = field(default_factory=lambda: uuid4().hex)
     trace_error: str | None = None
+    tool_event: ToolCallRecord | None = field(default=None, repr=False)
+
+    @property
+    def current_tool(self):
+        """The call for this event; completion order can differ from input order."""
+        return self.tool_event or self.tool_calls[-1]
 
     def token_total(self, field_name: str) -> tuple[int | None, int]:
         """Return the known sum and the number of calls with a reported counter."""
@@ -152,7 +158,7 @@ def format_event(event: str, stats: RunStats) -> str:
                 f"，输出上限={call.max_output_tokens}"
             )
     elif event.startswith("tool_"):
-        call = stats.tool_calls[-1]
+        call = stats.current_tool
         label = f"工具 {call.name}（模型轮次 {call.step}, id={json.dumps(call.call_id)}, "
         if event == "tool_start":
             text = f"{label} 开始, 参数={json.dumps(call.arguments, ensure_ascii=False)}"
@@ -273,21 +279,41 @@ class RunTrace:
             record.elapsed_seconds = perf_counter() - started
             self.emit("model_end")
 
-    @contextmanager
-    def tool(self, step: int, call: ToolCall):
+    def start_tool(self, step, call):
         record = ToolCallRecord(step, call.id, call.name, summarize_arguments(call.arguments))
         self.stats.tool_calls.append(record)
         started = perf_counter()
-        self.emit("tool_start")
-        try:
-            yield record
-        except BaseException as error:
+        self._emit_tool("tool_start", record)
+        return record, started
+
+    def finish_tool(self, token, observation=None, error=None):
+        record, started = token
+        if error is not None:
             record.status = _failure_status(error)
             record.error_code = type(error).__name__
+        elif observation is not None:
+            self.tool_result(record, observation)
+        record.elapsed_seconds = perf_counter() - started
+        self._emit_tool("tool_end", record)
+
+    def _emit_tool(self, event, record):
+        self.stats.tool_event = record
+        try:
+            self.emit(event)
+        finally:
+            self.stats.tool_event = None
+
+    @contextmanager
+    def tool(self, step: int, call: ToolCall):
+        token = self.start_tool(step, call)
+        error = None
+        try:
+            yield token[0]
+        except BaseException as failure:
+            error = failure
             raise
         finally:
-            record.elapsed_seconds = perf_counter() - started
-            self.emit("tool_end")
+            self.finish_tool(token, error=error)
 
     @staticmethod
     def tool_result(record: ToolCallRecord, observation: Message) -> None:
@@ -435,7 +461,7 @@ class Tracer:
         elif event == "skill_loaded":
             record["skill"] = stats.skill_loads[-1]
         elif event.startswith("tool_"):
-            record["tool_call"] = asdict(stats.tool_calls[-1])
+            record["tool_call"] = asdict(stats.current_tool)
         elif event == "task_end":
             record.update(
                 status=stats.status,

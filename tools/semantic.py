@@ -31,6 +31,7 @@ from ._internal.lsp_client import (
     LspUnsupportedError,
 )
 from ._internal.lsp_config import LspLanguageConfig, LspRegistry, default_lsp_registry
+from .scheduling import SERIAL
 
 logger = logging.getLogger(__name__)
 
@@ -401,6 +402,7 @@ class GetSymbolsTool(LspToolBase):
     """
 
     execution_kind = ExecutionKind.SANDBOXED_PROCESS
+    scheduling_policy = SERIAL
 
     def __init__(
         self,
@@ -630,6 +632,7 @@ class GoToDefinitionsTool(LspToolBase):
     """
 
     execution_kind = ExecutionKind.SANDBOXED_PROCESS
+    scheduling_policy = SERIAL
 
     def __init__(
         self,
@@ -860,6 +863,7 @@ class FindReferencesTool(LspToolBase):
     """
 
     execution_kind = ExecutionKind.SANDBOXED_PROCESS
+    scheduling_policy = SERIAL
 
     def __init__(
         self,
@@ -1149,6 +1153,7 @@ class GetDiagnosticsTool(LspToolBase):
     """
 
     execution_kind = ExecutionKind.SANDBOXED_PROCESS
+    scheduling_policy = SERIAL
 
     def __init__(
         self,
@@ -1489,6 +1494,7 @@ class GetHoverTool(LspToolBase):
     """
 
     execution_kind = ExecutionKind.SANDBOXED_PROCESS
+    scheduling_policy = SERIAL
 
     def __init__(
         self,
@@ -1905,6 +1911,7 @@ class SearchWorkspaceSymbolsTool(LspToolBase):
     """
 
     execution_kind = ExecutionKind.SANDBOXED_PROCESS
+    scheduling_policy = SERIAL
 
     def __init__(
         self,

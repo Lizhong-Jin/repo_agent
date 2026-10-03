@@ -24,6 +24,7 @@ from ._internal.base import ExecutionKind, ToolResult
 from ._internal.errors import ToolErrorCode, tool_error
 from ._internal.file_policy import is_credential_path
 from ._internal.process_runner import ProcessRunner, ProcessStartError
+from .scheduling import SERIAL
 
 
 class _ProbeCleanupError(RuntimeError):
@@ -38,6 +39,7 @@ class GetExecutionEnvironmentTool:
     """
 
     execution_kind = ExecutionKind.SANDBOXED_PROCESS
+    scheduling_policy = SERIAL
 
     SECTIONS = ("execution", "system", "runtimes", "gpu")
     RUNTIME_COMMANDS = {
@@ -390,6 +392,7 @@ class RunCommandTool(_ProcessTool):
     """Run bounded, non-interactive subprocesses and capture their output."""
 
     execution_kind = ExecutionKind.SANDBOXED_PROCESS
+    scheduling_policy = SERIAL
 
     def __init__(
         self,
@@ -532,6 +535,7 @@ class RunPythonTool(_ProcessTool):
     """Run bounded Python snippets in a separate subprocess."""
 
     execution_kind = ExecutionKind.SANDBOXED_PROCESS
+    scheduling_policy = SERIAL
 
     def __init__(
         self,
@@ -651,6 +655,7 @@ class RunShellTool(RunCommandTool):
     """A Bash frontend to the same bounded process execution contract."""
 
     execution_kind = ExecutionKind.SANDBOXED_PROCESS
+    scheduling_policy = SERIAL
 
     def __init__(
         self,

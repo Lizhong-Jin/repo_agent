@@ -20,6 +20,27 @@ pub(crate) fn workers() -> Result<usize> {
         )),
     }
 }
+/// Number of already-discovered directories per message, independent of worker count.
+pub(crate) fn batch_size() -> Result<usize> {
+    match std::env::var("AGENT_SCAN_BATCH_SIZE") {
+        Err(std::env::VarError::NotPresent) => Ok(32),
+        Ok(value) if value.is_empty() => Ok(32),
+        Ok(value) => value
+            .parse::<usize>()
+            .ok()
+            .filter(|n| (1..=64).contains(n))
+            .ok_or_else(|| Error::value("AGENT_SCAN_BATCH_SIZE 必须为 1 到 64 的整数", None)),
+        Err(_) => Err(Error::value(
+            "AGENT_SCAN_BATCH_SIZE 必须为 1 到 64 的整数",
+            None,
+        )),
+    }
+}
+/// Leave work for all free workers when the frontier is smaller than W * batch_size.
+pub(crate) fn batch_target(pending: usize, free_slots: usize, limit: usize) -> usize {
+    pending.div_ceil(free_slots).min(limit).max(1)
+}
+
 pub(crate) fn checkpoint(stop: &AtomicBool) -> Result<()> {
     if stop.load(Ordering::Relaxed) {
         Err(Error::value("Native scan stopped", None))

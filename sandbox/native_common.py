@@ -7,6 +7,7 @@ import shutil
 import stat
 import sys
 import tempfile
+from contextvars import ContextVar
 from dataclasses import asdict, replace
 from pathlib import Path
 from time import perf_counter
@@ -23,15 +24,20 @@ from tools.execute import (
     RunShellTool,
 )
 from tools.factory import create_default_tools, create_file_tools
+from tools.scheduling import SERIAL, scheduling_policy_of
 
+from .concurrency import backend_gate
 from .project_python import select_python
+
+_call_metrics = ContextVar("native_call_metrics", default=None)
 
 
 class NativeTool:
-    def __init__(self, definition, backend, execution_kind):
+    def __init__(self, definition, backend, execution_kind, *, scheduling_policy=SERIAL):
         self.definition = definition
         self.backend = backend
         self.execution_kind = execution_kind
+        self.scheduling_policy = scheduling_policy
         if execution_kind_of(self) not in {
             ExecutionKind.TRUSTED_FILE,
             ExecutionKind.SANDBOXED_PROCESS,
@@ -159,7 +165,7 @@ class NativeBackendBase:
         try:
             self._check_workspace()
         finally:
-            self.last_workspace_check_ms = (perf_counter() - started) * 1000
+            self._set_metric("last_workspace_check_ms", (perf_counter() - started) * 1000)
 
     def _check_workspace(self):
         # A pre-existing hard link would let an allowed path modify an outside inode.
@@ -259,8 +265,11 @@ class NativeBackendBase:
             return result
         finally:
             metrics["total_ms"] = (perf_counter() - started) * 1000
-            self.last_run_metrics = metrics
-            if hasattr(self, "_performance_runs"):
+            self._set_metric("last_run_metrics", metrics)
+            active = self._active_metrics()
+            if active is not None:
+                active["runs"].append(metrics)
+            elif hasattr(self, "_performance_runs"):
                 self._performance_runs.append(metrics)
 
     def _run_measured(
@@ -314,15 +323,16 @@ class NativeBackendBase:
                     f"{str(self.workspace)!r})"
                 )
                 command = [str(self.python), "-I", "-c", bootstrap]
-            self.last_policy_metrics = None
+            self._set_metric("last_policy_metrics", None)
             try:
                 invocation = self._sandbox_command(
                     command, control, scratch, read_paths, git_read=git_read
                 )
             finally:
                 metrics["preparation_ms"] = (perf_counter() - preparation_started) * 1000
-                if self.last_policy_metrics is not None:
-                    metrics["policy"] = dict(self.last_policy_metrics)
+                policy_metrics = self._get_metric("last_policy_metrics")
+                if policy_metrics is not None:
+                    metrics["policy"] = dict(policy_metrics)
             environment = self._environment(scratch)
             # Worker/control executables retain trusted PATH. Only user commands
             # receive the project environment's command search path.
@@ -364,32 +374,41 @@ class NativeBackendBase:
 
     def tools(self):
         return [
-            NativeTool(tool.definition, self, execution_kind_of(tool))
+            NativeTool(
+                tool.definition,
+                self,
+                execution_kind_of(tool),
+                scheduling_policy=scheduling_policy_of(tool)
+                if execution_kind_of(tool) is ExecutionKind.TRUSTED_FILE
+                else SERIAL,
+            )
             for tool in self._tool_catalog().values()
         ]
 
     def _tool_catalog(self):
-        if not hasattr(self, "_native_tools"):
-            self._native_tools = {
-                tool.definition.name: tool
-                for tool in create_default_tools(
-                    self.workspace,
-                    isolated_execution=True,
-                    **self._tool_limits(),
-                )
-            }
-        return self._native_tools
+        with backend_gate(self).metadata:
+            if not hasattr(self, "_native_tools"):
+                self._native_tools = {
+                    tool.definition.name: tool
+                    for tool in create_default_tools(
+                        self.workspace,
+                        isolated_execution=True,
+                        **self._tool_limits(),
+                    )
+                }
+            return self._native_tools
 
     def _file_tools(self):
-        # Only factory-owned built-ins are eligible; a plugin's self-declared
-        # attribute or model argument cannot grant host execution privileges.
-        if not hasattr(self, "_trusted_file_tools"):
-            self._trusted_file_tools = {
-                tool.definition.name: tool
-                for tool in create_file_tools(self.workspace)
-                if execution_kind_of(tool) is ExecutionKind.TRUSTED_FILE
-            }
-        return self._trusted_file_tools
+        with backend_gate(self).metadata:
+            # Only factory-owned built-ins are eligible; a plugin's self-declared
+            # attribute or model argument cannot grant host execution privileges.
+            if not hasattr(self, "_trusted_file_tools"):
+                self._trusted_file_tools = {
+                    tool.definition.name: tool
+                    for tool in create_file_tools(self.workspace)
+                    if execution_kind_of(tool) is ExecutionKind.TRUSTED_FILE
+                }
+            return self._trusted_file_tools
 
     def _execute_file(self, tool, arguments):
         protected = tuple(getattr(self, "protected_paths", ())) + tuple(
@@ -420,20 +439,46 @@ class NativeBackendBase:
             "python_timeout_seconds": self.python_timeout_seconds,
         }
 
+    def _active_metrics(self):
+        active = _call_metrics.get()
+        return active[1] if active is not None and active[0] is self else None
+
+    def _set_metric(self, name, value):
+        active = self._active_metrics()
+        if active is None:
+            setattr(self, name, value)
+        else:
+            active[name] = value
+
+    def _get_metric(self, name):
+        active = self._active_metrics()
+        return active.get(name) if active is not None else getattr(self, name, None)
+
     def execute(self, workspace, name, arguments):
-        started = perf_counter()
-        self.last_workspace_check_ms = 0.0
-        self._performance_runs = []
-        try:
-            return self._execute(workspace, name, arguments)
-        finally:
-            self.last_tool_metrics = {
-                "tool": name,
-                "total_ms": (perf_counter() - started) * 1000,
-                "workspace_check_ms": self.last_workspace_check_ms,
-                "runs": self._performance_runs,
-            }
-            del self._performance_runs
+        tool = self._tool_catalog().get(name)
+        read = (
+            tool is not None
+            and execution_kind_of(tool) is ExecutionKind.TRUSTED_FILE
+            and scheduling_policy_of(tool).parallel
+        )
+        with backend_gate(self).hold(read=read):
+            started = perf_counter()
+            metrics = {"last_workspace_check_ms": 0.0, "runs": []}
+            token = _call_metrics.set((self, metrics))
+            try:
+                return self._execute(workspace, name, arguments)
+            finally:
+                _call_metrics.reset(token)
+                snapshot = {
+                    "tool": name,
+                    "total_ms": (perf_counter() - started) * 1000,
+                    "workspace_check_ms": metrics["last_workspace_check_ms"],
+                    "runs": metrics.pop("runs"),
+                }
+                # Backwards-compatible last-completed diagnostics. Execution never
+                # reads this shared snapshot while inside a call's metrics scope.
+                with backend_gate(self).metadata:
+                    self.__dict__.update(metrics, last_tool_metrics=snapshot)
 
     def _execute(self, workspace, name, arguments):
         if Path(workspace).resolve() != self.workspace:

@@ -12,6 +12,7 @@ from tools._internal.base import ToolResult
 from tools._internal.process_runner import ProcessRunner
 
 from .backend import SandboxBackend as SandboxBackend
+from .concurrency import backend_gate
 from .policy import SandboxPolicy
 
 
@@ -62,6 +63,10 @@ class DockerBackend:
         }
 
     def execute(self, workspace: Path, name: str, arguments: dict) -> ToolResult:
+        with backend_gate(self).hold():
+            return self._execute(workspace, name, arguments)
+
+    def _execute(self, workspace: Path, name: str, arguments: dict) -> ToolResult:
         if not self.healthy:
             raise OSError("之前的容器清理未确认，拒绝继续执行。")
         container = "repo-agent-" + uuid.uuid4().hex
@@ -131,7 +136,6 @@ class DockerBackend:
                 )
             finally:
                 # Killing the Docker client alone does not terminate its container.
-                self.healthy = False
                 context = current_cancellation()
                 try:
                     cleanup = subprocess.run(
@@ -142,7 +146,8 @@ class DockerBackend:
                     )
                     if cleanup.returncode and b"No such container" not in cleanup.stderr:
                         raise OSError("Sandbox 容器清理失败；停止会话，请检查 Docker。")
-                except Exception as error:
+                except BaseException as error:
+                    self.healthy = False
                     if context is not None:
                         context.record_cleanup(
                             "unknown", container=container, error=type(error).__name__
@@ -150,7 +155,6 @@ class DockerBackend:
                         if context.event.is_set():
                             raise RunCancelled(context) from error
                     raise
-                self.healthy = True
                 if context is not None:
                     context.record_cleanup("confirmed", container=container)
             if result.timed_out or result.exit_code != 0 or result.stdout_truncated:

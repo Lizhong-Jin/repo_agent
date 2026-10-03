@@ -239,3 +239,14 @@ def test_scan_worker_setting_is_saved_loaded_and_validated(tmp_path, capsys):
     for invalid in ("0", "9", "-1", "many", "2.5"):
         with pytest.raises(ValueError):
             config_command.validate_value("AGENT_SCAN_WORKERS", invalid)
+
+
+def test_scan_batch_size_configuration(tmp_path):
+    from configuration.environment import configured_environment
+
+    config_command.main(["set", "AGENT_SCAN_BATCH_SIZE", "16"])
+    with configured_environment(tmp_path):
+        assert os.environ["AGENT_SCAN_BATCH_SIZE"] == "16"
+    for invalid in ("0", "65", "-1", "2.5"):
+        with pytest.raises(ValueError):
+            config_command.validate_value("AGENT_SCAN_BATCH_SIZE", invalid)

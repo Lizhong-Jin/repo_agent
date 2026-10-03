@@ -178,6 +178,7 @@ def test_automatic_compacts_during_tool_loop_and_preserves_pending_task(conversa
 
     class LargeTool:
         execution_kind = ExecutionKind.HOST_CONTROL
+        scheduling_policy = HistoryTool.scheduling_policy
         definition = HistoryTool(conv.archive, "read").definition
         executions = 0
 

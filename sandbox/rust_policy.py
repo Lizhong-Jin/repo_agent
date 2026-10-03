@@ -3,6 +3,7 @@
 import os
 import sys
 from pathlib import Path
+from threading import local
 from time import perf_counter
 
 from host_support.cancellation import current_cancellation
@@ -27,7 +28,17 @@ class RustPolicyScanner:
         if rust_backend.API_VERSION != 1:
             raise RuntimeError("Rust 扫描扩展接口版本不兼容，请重新构建 rust/ 下的扩展")
         self._native = rust_backend
+        self._diagnostics = local()
         self.last_diagnostics = None
+
+    @property
+    def last_diagnostics(self):
+        """Diagnostics of this caller thread's most recent scan."""
+        return getattr(self._diagnostics, "value", None)
+
+    @last_diagnostics.setter
+    def last_diagnostics(self, value):
+        self._diagnostics.value = value
 
     def scan(self, plan: PolicyPlan, request: ScanRequest) -> ScanResult:
         table = MountTable(request.mount_snapshot)

@@ -13,6 +13,7 @@ from ._internal.base import ExecutionKind, ToolResult
 from ._internal.errors import ToolErrorCode, tool_error
 from ._internal.file_policy import is_credential_path
 from ._internal.process_runner import ProcessRunner, ProcessStartError
+from .scheduling import SERIAL
 
 
 class _GitFilterPolicy:
@@ -75,6 +76,7 @@ class GitDiffTool(_GitFilterPolicy):
     """Show bounded Git diffs inside a workspace repository."""
 
     execution_kind = ExecutionKind.SANDBOXED_PROCESS
+    scheduling_policy = SERIAL
 
     def __init__(
         self,
@@ -447,6 +449,7 @@ class GitStatusTool(_GitFilterPolicy):
     """Return structured Git working-tree status."""
 
     execution_kind = ExecutionKind.SANDBOXED_PROCESS
+    scheduling_policy = SERIAL
 
     def __init__(
         self,

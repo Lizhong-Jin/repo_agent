@@ -6,6 +6,11 @@ use pyo3::types::PyDict;
 #[derive(Default)]
 pub(crate) struct Diagnostics {
     pub workers: usize,
+    pub batch_size: usize,
+    pub batches_submitted: usize,
+    pub directories_submitted: usize,
+    pub batch_directories_peak: usize,
+    pub in_flight_directories_peak: usize,
     pub in_flight_peak: usize,
     pub path_nodes_created: usize,
     pub path_nodes_peak: usize,
@@ -17,6 +22,13 @@ pub(crate) struct Diagnostics {
     pub enumeration_buffer_bytes_peak: usize,
 }
 impl Diagnostics {
+    pub fn submitted(&mut self, directories: usize, in_flight: usize, batches: usize) {
+        self.batches_submitted += 1;
+        self.directories_submitted += directories;
+        self.batch_directories_peak = self.batch_directories_peak.max(directories);
+        self.in_flight_directories_peak = self.in_flight_directories_peak.max(in_flight);
+        self.in_flight_peak = self.in_flight_peak.max(batches);
+    }
     pub fn observe_paths(&mut self, paths: &Paths) {
         self.path_nodes_created += paths.created;
         self.path_nodes_peak = self.path_nodes_peak.max(paths.peak_live);
@@ -32,6 +44,14 @@ impl Diagnostics {
         let output = PyDict::new(py);
         for (name, value) in [
             ("workers", self.workers),
+            ("batch_size", self.batch_size),
+            ("batches_submitted", self.batches_submitted),
+            ("directories_submitted", self.directories_submitted),
+            ("batch_directories_peak", self.batch_directories_peak),
+            (
+                "in_flight_directories_peak",
+                self.in_flight_directories_peak,
+            ),
             ("in_flight_peak", self.in_flight_peak),
             ("path_nodes_created", self.path_nodes_created),
             ("path_nodes_peak", self.path_nodes_peak),

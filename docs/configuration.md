@@ -105,6 +105,7 @@ repo-agent --configure-model
 | `BRAVE_SEARCH_API_KEY` | 空 | Brave Search API 密钥；配置查看时隐藏，使用 `config set BRAVE_SEARCH_API_KEY` 隐藏输入 |
 | `AGENT_NATIVE_SCANNER` | `python` | Linux 策略扫描、macOS 工作区检查及两平台 native 文件工具的目录访问/批量元数据：`python` 或 `rust`；选择 `rust` 需安装对应扩展，显式失败不降级；Seatbelt 规则、Windows local 和 Docker 不变 |
 | `AGENT_SCAN_WORKERS` | `2` | Rust 0.5+ 工作区预检和隔离策略扫描并发上限；1～8，1 串行，空值使用 2；不影响文件工具搜索/读取 |
+| `AGENT_SCAN_BATCH_SIZE` | `32` | Rust 0.6+ 每个并行任务的目录上限；1～64，空值使用 32；1 为逐目录派发，单线程不使用批处理 |
 | `AGENT_SANDBOX_WRITEBACK` | `manual` | 仅 Docker：`manual` 手动回写；`on-success` 按检查结果自动回写；local/native 忽略此配置 |
 | `AGENT_SANDBOX_VERIFY_COMMAND` | 空 | on-success 回写前的最终验证命令，使用 JSON 参数数组 |
 | `LLM_EXTRA_JSON` | `{}` | 高级厂商原生请求参数，须为 JSON 对象，不允许覆盖统一字段或与显式思考配置冲突 |

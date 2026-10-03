@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from llm import ToolDefinition
 
 from ._internal.base import ExecutionKind, ToolResult
+from .scheduling import SERIAL
 
 
 @dataclass(frozen=True)
@@ -137,6 +138,7 @@ class ToolGroupRegistry:
 
 class LoadToolGroupTool:
     execution_kind = ExecutionKind.HOST_CONTROL
+    scheduling_policy = SERIAL
 
     def __init__(self, registry: ToolGroupRegistry):
         self.registry = registry

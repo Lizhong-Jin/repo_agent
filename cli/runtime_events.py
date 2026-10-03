@@ -82,7 +82,7 @@ class RuntimeEventBridge:
         record = stats.model_calls[-1] if stats.model_calls else None
         phase = f"模型 #{record.step} · 等待响应…" if name == "model_start" else None
         if name == "tool_start":
-            phase = f"工具 · {stats.tool_calls[-1].name} 执行中…"
+            phase = f"工具 · {stats.current_tool.name} 执行中…"
         if name == "recovery":
             phase = stats.recoveries[-1]["message"]
             self.write_meta(f"[{phase}]")

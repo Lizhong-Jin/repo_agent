@@ -11,7 +11,7 @@ import time
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from copy import deepcopy
-from threading import Event, current_thread, main_thread
+from threading import Event, RLock, current_thread, main_thread
 
 _current = ContextVar("run_cancellation", default=None)
 _deferred = ContextVar("deferred_cancellation", default=False)
@@ -32,6 +32,7 @@ class RunCancelled(BaseException):
 class CancellationContext:
     def __init__(self):
         self.event = Event()
+        self._records_lock = RLock()
         self.cleanups = []
         self.tools = []
 
@@ -49,9 +50,22 @@ class CancellationContext:
             self.check()
 
     def record_cleanup(self, status, **details):
-        self.cleanups.append({"status": status, **details})
+        with self._records_lock:
+            self.cleanups.append({"status": status, **details})
+
+    def start_tool(self, record):
+        with self._records_lock:
+            self.tools.append(record)
+
+    def finish_tool(self, record, completed):
+        with self._records_lock:
+            record.update(completed)
 
     def report(self):
+        with self._records_lock:
+            return self._report()
+
+    def _report(self):
         statuses = [item["status"] for item in self.cleanups]
         return deepcopy(
             {

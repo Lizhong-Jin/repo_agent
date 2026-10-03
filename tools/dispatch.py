@@ -8,6 +8,7 @@ from host_support.cancellation import checkpoint, current_cancellation, defer_ca
 from host_support.execution_receipt import record_result
 
 from ._internal.base import ExecutionKind, ToolResult, execution_kind_of
+from .scheduling import SERIAL, scheduling_policy_of
 
 
 class ToolDispatcher:
@@ -18,9 +19,11 @@ class ToolDispatcher:
         self.inside_sandbox = inside_sandbox
         self.tools = {}
         self._kinds = {}
+        self._scheduling = {}
 
     def register(self, tool):
         kind = execution_kind_of(tool)
+        policy = scheduling_policy_of(tool)
         name = tool.definition.name
         if name in self.tools:
             raise ValueError(f"Duplicate tool name: {name}")
@@ -31,8 +34,12 @@ class ToolDispatcher:
             raise ValueError(f"Host tool {name} cannot be registered in a sandbox worker")
         self.tools[name] = tool
         self._kinds[name] = kind
+        self._scheduling[name] = policy
 
-    def execute(self, name, arguments):
+    def scheduling_policy(self, name):
+        return self._scheduling.get(name, SERIAL)
+
+    def execute(self, name, arguments, *, call_id=None):
         checkpoint()
         tool = self.tools.get(name)
         if tool is None:
@@ -40,6 +47,8 @@ class ToolDispatcher:
         kind = execution_kind_of(tool)
         if kind is not self._kinds.get(name):
             raise ValueError(f"Tool {name} execution_kind changed after registration")
+        if scheduling_policy_of(tool) != self._scheduling[name]:
+            raise ValueError(f"Tool {name} scheduling_policy changed after registration")
         handlers = {
             ExecutionKind.HOST_CONTROL: self._host,
             ExecutionKind.TRUSTED_FILE: self._file,
@@ -48,12 +57,14 @@ class ToolDispatcher:
         }
         context = current_cancellation()
         record = {"name": name, "status": "started", "effects": "unknown"}
+        if call_id is not None:
+            record["call_id"] = call_id
         if context is not None:
-            context.tools.append(record)
+            context.start_tool(record)
         result = handlers[kind](tool, arguments)
-        record["status"] = "completed" if result.success else "failed"
+        completed = {"status": "completed" if result.success else "failed"}
         # Preserve tool-reported effects only; do not infer subprocess changes.
-        record["result"] = {
+        completed["result"] = {
             key: value
             for key, value in result.data.items()
             if key
@@ -86,7 +97,11 @@ class ToolDispatcher:
             "delete_file",
             "move_file",
         }:
-            record["effects"] = "reported"
+            completed["effects"] = "reported"
+        if context is not None:
+            context.finish_tool(record, completed)
+        else:
+            record.update(completed)
         record_result(result, record)
         checkpoint()
         return result

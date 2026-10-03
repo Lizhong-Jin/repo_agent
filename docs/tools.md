@@ -5,6 +5,7 @@
 面向扩展工具或维护执行协议的开发者。以下命令默认在已安装开发依赖的源码目录运行；示例中的 `client` 需由调用方配置。
 
 - [统一创建工具](#统一创建工具)
+- [并发调度策略](#并发调度策略)
 - [按需加载工具组](#按需加载工具组)
 - [工具错误码](#工具错误码)
 - [run_shell 工具与平台行为](#run_shell-工具与平台行为)
@@ -24,6 +25,7 @@ tools/
 ├── __init__.py
 ├── factory.py
 ├── dispatch.py           # 按执行类别调度，检查隔离执行入口
+├── scheduling.py         # 工具调度策略与保守默认值，不包含执行逻辑
 ├── tool_groups.py        # 集中分组目录、load_tool_group 与会话可见性状态
 ├── execute.py
 ├── filesystem.py
@@ -80,6 +82,53 @@ class MyControlTool:
 工厂、Runtime 注册和 sandbox worker 会检查声明。缺失声明、字符串/布尔值等无效类型会立即报错；调用时再检查规则是否与注册时一致。代理必须显式接收并保留原工具规则，不能使用默认规则掩盖遗漏；未知 native 工具在扫描和启动进程前被拒绝。沙箱 worker 拒绝注册主进程控制/网络工具。
 
 只有受信任的应用代码可以注册工具。调度器不会通过静态分析证明 `HOST_CONTROL` 或 `TRUSTED_FILE` 的实现没有执行代码；第三方 Python 插件不能仅凭自我声明被当作可信实现。文件工具不得启动项目脚本、命令或 LSP；需要这些能力时使用隔离执行接口。`ToolDispatcher(inside_sandbox=True)` 仅供操作系统隔离已经建立的 worker 使用，禁止在普通主进程中把它当作绕过开关。
+
+## 并发调度策略
+
+`execution_kind` 决定执行边界，具体工具类的 `scheduling_policy` 描述并发条件，两者独立。`agent/tool_scheduler.py` 中的 `ToolScheduler` 只负责有界调度、屏障、取消及等待收尾；通过回调接入执行、策略查询和事件，不依赖 CLI、账本实现或具体后端。工具组只影响可见性，移动分组无需修改调度器。
+
+```python
+from tools import ExecutionKind
+from tools.scheduling import READ_ONLY
+
+class ProjectIndexTool:
+    execution_kind = ExecutionKind.TRUSTED_FILE
+    scheduling_policy = READ_ONLY
+
+    # 按 Tool 接口实现 definition 和 execute；不得修改工作区或共享实例状态。
+```
+
+`SchedulingPolicy` 是不可变对象，含三个维度：
+
+| 字段 | 含义 |
+| --- | --- |
+| `workspace_access` | `WorkspaceAccess.NONE` 不访问工作区；`READ` 只读；`EXCLUSIVE` 需要独占 |
+| `session_barrier` | 是否必须等之前的调用结束，并阻止之后的调用提前执行 |
+| `reentrant` | 同一工具实例是否允许同时执行多个调用 |
+
+只有 `reentrant=True`、`session_barrier=False` 且访问模式不是 `EXCLUSIVE` 时才允许并发。预设 `READ_ONLY` 用于可重入的工作区只读工具，`INDEPENDENT` 用于可重入且不访问工作区的工具，`SERIAL` 为保守默认。未声明策略的旧工具以及没有重新声明策略的子类仍可注册，但按串行处理；显式声明错误类型会在注册时被拒绝，注册后修改策略也会被拒绝。策略不进入模型 schema，模型不能通过参数放宽策略或后端限制。
+
+当前策略如下：
+
+| 工具 | Runtime 调度 |
+| --- | --- |
+| `read_file`、`list_files`、`find_files`、`search_files`、`get_path_info` | local/native 允许并发 |
+| `web_search`、`web_fetch` | 允许并发；Web 后端仍共享最多 3 个请求的限制 |
+| `history_search`、`history_read`、`load_skill` | 允许并发；技能加载只返回冻结的技能内容 |
+| 文件写入/编辑/补丁/创建目录/删除/移动 | 串行屏障 |
+| 命令、Python、Shell、Git、LSP、执行环境查询 | 串行屏障；查询类进程工具也可能启动进程或更新缓存 |
+| `load_tool_group`、未声明策略的扩展工具 | 串行屏障 |
+| Docker 代理工具 | 后端进一步收紧，统一串行 |
+
+`AgentRuntime(..., max_tool_workers=4)` 默认最多并发 4 个工具调用，允许范围为 1–32；设为 1 可退回串行。调度器只对**同一次模型回复中相邻的可并发调用**按上限分批，整批完成后才推进下一批，不会跨越屏障重排或推测参数依赖。若调用依赖前一调用的输出，应由模型在下一轮构造参数。同一 Runtime 拒绝同时运行两个任务，CLI 的 TaskQueue 仍是单消费者。
+
+工具结果按模型调用顺序加入历史；事件按实际完成顺序处理，事件回调仍运行在协调线程。事件消费者应使用 `stats.current_tool` 获取当前事件对应的工具，不能假设 `stats.tool_calls[-1]` 刚刚完成。后者保留启动顺序。工具结果在工作线程中完成调用级账本回执，慢调用不会拖延其他已完成调用落盘。
+
+取消或账本保存失败后，停止继续派发，通知在途调用协作取消，并等待所有在途调用完成清理与回执后才向上传播错误。每个工作线程复制独立 Context，保留共享取消信号，并建立独立回执作用域。已完成文件操作不会回滚；不支持协作取消的扩展工具会延长等待时间，因此应设置自身超时并在合适位置检查取消。
+
+后端也独立保护自身状态：native 使用每次调用独立的文件访问对象和指标上下文，允许并发读取、独占执行写入及进程工具；`last_tool_metrics` 等属性仅供查看最后完成调用的诊断，不用于关联并发调用。Docker 对 runner 执行和会话回写检查分别串行化，清理失败后保持不健康，后续调用不能将其恢复。Rust 策略扫描的 `last_diagnostics` 为调用线程自己的最近扫描结果。生命周期由调用方管理，应在 Runtime 返回、所有工作线程收尾后关闭后端。
+
+新增工具时优先使用 `SERIAL`，确认同一实例无共享可变调用状态、无隐藏写入或进程副作用后再声明并发。未来允许进程工具或 Docker 并发时，需要同时放宽代理策略和后端约束，并补齐进程清理、回写检查及健康状态的并发测试。
 
 ## 按需加载工具组
 

@@ -33,7 +33,7 @@ macOS 和 Linux native 共用以下分层，模型可见的工具参数不变：
 
 ### Rust 扫描与文件系统后端
 
-可选 Rust 策略扫描：源码安装自动尝试编译扩展，发行包安装直接使用包内匹配平台的预编译 wheel，无需安装端编译器。确认安装成功后设置 `AGENT_NATIVE_SCANNER=rust` 并重新启动；默认值仍为 `python`。扩展安装失败不影响核心安装。它切换 Linux 隔离执行前的策略扫描和 macOS 工作区硬链接检查，同时切换两个平台 native 文件工具的目录枚举、相对路径遍历和批量元数据后端。Linux 工作区预检继续合并在 Linux 策略扫描中；macOS 隔离仍使用 Seatbelt。两平台 native 文件系统后端需要 兼容 FILESYSTEM_API_VERSION=2 的扩展（当前版本 0.5.0）；glob/路径规则与文本匹配仍由 Python 执行。显式选择 Rust 后，扩展缺失、版本不兼容或扫描失败仍会报错，不在运行时自动切换实现。缺少扩展的旧发行包可另行安装，见 [扩展构建说明](../rust/docs/policy-scan.md)。
+可选 Rust 策略扫描：源码安装自动尝试编译扩展，发行包安装直接使用包内匹配平台的预编译 wheel，无需安装端编译器。确认安装成功后设置 `AGENT_NATIVE_SCANNER=rust` 并重新启动；默认值仍为 `python`。扩展安装失败不影响核心安装。它切换 Linux 隔离执行前的策略扫描和 macOS 工作区硬链接检查，同时切换两个平台 native 文件工具的目录枚举、相对路径遍历和批量元数据后端。Linux 工作区预检继续合并在 Linux 策略扫描中；macOS 隔离仍使用 Seatbelt。两平台 native 文件系统后端需要 兼容 FILESYSTEM_API_VERSION=2 的扩展（当前版本 0.6.0）；glob/路径规则与文本匹配仍由 Python 执行。显式选择 Rust 后，扩展缺失、版本不兼容或扫描失败仍会报错，不在运行时自动切换实现。缺少扩展的旧发行包可另行安装，见 [扩展构建说明](../rust/docs/policy-scan.md)。
 
 ## Linux 实现、依赖与权限
 

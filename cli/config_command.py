@@ -39,6 +39,7 @@ BUILTINS.update(
         "AGENT_SANDBOX_VERIFY_COMMAND": "",
         "AGENT_NATIVE_SCANNER": "python",
         "AGENT_SCAN_WORKERS": "2",
+        "AGENT_SCAN_BATCH_SIZE": "32",
         "AGENT_WEB_SEARCH_PROVIDER": "off",
         "AGENT_WEB_FETCH_ENABLED": "false",
     }
@@ -103,6 +104,7 @@ CONFIG_GROUPS = (
         (
             "AGENT_NATIVE_SCANNER",
             "AGENT_SCAN_WORKERS",
+            "AGENT_SCAN_BATCH_SIZE",
             "AGENT_SANDBOX_WRITEBACK",
             "AGENT_SANDBOX_VERIFY_COMMAND",
         ),
@@ -170,8 +172,9 @@ def validate_value(key, value):
     try:
         if key == "LLM_PROVIDER":
             return get_provider(value).name
-        if key == "AGENT_SCAN_WORKERS":
-            if value not in {str(n) for n in range(1, 9)}:
+        if key in {"AGENT_SCAN_WORKERS", "AGENT_SCAN_BATCH_SIZE"}:
+            maximum = 8 if key == "AGENT_SCAN_WORKERS" else 64
+            if value not in {str(n) for n in range(1, maximum + 1)}:
                 raise ValueError
             return value
         if key == "AGENT_WEB_SEARCH_PROVIDER":

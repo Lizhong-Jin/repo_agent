@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Any, Protocol
 
 from llm import Message, ToolCall, ToolDefinition
+from tools.scheduling import SchedulingPolicy, scheduling_policy_of
 
 
 class ExecutionKind(Enum):
@@ -18,6 +19,7 @@ class ExecutionKind(Enum):
 
 class Tool(Protocol):
     execution_kind: ExecutionKind
+    scheduling_policy: SchedulingPolicy
 
     @property
     def definition(self) -> ToolDefinition: ...
@@ -44,6 +46,7 @@ def execution_kind_of(tool: Tool) -> ExecutionKind:
 def validate_tools(tools: list[Tool]) -> list[Tool]:
     for tool in tools:
         execution_kind_of(tool)
+        scheduling_policy_of(tool)
     return tools
 
 

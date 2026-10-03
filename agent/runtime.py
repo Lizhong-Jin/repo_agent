@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any, Literal
 
 from host_support.cancellation import cancellation_scope, checkpoint, current_cancellation
@@ -12,10 +13,12 @@ from llm import LLM, InvalidResponseError, LLMError, LLMRequest, LLMResponse, Me
 from llm.token_estimation import estimate_context_tokens
 from tools import Tool, ToolResult
 from tools.dispatch import ToolDispatcher
+from tools.scheduling import SERIAL
 from tools.tool_groups import LoadToolGroupTool, ToolGroup, ToolGroupRegistry
 
 from .prompt import make_default_system_prompt
 from .skills import LoadSkillTool, SkillRegistry
+from .tool_scheduler import ToolScheduler
 from .Tracing import RunStats, RunTrace
 
 DEFAULT_SYSTEM_PROMPT = make_default_system_prompt()
@@ -78,6 +81,7 @@ class AgentRuntime:
         on_event: Callable[[str, RunStats], None] | None = None,
         skills: SkillRegistry | None = None,
         tool_groups: Sequence[ToolGroup] = (),
+        max_tool_workers: int = 4,
     ) -> None:
         if type(max_steps) is not int or max_steps < 0:
             raise ValueError("max_steps must be a non-negative integer (0 means unlimited)")
@@ -111,6 +115,8 @@ class AgentRuntime:
         self.before_request = None
         self.check_cancelled = checkpoint
         self.thinking_settings = None
+        self._run_lock = Lock()
+        self.scheduler = ToolScheduler(max_tool_workers)
         self.dispatcher = ToolDispatcher()
         self._tools = self.dispatcher.tools
         definitions = []
@@ -185,8 +191,13 @@ class AgentRuntime:
         return estimate_context_tokens(self._with_skills(messages), self._definitions)
 
     def run(self, task: str, *, history: Sequence[Message] = (), cancellation=None) -> RunResult:
-        with cancellation_scope(cancellation):
-            return self._run_task(task, history=history)
+        if not self._run_lock.acquire(blocking=False):
+            raise RuntimeError("AgentRuntime already has an active run")
+        try:
+            with cancellation_scope(cancellation):
+                return self._run_task(task, history=history)
+        finally:
+            self._run_lock.release()
 
     def _run_task(self, task: str, *, history: Sequence[Message] = ()) -> RunResult:
         """Run a task, optionally continuing history. Never mutate the caller's messages."""
@@ -362,18 +373,30 @@ class AgentRuntime:
             ledger = getattr(self, "execution_ledger", None)
             if ledger is not None:
                 ledger.prepare(stats.task_id, response.message)
-            for call in response.tool_calls:
-                self.check_cancelled()
-                with trace.tool(step, call) as record:
-                    observation = self._execute_recorded(call, stats.task_id, exposed_names)
-                    messages.append(observation)
-                    trace.tool_result(record, observation)
-                    if (
-                        self.skills is not None
-                        and call.name == "load_skill"
-                        and not observation.is_error
-                    ):
-                        trace.skill_loaded(self.skills.get(call.arguments["name"]), "model")
+
+            def policy(call, exposed_names=exposed_names):
+                if call.name not in exposed_names:
+                    return SERIAL
+                return self.dispatcher.scheduling_policy(call.name)
+
+            observations = self.scheduler.execute(
+                response.tool_calls,
+                policy=policy,
+                invoke=lambda call, exposed_names=exposed_names: self._execute_recorded(
+                    call, stats.task_id, exposed_names
+                ),
+                on_start=lambda call, step=step: trace.start_tool(step, call),
+                on_finish=trace.finish_tool,
+                check=self.check_cancelled,
+            )
+            for call, observation in zip(response.tool_calls, observations, strict=True):
+                messages.append(observation)
+                if (
+                    self.skills is not None
+                    and call.name == "load_skill"
+                    and not observation.is_error
+                ):
+                    trace.skill_loaded(self.skills.get(call.arguments["name"]), "model")
             recoveries = 0
             output_limit = self.max_output_tokens
 
@@ -467,7 +490,7 @@ class AgentRuntime:
             ).to_message(call)
         try:
             # A tool must not mutate the assistant history or its provider-specific state.
-            result = self.dispatcher.execute(call.name, deepcopy(call.arguments))
+            result = self.dispatcher.execute(call.name, deepcopy(call.arguments), call_id=call.id)
             if not isinstance(result, ToolResult):
                 raise TypeError("Tools must return ToolResult")
             return result.to_message(call)

@@ -6,7 +6,7 @@ use crate::scan_pool::Pool;
 use crate::{Error, Result};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
@@ -121,15 +121,35 @@ struct EntryOutput {
     values: Values,
     diagnostics: Diagnostics,
 }
-fn scan_directory(worker: &mut Scanner, job: EntryJob, _stop: &AtomicBool) -> Result<EntryOutput> {
-    worker.active_root.clone_from(&job.root);
-    let facts = worker.entries(&job.directory, &job.canonical, false);
-    Ok(EntryOutput {
-        job,
-        facts,
-        values: std::mem::take(&mut worker.values),
-        diagnostics: std::mem::take(&mut worker.diagnostics),
-    })
+struct EntryBatch {
+    submitted: usize,
+    outputs: Vec<EntryOutput>,
+}
+fn scan_directories(
+    worker: &mut Scanner,
+    jobs: Vec<EntryJob>,
+    stop: &AtomicBool,
+) -> Result<EntryBatch> {
+    let mut result = EntryBatch {
+        submitted: jobs.len(),
+        outputs: Vec::with_capacity(jobs.len()),
+    };
+    for job in jobs {
+        crate::scan_pool::checkpoint(stop)?;
+        worker.active_root.clone_from(&job.root);
+        let facts = worker.entries(&job.directory, &job.canonical, false);
+        let failed = facts.is_err();
+        result.outputs.push(EntryOutput {
+            job,
+            facts,
+            values: std::mem::take(&mut worker.values),
+            diagnostics: std::mem::take(&mut worker.diagnostics),
+        });
+        if failed {
+            break;
+        }
+    }
+    Ok(result)
 }
 
 pub struct Scanner {
@@ -493,7 +513,9 @@ impl Scanner {
         self.checkpoint(true)?;
         let workers = crate::scan_pool::workers()?;
         self.diagnostics.workers = workers;
-        let mut pool: Option<Pool<EntryJob, EntryOutput>> = None;
+        let batch_size = crate::scan_pool::batch_size()?;
+        self.diagnostics.batch_size = batch_size;
+        let mut pool: Option<Pool<Vec<EntryJob>, EntryBatch>> = None;
         let (mut masks, mut git_paths, mut identities) = (Vec::new(), Vec::new(), Vec::new());
         for root in self.roots.clone() {
             self.checkpoint(false)?;
@@ -531,78 +553,119 @@ impl Scanner {
             self.diagnostics.pending_tasks_peak = self.diagnostics.pending_tasks_peak.max(1);
             let (mut directory, mut canonical, mut scratch) =
                 (PathBuf::new(), PathBuf::new(), Vec::new());
-            while !pending.is_empty() || pool.as_ref().is_some_and(|p| p.outstanding != 0) {
-                if pool.is_none() && workers > 1 && pending.len() >= 2 {
-                    pool = Some(Pool::new(
-                        workers,
-                        |stop| self.worker(stop),
-                        scan_directory,
-                    )?);
+            let mut ready = VecDeque::new();
+            let mut in_flight_directories = 0;
+            while !pending.is_empty()
+                || !ready.is_empty()
+                || pool.as_ref().is_some_and(|p| p.outstanding != 0)
+            {
+                // Drain the entire received batch before refilling its window slot.
+                // Completed-but-unmerged results therefore still count against W.
+                if ready.is_empty() {
+                    if pool.is_none() && workers > 1 && pending.len() >= 2 {
+                        pool = Some(Pool::new(
+                            workers,
+                            |stop| self.worker(stop),
+                            scan_directories,
+                        )?);
+                    }
+                    while !pending.is_empty()
+                        && pool.as_ref().is_none_or(|p| p.outstanding < workers)
+                    {
+                        let count = pool.as_ref().map_or(1, |p| {
+                            crate::scan_pool::batch_target(
+                                pending.len(),
+                                workers - p.outstanding,
+                                batch_size,
+                            )
+                        });
+                        let mut jobs = Vec::new();
+                        for _ in 0..count {
+                            let Some((node, masked, mut mount)) = pending.pop() else {
+                                break;
+                            };
+                            self.checkpoint(false)?;
+                            paths.write_path(node, &root, &mut directory, &mut scratch);
+                            paths.write_path(node, &canonical_root, &mut canonical, &mut scratch);
+                            self.diagnostics.path_materialized_bytes +=
+                                directory.as_os_str().len() + canonical.as_os_str().len();
+                            if self.pruned.contains(&directory) {
+                                paths.release(node);
+                                continue;
+                            }
+                            if let Some(index) = self.mount_index.get(&canonical).copied() {
+                                mount = Some(index);
+                            }
+                            self.set_bucket(&root, mount);
+                            let job = EntryJob {
+                                node,
+                                masked,
+                                mount,
+                                directory: directory.clone(),
+                                canonical: canonical.clone(),
+                                root: root.clone(),
+                            };
+                            if pool.is_none() || (reuse && self.cache.contains_key(&canonical)) {
+                                self.diagnostics.in_flight_peak =
+                                    self.diagnostics.in_flight_peak.max(1);
+                                let facts = self.entries(&directory, &canonical, reuse)?;
+                                ready.push_back((job, facts));
+                                break;
+                            }
+                            if jobs.is_empty() {
+                                jobs.reserve_exact(count);
+                            }
+                            jobs.push(job);
+                        }
+                        if !jobs.is_empty() {
+                            let pool = pool.as_mut().unwrap();
+                            let count = jobs.len();
+                            pool.submit(jobs)?;
+                            in_flight_directories += count;
+                            self.diagnostics.submitted(
+                                count,
+                                in_flight_directories,
+                                pool.outstanding,
+                            );
+                            // Workers open batch members sequentially: at most W DIRs, not W * B.
+                            self.diagnostics.directory_handles_peak = self
+                                .diagnostics
+                                .directory_handles_peak
+                                .max(pool.outstanding);
+                        }
+                        if !ready.is_empty() {
+                            break;
+                        }
+                    }
+                    if ready.is_empty() {
+                        if let Some(pool) = pool.as_mut().filter(|p| p.outstanding != 0) {
+                            let started = Instant::now();
+                            let output = pool.receive(|| self.checkpoint(false));
+                            self.parallel_wait_ms += elapsed(started);
+                            let output = output?;
+                            in_flight_directories -= output.submitted;
+                            for output in output.outputs {
+                                self.set_bucket(&root, output.job.mount);
+                                self.merge_values(output.values);
+                                self.diagnostics.enumeration_entries_peak = self
+                                    .diagnostics
+                                    .enumeration_entries_peak
+                                    .max(output.diagnostics.enumeration_entries_peak);
+                                self.diagnostics.enumeration_buffer_bytes_peak = self
+                                    .diagnostics
+                                    .enumeration_buffer_bytes_peak
+                                    .max(output.diagnostics.enumeration_buffer_bytes_peak);
+                                let facts = output.facts?;
+                                if reuse {
+                                    self.cache
+                                        .insert(output.job.canonical.clone(), facts.clone());
+                                }
+                                ready.push_back((output.job, facts));
+                            }
+                        }
+                    }
                 }
-                let mut ready = None;
-                while !pending.is_empty() && pool.as_ref().is_none_or(|p| p.outstanding < workers) {
-                    self.checkpoint(false)?;
-                    let (node, masked, mut mount) = pending.pop().unwrap();
-                    paths.write_path(node, &root, &mut directory, &mut scratch);
-                    paths.write_path(node, &canonical_root, &mut canonical, &mut scratch);
-                    self.diagnostics.path_materialized_bytes +=
-                        directory.as_os_str().len() + canonical.as_os_str().len();
-                    if self.pruned.contains(&directory) {
-                        paths.release(node);
-                        continue;
-                    }
-                    if let Some(index) = self.mount_index.get(&canonical).copied() {
-                        mount = Some(index);
-                    }
-                    self.set_bucket(&root, mount);
-                    let job = EntryJob {
-                        node,
-                        masked,
-                        mount,
-                        directory: directory.clone(),
-                        canonical: canonical.clone(),
-                        root: root.clone(),
-                    };
-                    if pool.is_none() || (reuse && self.cache.contains_key(&canonical)) {
-                        self.diagnostics.in_flight_peak = self.diagnostics.in_flight_peak.max(1);
-                        let facts = self.entries(&directory, &canonical, reuse)?;
-                        ready = Some((job, facts));
-                        break;
-                    }
-                    let pool = pool.as_mut().unwrap();
-                    pool.submit(job)?;
-                    self.diagnostics.in_flight_peak =
-                        self.diagnostics.in_flight_peak.max(pool.outstanding);
-                    // At most one DIR/fd per in-flight worker; includes completed jobs conservatively.
-                    self.diagnostics.directory_handles_peak = self
-                        .diagnostics
-                        .directory_handles_peak
-                        .max(pool.outstanding);
-                }
-                let (job, facts) = if let Some(ready) = ready {
-                    ready
-                } else if let Some(pool) = pool.as_mut().filter(|p| p.outstanding != 0) {
-                    let started = Instant::now();
-                    let output = pool.receive(|| self.checkpoint(false));
-                    self.parallel_wait_ms += elapsed(started);
-                    let output = output?;
-                    self.set_bucket(&root, output.job.mount);
-                    self.merge_values(output.values);
-                    self.diagnostics.enumeration_entries_peak = self
-                        .diagnostics
-                        .enumeration_entries_peak
-                        .max(output.diagnostics.enumeration_entries_peak);
-                    self.diagnostics.enumeration_buffer_bytes_peak = self
-                        .diagnostics
-                        .enumeration_buffer_bytes_peak
-                        .max(output.diagnostics.enumeration_buffer_bytes_peak);
-                    let facts = output.facts?;
-                    if reuse {
-                        self.cache
-                            .insert(output.job.canonical.clone(), facts.clone());
-                    }
-                    (output.job, facts)
-                } else {
+                let Some((job, facts)) = ready.pop_front() else {
                     continue;
                 };
                 let EntryJob {

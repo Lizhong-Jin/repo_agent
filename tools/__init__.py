@@ -28,6 +28,7 @@ from .git_tools import (
     GitDiffTool,
     GitStatusTool,
 )
+from .scheduling import SchedulingPolicy, WorkspaceAccess
 from .semantic import (
     FindReferencesTool,
     GetDiagnosticsTool,
@@ -39,6 +40,8 @@ from .semantic import (
 from .tool_groups import DEFAULT_TOOL_GROUPS, LoadToolGroupTool, ToolGroup
 
 __all__ = [
+    "SchedulingPolicy",
+    "WorkspaceAccess",
     # semantic tools
     "GetSymbolsTool",
     "GoToDefinitionsTool",

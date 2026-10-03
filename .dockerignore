@@ -71,6 +71,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !agent/skills/tool.py
 !agent/task_queue.py
 !agent/thinking.py
+!agent/tool_scheduler.py
 !agent/transcript.py
 !build_manifest.py
 !build_support.py
@@ -206,6 +207,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !sandbox/backend.py
 !sandbox/build.py
 !sandbox/compute_probe.py
+!sandbox/concurrency.py
 !sandbox/docker.py
 !sandbox/environment.py
 !sandbox/linux_exec.py
@@ -257,6 +259,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !tools/factory.py
 !tools/filesystem.py
 !tools/git_tools.py
+!tools/scheduling.py
 !tools/semantic.py
 !tools/tool_groups.py
 !tools/web_tools.py

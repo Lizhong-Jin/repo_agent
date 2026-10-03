@@ -27,7 +27,9 @@ from tools._internal.base import ExecutionKind, ToolResult, execution_kind_of
 from tools._internal.file_policy import runtime_protected_paths
 from tools.execute import PROCESS_EXECUTION_TOOLS
 from tools.factory import create_default_tools
+from tools.scheduling import SERIAL
 
+from .concurrency import backend_gate
 from .docker import DockerBackend, SandboxBackend
 from .policy import SandboxPolicy
 from .writeback import Backup, WritebackGuard, atomic_json
@@ -84,6 +86,8 @@ def files(
 
 
 class SandboxedTool:
+    scheduling_policy = SERIAL
+
     def __init__(self, definition, session, *, execution_kind, writeback_mode=None):
         self.execution_kind = execution_kind
         if execution_kind_of(self) not in {
@@ -115,6 +119,10 @@ class SandboxedTool:
         self.writeback_mode = writeback_mode
 
     def execute(self, arguments: dict) -> ToolResult:
+        with backend_gate(self.session).hold():
+            return self._execute(arguments)
+
+    def _execute(self, arguments: dict) -> ToolResult:
         try:
             execution_arguments = dict(arguments)
             if self.definition.name in PROCESS_EXECUTION_TOOLS and "check_id" in arguments:

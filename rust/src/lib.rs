@@ -20,6 +20,7 @@ fn rust_backend(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "allocation-profile")]
     allocation_profile::register(m)?;
     m.add("SCAN_PARALLEL_VERSION", 1)?;
+    m.add("SCAN_BATCH_VERSION", 1)?;
     policy_scan::register(m)?;
     filesystem::register(m)?;
     Ok(())

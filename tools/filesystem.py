@@ -41,12 +41,14 @@ from ._internal.errors import ToolErrorCode, tool_error
 from ._internal.file_access import FileAccess, current_file_access
 from ._internal.file_policy import is_credential_path
 from ._internal.text_search import text_lines
+from .scheduling import READ_ONLY, SERIAL
 
 logger = logging.getLogger(__name__)
 
 
 class FileTool(WorkspaceTool):
     execution_kind = ExecutionKind.TRUSTED_FILE
+    scheduling_policy = SERIAL
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -86,6 +88,7 @@ class ReadFileTool(FileTool):
     """
 
     execution_kind = ExecutionKind.TRUSTED_FILE
+    scheduling_policy = READ_ONLY
 
     def __init__(
         self,
@@ -307,6 +310,7 @@ class WriteFileTool(FileTool):
     """Create or replace bounded UTF-8 text files inside a workspace."""
 
     execution_kind = ExecutionKind.TRUSTED_FILE
+    scheduling_policy = SERIAL
 
     def __init__(
         self,
@@ -469,6 +473,7 @@ class EditFileTool(FileTool):
     """replace one or multiple text fragments in an existing UTF-8 workspace file."""
 
     execution_kind = ExecutionKind.TRUSTED_FILE
+    scheduling_policy = SERIAL
 
     def __init__(
         self,
@@ -907,6 +912,7 @@ class ApplyPatchTool(FileTool):
     """Apply strict context-based patches to existing UTF-8 workspace files."""
 
     execution_kind = ExecutionKind.TRUSTED_FILE
+    scheduling_policy = SERIAL
 
     def __init__(
         self,
@@ -1624,6 +1630,7 @@ class ListFileTool(FileTool):
     """List files in a directory with optional filtering and recursion."""
 
     execution_kind = ExecutionKind.TRUSTED_FILE
+    scheduling_policy = READ_ONLY
 
     def __init__(
         self,
@@ -1765,6 +1772,7 @@ class FindFileTool(FileTool):
     """Find files or directories by glob pattern inside the workspace."""
 
     execution_kind = ExecutionKind.TRUSTED_FILE
+    scheduling_policy = READ_ONLY
 
     def __init__(
         self,
@@ -1956,6 +1964,7 @@ class SearchFilesTool(FileTool):
     """Search for files in a directory with optional filtering and recursion."""
 
     execution_kind = ExecutionKind.TRUSTED_FILE
+    scheduling_policy = READ_ONLY
 
     def __init__(
         self,
@@ -2236,6 +2245,7 @@ class MakeDirectoryTool(FileTool):
     """Create directories inside a bounded workspace."""
 
     execution_kind = ExecutionKind.TRUSTED_FILE
+    scheduling_policy = SERIAL
 
     def __init__(
         self,
@@ -2353,6 +2363,7 @@ class DeleteFileTool(FileTool):
     """Delete a file inside a bounded workspace."""
 
     execution_kind = ExecutionKind.TRUSTED_FILE
+    scheduling_policy = SERIAL
 
     def __init__(
         self,
@@ -2440,6 +2451,7 @@ class MoveFileTool(FileTool):
     """Move or rename one regular file inside a bounded workspace."""
 
     execution_kind = ExecutionKind.TRUSTED_FILE
+    scheduling_policy = SERIAL
 
     def __init__(
         self,
@@ -2606,6 +2618,7 @@ class GetPathInfoTool(FileTool):
     """Inspect filesystem metadata for one workspace path."""
 
     execution_kind = ExecutionKind.TRUSTED_FILE
+    scheduling_policy = READ_ONLY
 
     def __init__(
         self,

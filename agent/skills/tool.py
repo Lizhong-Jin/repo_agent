@@ -2,12 +2,14 @@
 
 from llm import ToolDefinition
 from tools._internal.base import ExecutionKind, ToolResult
+from tools.scheduling import INDEPENDENT
 
 from .registry import SkillError, SkillRegistry
 
 
 class LoadSkillTool:
     execution_kind = ExecutionKind.HOST_CONTROL
+    scheduling_policy = INDEPENDENT
 
     def __init__(self, registry: SkillRegistry):
         self.registry = registry

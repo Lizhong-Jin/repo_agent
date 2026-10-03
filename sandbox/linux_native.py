@@ -91,7 +91,7 @@ class LinuxNativeBackend(NativeBackendBase):
         # File metadata checks are performed in _mount_policy, even for direct
         # _run calls and startup probes. Never carry observations to another run.
         self._check_workspace_layout()
-        self.last_workspace_check_ms = 0.0
+        self._set_metric("last_workspace_check_ms", 0.0)
 
     def _check_workspace_layout(self):
         for path in self.read_paths:
@@ -145,9 +145,9 @@ class LinuxNativeBackend(NativeBackendBase):
         try:
             result = scanner.scan(self._policy_plan(), request)
         except ScanFailure as failure:
-            self.last_policy_metrics = failure.metrics
+            self._set_metric("last_policy_metrics", failure.metrics)
             raise failure.error from None
-        self.last_policy_metrics = dict(result.metrics)
+        self._set_metric("last_policy_metrics", dict(result.metrics))
         if self.wsl_drivers:
             self.wsl_drivers.verify(table)
         return list(result.masks), list(result.git_paths)
@@ -231,7 +231,7 @@ class LinuxNativeBackend(NativeBackendBase):
                 *command,
             ]
         )
-        self.last_policy_metrics["materialization_ms"] = (
+        self._get_metric("last_policy_metrics")["materialization_ms"] = (
             perf_counter() - materialization_started
         ) * 1000
         return argv

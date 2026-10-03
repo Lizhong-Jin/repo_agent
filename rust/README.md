@@ -31,7 +31,7 @@ rust/
 ```
 
 Cargo/Python 发行包名统一为 **`rust-backend`**，Python 模块名为 **`rust_backend`**。
-wheel 文件按 Python 规范使用下划线，例如 `rust_backend-0.5.0-…whl`；动态库名称为
+wheel 文件按 Python 规范使用下划线，例如 `rust_backend-0.6.0-…whl`；动态库名称为
 `librust_backend.so`（Linux）或 `librust_backend.dylib`（macOS）。
 旧 `repo-agent-policy-scan`/`repo_agent_scan` 二进制不能仅改文件名继续使用，需重新构建
 并安装新包。Linux 策略扫描 API_VERSION=1；文件系统 FILESYSTEM_API_VERSION=2，
@@ -54,9 +54,9 @@ python scripts/build_rust.py wheel
 
 ```text
 rust_wheels/
-└── 0.5.0/
-    ├── rust_backend-0.5.0-cp311-abi3-macosx_11_0_arm64.whl
-    ├── rust_backend-0.5.0-cp311-abi3-manylinux_2_28_x86_64.whl
+└── 0.6.0/
+    ├── rust_backend-0.6.0-cp311-abi3-macosx_11_0_arm64.whl
+    ├── rust_backend-0.6.0-cp311-abi3-manylinux_2_28_x86_64.whl
     ├── macos-arm64/librust_backend.dylib
     └── linux-x86_64/librust_backend.so
 ```
@@ -119,7 +119,7 @@ python scripts/build_rust.py build --target host
 
 ## Linux/macOS Rust 文件系统后端
 
-安装当前 0.5.0 的本机扩展（策略 API 1、文件系统 API 2）并设置 `AGENT_NATIVE_SCANNER=rust`，重启 native 后端。
+安装当前 0.6.0 的本机扩展（策略 API 1、文件系统 API 2）并设置 `AGENT_NATIVE_SCANNER=rust`，重启 native 后端。
 默认仍为 Python；缺少扩展、文件系统 API 不兼容或扫描失败时显式报错，不静默回退。
 
 Linux/macOS native 文件工具都接入 `src/filesystem/mod.rs` 和 `metadata.rs`：通过 Rust
@@ -213,3 +213,13 @@ macOS 工作区预检均接入。文件工具搜索/读取仍按原顺序执行�
 配置、无序汇总后的稳定策略顺序、取消回收、资源上限及跨线程计时口径见
 [有限并行扫描](docs/scan-parallel.md)。分支目录基准：
 `python scripts/benchmark_scan_parallel.py --workers 1 2 4`。
+
+## 0.6.0 目录任务批处理
+
+默认线程上限仍为 2；新增 `AGENT_SCAN_BATCH_SIZE=32`（1～64），一次消息合并多个
+已发现目录，减少小目录扫描的线程交接。1 为逐目录对照，单线程保留原串行实现。
+Linux 逐个打开批内目录；macOS 合并同父目录任务并共享父句柄，不预打开整批子目录。
+
+`python scripts/benchmark_scan_parallel.py` 现在默认使用嵌套小目录树，并交错测量
+墙钟、CPU、上下文切换和批次诊断。`--root /path/to/conda` 可只读测量真实目录。
+详细语义与资源边界见 [有限并行扫描](docs/scan-parallel.md)。
