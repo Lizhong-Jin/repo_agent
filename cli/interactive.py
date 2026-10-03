@@ -77,7 +77,13 @@ def run_interactive(
                 state = controller.finish(queued, outcome)
                 if state != "completed":
                     print(controller.queue.data["reason"])
-                    print("队列已暂停；/queue 查看，/queue resume 继续。")
+                    print(
+                        "队列已暂停；/continue 继续当前任务，/queue 查看队列。"
+                        if outcome.kind == "result"
+                        and outcome.value.status == "max_steps"
+                        and not controller.cleanup_blocked
+                        else "队列已暂停；/queue 查看，/queue resume 继续。"
+                    )
             except (OSError, ValueError) as error:
                 print(str(error))
                 break
@@ -102,7 +108,7 @@ def run_interactive(
         if task in {"/exit", "/quit"}:
             print("会话已结束。")
             return
-        if task.split()[0] == "/queue":
+        if task.split()[0] in {"/queue", "/continue"}:
             try:
                 print(controller.command(task))
             except (OSError, ValueError) as error:

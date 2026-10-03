@@ -72,7 +72,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install -e ".[dev]"
-      - run: python -m pytest -q tests/test_architecture_boundaries.py tests/test_host_file_contracts.py tests/test_windows_files.py tests/test_windows_release.py tests/test_cancellation.py tests/test_task_queue.py tests/test_execution_ledger.py
+      - run: python -m pytest -q tests/test_architecture_boundaries.py tests/test_host_file_contracts.py tests/test_windows_files.py tests/test_windows_release.py tests/test_cancellation.py tests/test_task_queue.py tests/test_continue.py tests/test_execution_ledger.py
 
   windows-release:
     runs-on: windows-latest

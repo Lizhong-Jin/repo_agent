@@ -94,6 +94,41 @@ class TaskController:
         if self.active or self.queue.pending:
             raise ValueError("请先结束当前任务并处理待执行任务；/queue clear 可移除待执行项")
 
+    def continue_task(self):
+        """Resume the latest step-limited run with fresh budget, ahead of waiting work."""
+        with self.lock:
+            if self.active or self.closing:
+                raise ValueError("请等待当前任务收尾后再使用 /continue")
+            if self.cleanup_blocked or not self._healthy():
+                raise ValueError("进程清理尚未确认；请退出、检查进程后重新启动")
+            executed = [t for t in self.queue.data["tasks"] if t["attempts"]]
+            previous = max(executed, key=lambda t: t.get("finished_at", ""), default=None)
+            if (
+                previous is None
+                or previous["state"] not in {"needs_input", "failed"}
+                or previous["result"].get("run_status") != "max_steps"
+                or previous["result"].get("cleanup_status") == "unknown"
+                or not self.history
+            ):
+                raise ValueError("当前没有可继续的调用上限任务，或其上下文已清空")
+            # Reuse the staged entry if a preceding save failed. Never duplicate it.
+            task = next(
+                (t for t in self.queue.pending if t.get("continuation_of") == previous["id"]),
+                None,
+            )
+            if task is None:
+                task = self.queue.add(
+                    "继续完成上一项因调用轮数上限暂停的任务。"
+                    "从已有上下文和工具结果继续，不要重复已经完成的操作。"
+                )
+                task["continuation_of"] = previous["id"]
+            self.queue.move(task["number"], 1)
+            self.queue.resume()
+            self._save()
+            budget = self.runtime.max_steps
+            allowance = f"本次最多再调用模型 {budget} 轮" if budget else "当前配置为轮数无上限"
+            return f"继续任务 #{previous['number']}（续接 #{task['number']}）；{allowance}"
+
     def start_next(self):
         with self.lock:
             if (
@@ -209,7 +244,10 @@ class TaskController:
                 self.cleanup_blocked = True
                 if state == "completed":
                     state = "failed"
-                summary["notice"] = "进程清理未确认；队列已暂停"
+                # Cleanup uncertainty supplements the task's cause, never replaces it.
+                summary["notice"] = "\n".join(
+                    filter(None, (summary["notice"], "进程清理未确认；队列已暂停"))
+                )
             self.queue.finish(self.active, state, summary)
             self.active = None
             self._save()  # History, pending marker and queue result share one snapshot.
@@ -217,6 +255,10 @@ class TaskController:
 
     def command(self, text):
         parts = text.strip().split(maxsplit=2)
+        if parts[:1] == ["/continue"]:
+            if len(parts) != 1:
+                raise ValueError("用法：/continue（使用当前 max_steps 预算）")
+            return self.continue_task()
         action = parts[1] if len(parts) > 1 else "list"
         argument = parts[2] if len(parts) > 2 else ""
         if action == "list" and not argument:

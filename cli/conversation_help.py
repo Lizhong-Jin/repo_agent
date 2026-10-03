@@ -6,6 +6,7 @@ HELP = (
     "输入任务后按回车。/help 查看帮助，/clear 清空上下文，/new [名称] 启动新会话。"
     "/compact 压缩上下文并归档原文。/ledger 查看持久化工具执行证据。"
     "TUI 执行中输入普通任务会排队，完成后按顺序执行。"
+    "/continue 继续因调用上限暂停的任务，再获得 max_steps 轮预算并优先执行。"
     "/queue 查看；add 文本 添加；pause 暂停；resume 继续；"
     "edit 编号 文本 修改；remove 编号 移除；move 编号 位置 排序；"
     "clear 清空等待项；retry 编号 创建重试项。以上操作均以 /queue 开头。"

@@ -151,6 +151,47 @@ def test_non_success_pauses_and_keeps_waiting_tasks(open_conversation, kind):
         assert finish_next(control) == "completed"
 
 
+@pytest.mark.parametrize(
+    ("kind", "notice"),
+    [
+        ("cancelled", "用户主动停止"),
+        ("error", "model failed"),
+        ("writeback", "自动回写未完成"),
+    ],
+)
+def test_unconfirmed_cleanup_preserves_failure_notice_and_blocks_queue(
+    open_conversation, kind, notice
+):
+    conversation = open_conversation()
+    control = controller(conversation)
+    control.enqueue("first")
+    control.enqueue("second")
+    ticket = control.start_next()
+    if kind == "cancelled":
+        control.stop()
+        control.cancellation.record_cleanup("unknown")
+        outcome = TaskOutcome("cancelled", RunCancelled(control.cancellation))
+    elif kind == "error":
+        outcome = TaskOutcome("error", "model failed")
+    else:
+        outcome = control.execute(ticket)
+        outcome.writeback_ok = False
+    outcome.cleanup_status = "unknown"
+
+    assert control.finish(ticket, outcome) == ("cancelled" if kind == "cancelled" else "failed")
+    result = control.queue.get(1)["result"]
+    assert notice in result["notice"]
+    assert "进程清理未确认；队列已暂停" in result["notice"]
+    assert result["cleanup_status"] == "unknown"
+    assert control.queue.data["reason"] == result["notice"]
+    assert saved(conversation)["task_queue"]["tasks"][0]["result"] == result
+    assert control.cleanup_blocked and control.queue.paused
+    with pytest.raises(ValueError, match="进程清理尚未确认"):
+        control.resume()
+    assert control.start_next() is None
+    assert [task["text"] for task in control.queue.pending] == ["second"]
+
+
 @pytest.mark.parametrize("running", [False, True])
 def test_restore_pauses_and_never_replays_uncertain_work(open_conversation, running):
     conversation = open_conversation()

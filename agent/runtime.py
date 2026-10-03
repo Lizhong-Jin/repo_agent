@@ -244,7 +244,7 @@ class AgentRuntime:
 
         def finish(status, notice="", *, resumable=False):
             if status == "max_steps":
-                notice = "达到轮数上限，任务尚未完成；上下文已保留，可输入“继续”。"
+                notice = "达到轮数上限，任务尚未完成；上下文已保留，可输入 /continue 继续。"
                 resumable = True
             return RunResult(
                 status,

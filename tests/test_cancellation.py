@@ -362,7 +362,8 @@ def test_cancellation_report_persisted_in_conversation(open_conversation):
     assert conversation.pending_task is None
 
 
-def test_tui_cancel_stops_process_and_allows_fresh_task(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cleanup_unconfirmed", [False, True])
+def test_tui_cancel_stops_process_and_allows_fresh_task(tmp_path, monkeypatch, cleanup_unconfirmed):
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
 
@@ -381,6 +382,18 @@ def test_tui_cancel_stops_process_and_allows_fresh_task(tmp_path, monkeypatch):
         return process
 
     monkeypatch.setattr(processes, "start_process", start)
+
+    if cleanup_unconfirmed:
+        original_cleanup = ProcessRunner._terminate_process_tree
+
+        def unconfirmed_cleanup(process, diagnostics=None):
+            # Terminate the real child, then exercise Windows-style uncertainty on every OS.
+            original_cleanup(process, diagnostics)
+            return "Descendant process termination is not guaranteed on this platform."
+
+        monkeypatch.setattr(
+            ProcessRunner, "_terminate_process_tree", staticmethod(unconfirmed_cleanup)
+        )
 
     class Command:
         # Trusted test double; production process tools still require sandbox adapters.
@@ -427,6 +440,9 @@ def test_tui_cancel_stops_process_and_allows_fresh_task(tmp_path, monkeypatch):
                 assert "用户主动停止" in ui.transcript
                 assert runtime.last_stats.status == "cancelled"
                 assert first.report()["cleanup_status"] in {"confirmed", "unknown"}
+                if cleanup_unconfirmed:
+                    assert first.report()["cleanup_status"] == "unknown"
+                    assert "进程清理未确认；队列已暂停" in ui.transcript
                 pipe.send_text("second\r")
                 await until(lambda: len(ui.controller.queue.pending) == 1)
                 assert ui.controller.queue.paused and runtime.llm.calls == 1
@@ -434,7 +450,10 @@ def test_tui_cancel_stops_process_and_allows_fresh_task(tmp_path, monkeypatch):
                 if first.report()["cleanup_status"] == "unknown":
                     await until(lambda: "进程清理尚未确认" in ui.phase)
                     assert runtime.llm.calls == 1
-                    pipe.send_text("\x04")
+                    assert ui.controller.cleanup_blocked and ui.controller.queue.paused
+                    # Rejected commands remain editable; Ctrl+D exits only an empty editor.
+                    assert ui.editor.text == "/queue resume"
+                    pipe.send_text("\x03\x04")
                     await asyncio.wait_for(task, 5)
                     return
                 await until(lambda: "fresh task complete" in ui.transcript)

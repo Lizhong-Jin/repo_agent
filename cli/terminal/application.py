@@ -282,7 +282,10 @@ class ConversationUI:
             self.editor.text = ""
             self.display_command(task)
             return
-        if task.split()[0] == "/queue":
+        if task.split()[0] in {"/queue", "/continue"}:
+            if task.split()[0] == "/continue" and self.busy:
+                self.phase = "请等待当前任务收尾后再使用 /continue"
+                return
             try:
                 self.append(self.controller.command(task) + "\n")
                 self.editor.text = ""
@@ -435,7 +438,13 @@ class ConversationUI:
             self.history = self.controller.history
             if state != "completed":
                 self.append("\n" + self.controller.queue.data["reason"] + "\n")
-                self.phase = "队列已暂停；/queue 查看，/queue resume 继续"
+                self.phase = (
+                    "达到调用上限；/continue 继续当前任务，/queue 查看队列"
+                    if outcome.kind == "result"
+                    and outcome.value.status == "max_steps"
+                    and not self.controller.cleanup_blocked
+                    else "队列已暂停；/queue 查看，/queue resume 继续"
+                )
             else:
                 self.phase = "任务已完成"
         except Exception as error:
