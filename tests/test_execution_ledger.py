@@ -49,7 +49,7 @@ class Write:
             current_cancellation().cancel()
         if self.fail:
             raise RuntimeError("after effect")
-        return ToolResult(True, {"path": path.name, "bytes_written": 6})
+        return ToolResult(True, {"path": path.name, "bytes_written": 6}).with_effects()
 
 
 def create(tmp_path, tool):
@@ -331,7 +331,7 @@ def test_unknown_cleanup_receipt_stops_before_next_tool(tmp_path):
         def execute(self, arguments):
             result = super().execute(arguments)
             result.data["cleanup_status"] = "unknown"
-            return result
+            return result.with_effects()
 
     store, conversation, control = create(tmp_path, Unclean(tmp_path))
     try:

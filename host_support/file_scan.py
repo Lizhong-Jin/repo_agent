@@ -10,6 +10,8 @@ from itertools import islice
 from pathlib import Path
 from typing import BinaryIO, Protocol
 
+from .read_budget import read_checkpoint
+
 
 class ScanMetadata(Protocol):
     """Minimum immutable lstat observation for classification and content guards."""
@@ -56,6 +58,7 @@ def metadata_entries(reader: DirectoryReader, names, *, batch_size=128):
     """
     iterator = iter(names)
     while batch := list(islice(iterator, batch_size)):
+        read_checkpoint()
         method = getattr(reader, "scan_metadata", None) or getattr(reader, "stat_many", None)
         if method is not None:
             results = method(batch)

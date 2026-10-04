@@ -81,8 +81,8 @@ class RuntimeEventBridge:
         footer = self.status_text()
         record = stats.model_calls[-1] if stats.model_calls else None
         phase = f"模型 #{record.step} · 等待响应…" if name == "model_start" else None
-        if name == "tool_start":
-            phase = f"工具 · {stats.current_tool.name} 执行中…"
+        if name in {"tool_start", "tool_end"}:
+            phase = self.tool_phase(stats)
         if name == "recovery":
             phase = stats.recoveries[-1]["message"]
             self.write_meta(f"[{phase}]")
@@ -97,6 +97,19 @@ class RuntimeEventBridge:
         self.dispatch(self.progress, phase, footer)
         if name in {"model_start", "model_end"} and not compact:
             self.dispatch(self.model_boundary, name, record.step)
+
+    @staticmethod
+    def tool_phase(stats):
+        # Trace records are updated before each event. Derive the active set from
+        # them so out-of-order completions and repeated tool names stay accurate.
+        active = [call.name for call in stats.tool_calls if call.status == "running"]
+        if not active:
+            return "工具调用已结束"
+        if len(active) == 1:
+            return f"工具 · {active[0]} 执行中…"
+        names = list(dict.fromkeys(active))
+        label = "、".join(names[:3]) + ("等" if len(names) > 3 else "")
+        return f"工具 · {len(active)} 个调用执行中：{label}…"
 
     def on_model_event(self, kind, text, elapsed, record):
         phase = None

@@ -1,6 +1,7 @@
 """Common tool result, ready to send back through the provider-neutral LLM interface."""
 
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Protocol
 
@@ -51,11 +52,64 @@ def validate_tools(tools: list[Tool]) -> list[Tool]:
 
 
 @dataclass(frozen=True)
+class ToolEffects:
+    """Internal receipt metadata supplied by an implementation or adapter.
+
+    'reported' describes known changes, not a guarantee of exhaustive coverage.
+    'unknown' may carry process diagnostics without claiming known file changes.
+    This metadata is serialized by workers, but never included in model messages.
+    """
+
+    status: str = "unknown"
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if self.status not in {"unknown", "none", "reported"}:
+            raise ValueError("Invalid tool effects status")
+        if not isinstance(self.details, dict):
+            raise TypeError("Tool effects details must be a dictionary")
+        object.__setattr__(self, "details", deepcopy(self.details))
+
+    def to_record(self):
+        return {"effects": self.status, "result": deepcopy(self.details)}
+
+    @classmethod
+    def process(cls, data):
+        """Diagnostics do not establish what an arbitrary process changed."""
+        return cls(
+            details={
+                key: data[key]
+                for key in (
+                    "exit_code",
+                    "timed_out",
+                    "cleanup_status",
+                    "cleanup_error",
+                    "cleanup_diagnostics",
+                    "inner_cleanup_error",
+                )
+                if key in data
+            }
+        )
+
+
+@dataclass(frozen=True)
 class ToolResult:
     success: bool
     data: dict[str, Any] = field(default_factory=dict)
     error_code: str | None = None
     error: str | None = None
+    effects: ToolEffects = field(default_factory=ToolEffects)
+
+    def __post_init__(self):
+        # JSON workers return a nested dictionary; legacy payloads omit it.
+        if isinstance(self.effects, dict):
+            object.__setattr__(self, "effects", ToolEffects(**self.effects))
+        elif not isinstance(self.effects, ToolEffects):
+            raise TypeError("effects must be ToolEffects")
+
+    def with_effects(self, status="reported", *, details=None):
+        """Explicitly opt result data (or selected details) into the receipt."""
+        return replace(self, effects=ToolEffects(status, self.data if details is None else details))
 
     def to_message(self, call: ToolCall) -> Message:
         output = {"success": self.success, "data": self.data}

@@ -112,7 +112,9 @@ with LLMClient(LLMConfig("deepseek", "你的模型 ID")) as client:
 
 这些状态绑定请求使用的 provider 和 model。本层拒绝跨模型直接转发原生状态，也会检查 assistant 文本/工具参数是否在保留旧状态的同时被修改。库调用方切换模型时应建立新历史，或明确移除不兼容原生状态；payload 视为不透明数据，不手工修改。CLI 的 `/model` 清空模型上下文；重启时配置变更则保留通用消息并去除旧原生状态，见[会话恢复](sessions.md#保存恢复与新会话)。
 
-可通过 `message.to_dict()` 和 `Message.from_dict(data)` 保存、恢复 JSON 对话历史。对话需从 user 开始，system 消息集中在开头，一次 assistant 的所有工具结果必须按原调用顺序回传完毕才能请求下一步。自定义调用方若并发执行工具，回传时仍须恢复原顺序，以兼容不带调用 ID 的 Gemini 响应；本项目 Runtime 当前顺序执行工具。
+可通过 `message.to_dict()` 和 `Message.from_dict(data)` 保存、恢复 JSON 对话历史。对话需从 user 开始，system 消息集中在开头，一次 assistant 的所有工具结果必须按原调用顺序回传完毕才能请求下一步。自定义调用方若并发执行工具，回传时仍须恢复原顺序，以兼容不带调用 ID 的 Gemini 响应。
+
+本项目 Runtime 会对同一模型回复中相邻且明确允许并发的工具调用进行有界并发执行；串行工具形成执行屏障。完成事件按实际完成顺序处理，加入对话历史的工具结果始终保持原调用顺序。默认并发上限为 4，具体工具与后端限制见[并发调度策略](tools.md#并发调度策略)。
 
 ## 参数、用量和错误
 

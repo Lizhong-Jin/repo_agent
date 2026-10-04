@@ -71,6 +71,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !agent/skills/tool.py
 !agent/task_queue.py
 !agent/thinking.py
+!agent/tool_output.py
 !agent/tool_scheduler.py
 !agent/transcript.py
 !build_manifest.py
@@ -134,6 +135,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !host_support/probes.py
 !host_support/processes.py
 !host_support/python_environments.py
+!host_support/read_budget.py
 !host_support/rust_filesystem.py
 !host_support/storage.py
 !host_support/supervision.py
@@ -248,6 +250,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !tools/_internal/lsp_config.py
 !tools/_internal/process_runner.py
 !tools/_internal/process_supervisor.py
+!tools/_internal/selection.py
 !tools/_internal/text_search.py
 !tools/_internal/web_backend.py
 !tools/_internal/web_content.py

@@ -161,7 +161,7 @@ def test_atomic_tool_finishes_and_records_result_before_cancellation(tmp_path):
             context.cancel()
             checkpoint()  # A file transaction defers even nested cancellation checks.
             target.write_text("complete")
-            return ToolResult(True, {"path": "result.txt", "created": True})
+            return ToolResult(True, {"path": "result.txt", "created": True}).with_effects()
 
     dispatcher = ToolDispatcher()
     dispatcher.register(Write())

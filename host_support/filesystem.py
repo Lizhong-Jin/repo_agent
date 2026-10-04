@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .cancellation import checkpoint
 from .file_scan import DirectoryReader, metadata_entries
+from .read_budget import read_checkpoint
 
 _scan_directories = ContextVar("scan_directories", default=None)
 _SCAN_DIRECTORY_LIMIT = 32
@@ -462,7 +463,10 @@ class _DescriptorDirectoryReader(DirectoryReader):
 
     def names(self):
         self._check()
-        return self.access._directory_names(self.fd)
+        read_checkpoint(directories=1)
+        names = self.access._directory_names(self.fd)
+        read_checkpoint(entries=len(names))
+        return names
 
     def stat(self, name):
         self._check(name)

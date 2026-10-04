@@ -1,7 +1,7 @@
-"""Bounded tool batches; no UI, ledger, sandbox implementation or tool-name knowledge.
+"""Rolling tool segments; no UI, ledger, sandbox implementation or tool-name knowledge.
 
 Only contiguous, explicitly reentrant reads run together. Everything else is a
-barrier. A batch is fully joined before returning, including on fatal failure.
+barrier. A segment is fully joined before returning, including on fatal failure.
 """
 
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -31,38 +31,40 @@ class ToolScheduler:
         for call in calls:
             if not policy(call).parallel:
                 if pending:
-                    yield from self._batch(pending, invoke, on_start, on_finish, check)
+                    yield from self._segment(pending, invoke, on_start, on_finish, check)
                     pending = []
-                yield from self._batch([call], invoke, on_start, on_finish, check)
+                yield from self._segment([call], invoke, on_start, on_finish, check)
             else:
                 pending.append(call)
-                if len(pending) == self.max_workers:
-                    yield from self._batch(pending, invoke, on_start, on_finish, check)
-                    pending = []
         if pending:
-            yield from self._batch(pending, invoke, on_start, on_finish, check)
+            yield from self._segment(pending, invoke, on_start, on_finish, check)
 
-    def _batch(self, calls, invoke, on_start, on_finish, check):
+    def _segment(self, calls, invoke, on_start, on_finish, check):
         # Restore ContextVars before yielding to consumers, even if they stop
         # consuming or raise between results. No worker outlives this scope.
         with cancellation_scope():
-            return self._run_batch(calls, invoke, on_start, on_finish, check)
+            return self._run_segment(calls, invoke, on_start, on_finish, check)
 
-    def _run_batch(self, calls, invoke, on_start, on_finish, check):
+    def _run_segment(self, calls, invoke, on_start, on_finish, check):
         if len(calls) == 1 or self.max_workers == 1:
+            results = []
+            for call in calls:
+                check()
+                token = on_start(call)
+                try:
+                    result = invoke(call)
+                except BaseException as error:
+                    on_finish(token, None, error)
+                    raise
+                on_finish(token, result, None)
+                results.append(result)
             check()
-            token = on_start(calls[0])
-            try:
-                result = invoke(calls[0])
-            except BaseException as error:
-                on_finish(token, None, error)
-                raise
-            on_finish(token, result, None)
-            return [result]
+            return results
         context = current_cancellation()
         results = [None] * len(calls)
         errors = []
         futures = {}
+        next_index = 0
 
         def run(call):
             try:
@@ -79,17 +81,22 @@ class ToolScheduler:
             max_workers=self.max_workers, thread_name_prefix="agent-tool"
         ) as pool:
             try:
-                for index, call in enumerate(calls):
+                while futures or next_index < len(calls):
                     check()
-                    token = on_start(call)
-                    try:
-                        future = pool.submit(copy_context().run, run, call)
-                    except BaseException as error:
-                        on_finish(token, None, error)
-                        raise
-                    futures[future] = (index, token)
-                while futures:
-                    check()
+                    while len(futures) < self.max_workers and next_index < len(calls):
+                        # Fatal worker failures signal cancellation immediately,
+                        # including before the coordinator collects their future.
+                        check()
+                        checkpoint()
+                        call = calls[next_index]
+                        token = on_start(call)
+                        try:
+                            future = pool.submit(copy_context().run, run, call)
+                        except BaseException as error:
+                            on_finish(token, None, error)
+                            raise
+                        futures[future] = (next_index, token)
+                        next_index += 1
                     completed, _ = wait(futures, timeout=0.05, return_when=FIRST_COMPLETED)
                     self._collect(completed, futures, results, errors, on_finish)
                     if errors:

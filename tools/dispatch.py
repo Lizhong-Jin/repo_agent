@@ -8,7 +8,7 @@ from host_support.cancellation import checkpoint, current_cancellation, defer_ca
 from host_support.execution_receipt import record_result
 
 from ._internal.base import ExecutionKind, ToolResult, execution_kind_of
-from .scheduling import SERIAL, scheduling_policy_of
+from .scheduling import SERIAL, WorkspaceAccess, scheduling_policy_of
 
 
 class ToolDispatcher:
@@ -63,41 +63,7 @@ class ToolDispatcher:
             context.start_tool(record)
         result = handlers[kind](tool, arguments)
         completed = {"status": "completed" if result.success else "failed"}
-        # Preserve tool-reported effects only; do not infer subprocess changes.
-        completed["result"] = {
-            key: value
-            for key, value in result.data.items()
-            if key
-            in {
-                "path",
-                "source",
-                "destination",
-                "created",
-                "deleted",
-                "moved",
-                "committed_files",
-                "committed",
-                "not_committed",
-                "files_changed",
-                "changes",
-                "bytes_written",
-                "sha256_before",
-                "sha256_after",
-                "exit_code",
-                "timed_out",
-                "cleanup_status",
-                "cleanup_error",
-            }
-        }
-        if name in {
-            "write_file",
-            "edit_file",
-            "apply_patch",
-            "make_directory",
-            "delete_file",
-            "move_file",
-        }:
-            completed["effects"] = "reported"
+        completed.update(result.effects.to_record())
         if context is not None:
             context.finish_tool(record, completed)
         else:
@@ -114,6 +80,8 @@ class ToolDispatcher:
     def _file(tool, arguments):
         # Native proxies use the descriptor-based file service; Docker proxies
         # retain their private workspace and writeback guard. Local keeps its API.
+        if scheduling_policy_of(tool).workspace_access is WorkspaceAccess.READ:
+            return tool.execute(arguments)
         with defer_cancellation():
             return tool.execute(arguments)
 

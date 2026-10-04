@@ -18,6 +18,12 @@ from tools.tool_groups import LoadToolGroupTool, ToolGroup, ToolGroupRegistry
 
 from .prompt import make_default_system_prompt
 from .skills import LoadSkillTool, SkillRegistry
+from .tool_output import (
+    DEFAULT_ROUND_CHARS,
+    MIN_CALL_CHARS,
+    ToolOutputBudget,
+    validate_output_limit,
+)
 from .tool_scheduler import ToolScheduler
 from .Tracing import RunStats, RunTrace
 
@@ -82,6 +88,7 @@ class AgentRuntime:
         skills: SkillRegistry | None = None,
         tool_groups: Sequence[ToolGroup] = (),
         max_tool_workers: int = 4,
+        max_tool_output_chars: int = DEFAULT_ROUND_CHARS,
     ) -> None:
         if type(max_steps) is not int or max_steps < 0:
             raise ValueError("max_steps must be a non-negative integer (0 means unlimited)")
@@ -117,6 +124,7 @@ class AgentRuntime:
         self.thinking_settings = None
         self._run_lock = Lock()
         self.scheduler = ToolScheduler(max_tool_workers)
+        self.max_tool_output_chars = validate_output_limit(max_tool_output_chars)
         self.dispatcher = ToolDispatcher()
         self._tools = self.dispatcher.tools
         definitions = []
@@ -368,6 +376,19 @@ class AgentRuntime:
                         resumable=True,
                     )
                 raise InvalidResponseError("Model returned missing or reused tool call IDs")
+            if len(response.tool_calls) > self.max_tool_output_chars // MIN_CALL_CHARS:
+                messages.pop()  # Never keep an assistant batch without tool results.
+                messages.append(
+                    Message(
+                        "user", "上一轮工具调用数量超过整轮输出预算，均未执行。请分多轮调用工具。"
+                    )
+                )
+                return finish(
+                    "stopped",
+                    "工具调用数量超过整轮输出预算，尚未执行，请分批重试。",
+                    resumable=True,
+                )
+            output_budget = ToolOutputBudget(response.tool_calls, self.max_tool_output_chars)
             used_call_ids.update(ids)
             exposed_names = frozenset(definition.name for definition in request.tools)
             ledger = getattr(self, "execution_ledger", None)
@@ -390,7 +411,7 @@ class AgentRuntime:
                 check=self.check_cancelled,
             )
             for call, observation in zip(response.tool_calls, observations, strict=True):
-                messages.append(observation)
+                messages.append(output_budget.project(call, observation))
                 if (
                     self.skills is not None
                     and call.name == "load_skill"

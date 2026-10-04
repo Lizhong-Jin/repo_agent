@@ -12,7 +12,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from time import perf_counter
 
-from tools._internal.base import ExecutionKind, ToolResult, execution_kind_of
+from tools._internal.base import ExecutionKind, ToolEffects, ToolResult, execution_kind_of
 from tools._internal.file_access import FileAccess
 from tools._internal.file_policy import runtime_protected_paths
 from tools._internal.process_runner import ProcessRunner, _BoundedCapture
@@ -549,6 +549,7 @@ class NativeBackendBase:
                     error_code="NATIVE_EXECUTION_FAILED",
                     error="命令已返回，但进程清理未确认；保留已收集的输出",
                     data={**result.data, "execution_allowed": self.healthy},
+                    effects=result.effects,
                 )
             return replace(result, data={**result.data, "execution_allowed": self.healthy})
         request = {
@@ -574,6 +575,7 @@ class NativeBackendBase:
                 error_code="NATIVE_EXECUTION_FAILED",
                 error="原生沙箱执行失败、超时或输出超过限制；文件修改可能已经生效",
                 data=self._failure_data(result),
+                effects=ToolEffects.process(asdict(result)),
             )
         try:
             payload = json.loads(result.stdout)
@@ -584,6 +586,7 @@ class NativeBackendBase:
                 error_code="NATIVE_PROTOCOL_ERROR",
                 error="原生 worker 返回无效结果",
                 data=self._failure_data(result),
+                effects=ToolEffects.process(asdict(result)),
             )
         if (
             tool_result.data.get("cleanup_error")
@@ -598,7 +601,7 @@ class NativeBackendBase:
                     cleanup_status="confirmed",
                     cleanup_diagnostics=result.cleanup_diagnostics,
                 )
-                tool_result = replace(tool_result, data=data)
+                tool_result = replace(tool_result, data=data, effects=ToolEffects.process(data))
             else:
                 self.healthy = False
         return replace(tool_result, data={**tool_result.data, "execution_allowed": self.healthy})

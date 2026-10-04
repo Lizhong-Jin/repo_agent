@@ -21,8 +21,9 @@ import hashlib
 import logging
 import os
 import re
+from collections.abc import Sequence
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import wraps
 from itertools import pairwise
 from pathlib import Path
@@ -30,18 +31,26 @@ from stat import S_ISDIR, S_ISLNK, S_ISREG
 from tempfile import NamedTemporaryFile
 from typing import Any, Literal
 
+from host_support.cancellation import checkpoint
+from host_support.read_budget import (
+    ReadBudgetExceeded,
+    ReadLimits,
+    read_budget_scope,
+    read_checkpoint,
+)
 from llm import ToolDefinition
 
-from ._internal._file_entries import inspect_entry, iter_search_candidates
+from ._internal._file_entries import inspect_entry, iter_search_candidates, local_glob_candidates
 from ._internal._file_io import FileSnapshot, StagedWrites, read_snapshot, snapshot_stat
 from ._internal._workspace import WorkspaceTool
 from ._internal._workspace import serialized_file_write as _serialized_file_write
-from ._internal.base import ExecutionKind, ToolResult
+from ._internal.base import ExecutionKind, ToolEffects, ToolResult
 from ._internal.errors import ToolErrorCode, tool_error
 from ._internal.file_access import FileAccess, current_file_access
 from ._internal.file_policy import is_credential_path
-from ._internal.text_search import text_lines
-from .scheduling import READ_ONLY, SERIAL
+from ._internal.selection import SmallestItems
+from ._internal.text_search import literal_span, source_line_count, source_line_spans, text_lines
+from .scheduling import READ_ONLY, SERIAL, WorkspaceAccess, scheduling_policy_of
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +59,19 @@ class FileTool(WorkspaceTool):
     execution_kind = ExecutionKind.TRUSTED_FILE
     scheduling_policy = SERIAL
 
+    def __init__(self, workspace_root, *, read_limits=None, **limits):
+        super().__init__(workspace_root, **limits)
+        self.read_limits = read_limits if read_limits is not None else ReadLimits()
+        if not isinstance(self.read_limits, ReadLimits):
+            raise ValueError("read_limits must be ReadLimits")
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         method = cls.__dict__.get("execute")
         if method is None:
             return
 
-        @wraps(method)
-        def execute(self, arguments):
+        def platform_execute(self, arguments):
             if os.name != "nt" or current_file_access() is not None:
                 return method(self, arguments)
             try:
@@ -69,6 +83,32 @@ class FileTool(WorkspaceTool):
                 return tool_error(ToolErrorCode.READ_ERROR)
             except ValueError as error:
                 return tool_error(ToolErrorCode.INVALID_ARGUMENTS, str(error))
+
+        @wraps(method)
+        def execute(self, arguments):
+            if scheduling_policy_of(self).workspace_access is not WorkspaceAccess.READ:
+                return platform_execute(self, arguments)
+            budget = None
+            try:
+                with read_budget_scope(self.read_limits) as budget:
+                    result = platform_execute(self, arguments)
+                    checkpoint()
+                    if not result.data.get("truncated") and result.error_code != "READ_FAILED":
+                        read_checkpoint()
+                    return replace(result, effects=ToolEffects("none"))
+            except ReadBudgetExceeded as error:
+                return ToolResult(
+                    False,
+                    data={
+                        "truncated": True,
+                        "truncation_reason": error.reason,
+                        "scan": budget.report() if budget is not None else {},
+                        "retry_hint": "Narrow the path or range; no complete result was produced.",
+                    },
+                    error_code="READ_BUDGET_EXCEEDED",
+                    error="Read budget exhausted.",
+                    effects=ToolEffects("none"),
+                )
 
         cls.execute = execute
 
@@ -94,12 +134,14 @@ class ReadFileTool(FileTool):
         self,
         workspace_root: str | Path,
         *,
+        read_limits: ReadLimits | None = None,
         max_reads: int = 32,
         max_file_bytes: int = 2 * 1024 * 1024,
         max_output_chars: int = 256 * 1024,
     ) -> None:
         super().__init__(
             workspace_root,
+            read_limits=read_limits,
             max_reads=max_reads,
             max_file_bytes=max_file_bytes,
             max_output_chars=max_output_chars,
@@ -201,8 +243,25 @@ class ReadFileTool(FileTool):
 
         results = []
         total_output_chars = 0
+        exhausted = None
         for read in reads:
-            result = self._read_one(read, self.max_output_chars - total_output_chars)
+            try:
+                if exhausted is not None:
+                    raise exhausted
+                read_checkpoint()
+                result = self._read_one(read, self.max_output_chars - total_output_chars)
+            except ReadBudgetExceeded as error:
+                exhausted = error
+                result = ToolResult(
+                    False,
+                    data={
+                        "truncated": True,
+                        "truncation_reason": error.reason,
+                        "next_start_line": read.get("start_line", 1),
+                    },
+                    error_code="READ_BUDGET_EXCEEDED",
+                    error="Read budget exhausted; retry fewer files.",
+                )
             entry = {"path": read["path"], "success": result.success, "data": result.data}
             if not result.success:
                 entry["error"] = {"code": result.error_code, "message": result.error}
@@ -260,24 +319,25 @@ class ReadFileTool(FileTool):
         except (OSError, RuntimeError):
             return tool_error(ToolErrorCode.READ_ERROR)
 
-        # Recognize LF, CRLF and CR without treating Unicode separators as source-code lines.
-        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
-        lines = normalized.split("\n") if normalized else []
-        if normalized.endswith("\n"):
-            lines.pop()
-        total = len(lines)
+        # Native string counting scans bounded snapshots without Python objects
+        # per line. Only walk line boundaries until the requested output is full.
+        total = source_line_count(text)
         if start > max(total, 1):
             return tool_error("LINE_OUT_OF_RANGE", f"start_line exceeds the file's {total} lines.")
         requested_end = min(end if end is not None else total, total)
         numbered_lines = []
         content_chars = 0
         actual_end = start - 1
-        for number in range(start, requested_end + 1):
-            line = f"{number}: {lines[number - 1]}"
-            required_chars = len(line) + bool(numbered_lines)
+        for number, (left, right) in enumerate(source_line_spans(text), 1):
+            if number > requested_end:
+                break
+            if number < start:
+                continue
+            prefix = f"{number}: "
+            required_chars = len(prefix) + right - left + bool(numbered_lines)
             if content_chars + required_chars > output_budget:
                 break
-            numbered_lines.append(line)
+            numbered_lines.append(prefix + text[left:right])
             content_chars += required_chars
             actual_end = number
         if total and not numbered_lines:
@@ -448,7 +508,7 @@ class WriteFileTool(FileTool):
                 "overwritten": existed,
                 "sha256": hashlib.sha256(encoded).hexdigest(),
             },
-        )
+        ).with_effects()
 
     @staticmethod
     def _count_lines(text: str) -> int:
@@ -784,7 +844,7 @@ class EditFileTool(FileTool):
                 "old_sha256": old_hash,
                 "new_sha256": new_hash,
             },
-        )
+        ).with_effects()
 
     @staticmethod
     def _get_original_text_offset(
@@ -1105,7 +1165,7 @@ class ApplyPatchTool(FileTool):
                 "lines_removed": sum(item.lines_removed for item in prepared_files),
                 "changes": changes,
             },
-        )
+        ).with_effects()
 
     def _change_summary(self, prepared: _PreparedFile) -> dict[str, Any]:
         loaded = prepared.loaded
@@ -1148,7 +1208,7 @@ class ApplyPatchTool(FileTool):
             },
             error_code=str(code),
             error=message,
-        )
+        ).with_effects()
 
     def _check_unchanged(self, loaded: _LoadedFile) -> ToolResult | None:
         current = self._read_snapshot(loaded.requested_path)
@@ -1477,7 +1537,7 @@ class ApplyPatchTool(FileTool):
         file_patch: _FilePatch,
         loaded: _LoadedFile,
     ) -> _PreparedFile | ToolResult:
-        source_lines = list(loaded.lines)
+        source_lines = loaded.lines
         prepared_hunks: list[_PreparedHunk] = []
 
         for hunk in file_patch.hunks:
@@ -1557,14 +1617,24 @@ class ApplyPatchTool(FileTool):
                     f"hunk {current.index} overlap in the original file.",
                 )
 
-        updated_lines = [
-            line + ("\n" if i < len(source_lines) - 1 or loaded.final_newline else "")
-            for i, line in enumerate(source_lines)
-        ]
-        for hunk in sorted(prepared_hunks, key=lambda item: item.start, reverse=True):
-            updated_lines[hunk.start : hunk.end] = [hunk.replacement]
+        # Copy disjoint original spans once. Reverse slice replacement would
+        # repeatedly shift the growing tail for every hunk.
+        fragments = []
 
-        updated_normalized = "".join(updated_lines)
+        def append_original(start, end):
+            if start < end:
+                fragment = "\n".join(source_lines[start:end])
+                if end < len(source_lines) or loaded.final_newline:
+                    fragment += "\n"
+                fragments.append(fragment)
+
+        cursor = 0
+        for hunk in ordered:
+            append_original(cursor, hunk.start)
+            fragments.append(hunk.replacement)
+            cursor = hunk.end
+        append_original(cursor, len(source_lines))
+        updated_normalized = "".join(fragments)
         updated_text = updated_normalized.replace("\n", loaded.newline)
         try:
             encoded = loaded.bom + updated_text.encode("utf-8")
@@ -1585,7 +1655,7 @@ class ApplyPatchTool(FileTool):
 
         return _PreparedFile(
             loaded=loaded,
-            hunks=tuple(sorted(prepared_hunks, key=lambda item: item.start)),
+            hunks=tuple(ordered),
             encoded=encoded,
             new_sha256=hashlib.sha256(encoded).hexdigest(),
             lines_added=sum(item.added_lines for item in prepared_hunks),
@@ -1594,7 +1664,7 @@ class ApplyPatchTool(FileTool):
 
     @staticmethod
     def _find_subsequence(
-        lines: list[str],
+        lines: Sequence[str],
         pattern: tuple[str, ...],
     ) -> list[int]:
         if not pattern or len(pattern) > len(lines):
@@ -1636,10 +1706,12 @@ class ListFileTool(FileTool):
         self,
         workspace_root: str | Path,
         *,
+        read_limits: ReadLimits | None = None,
         max_entries: int = 200,
     ) -> None:
         super().__init__(
             workspace_root,
+            read_limits=read_limits,
             max_entries=max_entries,
         )
 
@@ -1703,13 +1775,18 @@ class ListFileTool(FileTool):
                 return tool_error(ToolErrorCode.PATH_OUTSIDE_WORKSPACE)
             if not target.is_dir():
                 return tool_error(ToolErrorCode.NOT_A_DIRECTORY)
-            entries: list[dict[str, Any]] = []
+            type_order = {"directory": 0, "file": 1, "symlink": 2, "other": 3}
+            selected = SmallestItems(
+                self.max_entries,
+                key=lambda item: (type_order[item["type"]], item["name"].casefold(), item["name"]),
+            )
             access = current_file_access()
             candidates = (
                 access.iterdir_entries(target) if access else ((p, None) for p in target.iterdir())
             )
             with closing(candidates):
                 for entry, info in candidates:
+                    read_checkpoint(entries=1 if access is None else 0)
                     if not include_hidden and entry.name.startswith("."):
                         continue
                     try:
@@ -1733,7 +1810,7 @@ class ListFileTool(FileTool):
                     }
                     if size is not None:
                         item["size"] = size
-                    entries.append(item)
+                    selected.add(item)
         except FileNotFoundError:
             return tool_error(ToolErrorCode.FILE_NOT_FOUND)
         except NotADirectoryError:
@@ -1743,17 +1820,9 @@ class ListFileTool(FileTool):
         except (OSError, RuntimeError):
             return tool_error(ToolErrorCode.READ_ERROR)
 
-        type_order = {
-            "directory": 0,
-            "file": 1,
-            "symlink": 2,
-            "other": 3,
-        }
-
-        entries.sort(key=lambda x: (type_order[x["type"]], x["name"].casefold(), x["name"]))
-        total_entries = len(entries)
+        total_entries = selected.total
         truncated = total_entries > self.max_entries
-        entries = entries[: self.max_entries]
+        entries = selected.sorted_items()
 
         return ToolResult(
             success=True,
@@ -1778,10 +1847,12 @@ class FindFileTool(FileTool):
         self,
         workspace_root: str | Path,
         *,
+        read_limits: ReadLimits | None = None,
         max_results: int = 200,
     ) -> None:
         super().__init__(
             workspace_root,
+            read_limits=read_limits,
             max_results=max_results,
         )
 
@@ -1894,10 +1965,11 @@ class FindFileTool(FileTool):
             candidates = (
                 access.glob_entries(target, pattern)
                 if access
-                else ((p, None) for p in target.glob(pattern))
+                else local_glob_candidates(target, pattern)
             )
             with closing(candidates):
                 for candidate, info in candidates:
+                    read_checkpoint()
                     try:
                         metadata = inspect_entry(candidate, policy, info=info)
                         if metadata is None:
@@ -1970,6 +2042,7 @@ class SearchFilesTool(FileTool):
         self,
         workspace_root: str | Path,
         *,
+        read_limits: ReadLimits | None = None,
         max_results: int = 100,
         max_file_bytes: int = 2 * 1024 * 1024,
         max_line_chars: int = 2000,
@@ -1978,6 +2051,7 @@ class SearchFilesTool(FileTool):
     ) -> None:
         super().__init__(
             workspace_root,
+            read_limits=read_limits,
             max_results=max_results,
             max_file_bytes=max_file_bytes,
             max_line_chars=max_line_chars,
@@ -2101,15 +2175,6 @@ class SearchFilesTool(FileTool):
         output_chars = 0
         truncated = False
         truncation_reason = None
-        if case_sensitive:
-
-            def find_match_index(line: str) -> int:
-                return line.find(query)
-        else:
-            query_lower = query.casefold()
-
-            def find_match_index(line: str) -> int:
-                return line.casefold().find(query_lower)
 
         try:
             files = self._iter_files(
@@ -2120,6 +2185,7 @@ class SearchFilesTool(FileTool):
             )
             with closing(files):
                 for candidate in files:
+                    read_checkpoint()
                     file, info = candidate.path, candidate.info
                     if files_scanned >= self.max_files_scanned:
                         truncated = True
@@ -2161,8 +2227,8 @@ class SearchFilesTool(FileTool):
                         continue
                     file_matched = False
                     for line_number, line in enumerate(text_lines(text), start=1):
-                        match_index = find_match_index(line)
-                        if match_index == -1:
+                        span = literal_span(line, query, case_sensitive=case_sensitive)
+                        if span is None:
                             continue
                         if len(matches) >= self.max_results:
                             truncated = True
@@ -2172,7 +2238,7 @@ class SearchFilesTool(FileTool):
                             files_with_matches += 1
                             file_matched = True
                         truncated_lines = self._truncate_matching_line(
-                            line, match_index, len(query)
+                            line, span[0], span[1] - span[0]
                         )
                         output_chars += len(truncated_lines)
                         if output_chars > self.max_output_chars:
@@ -2188,6 +2254,9 @@ class SearchFilesTool(FileTool):
                         )
                     if truncated:
                         break
+        except ReadBudgetExceeded as error:
+            truncated = True
+            truncation_reason = error.reason
         except PermissionError:
             return tool_error(ToolErrorCode.PERMISSION_DENIED)
         except (OSError, RuntimeError):
@@ -2323,7 +2392,7 @@ class MakeDirectoryTool(FileTool):
                         "path": target.relative_to(self.workspace_root).as_posix(),
                         "created": False,
                     },
-                )
+                ).with_effects()
             if not parents and not target.parent.is_dir():
                 return tool_error(ToolErrorCode.PARENT_NOT_FOUND)
             self._mkdir(target, parents=parents, exist_ok=False)
@@ -2336,7 +2405,7 @@ class MakeDirectoryTool(FileTool):
                             "path": target.relative_to(self.workspace_root).as_posix(),
                             "created": False,
                         },
-                    )
+                    ).with_effects()
             except OSError:
                 pass
             return tool_error(ToolErrorCode.PATH_ALREADY_EXISTS)
@@ -2355,7 +2424,7 @@ class MakeDirectoryTool(FileTool):
                 "path": target.relative_to(self.workspace_root).as_posix(),
                 "created": True,
             },
-        )
+        ).with_effects()
 
 
 # DeleteFileTool
@@ -2443,7 +2512,7 @@ class DeleteFileTool(FileTool):
                 "deleted": True,
                 "bytes_deleted": bytes_deleted,
             },
-        )
+        ).with_effects()
 
 
 # MoveFileTool
@@ -2610,7 +2679,7 @@ class MoveFileTool(FileTool):
                 "moved": True,
                 "bytes_moved": bytes_moved,
             },
-        )
+        ).with_effects()
 
 
 # GetPathInfoTool
@@ -2623,8 +2692,10 @@ class GetPathInfoTool(FileTool):
     def __init__(
         self,
         workspace_root: str | Path,
+        *,
+        read_limits: ReadLimits | None = None,
     ) -> None:
-        super().__init__(workspace_root)
+        super().__init__(workspace_root, read_limits=read_limits)
 
     @property
     def definition(self) -> ToolDefinition:

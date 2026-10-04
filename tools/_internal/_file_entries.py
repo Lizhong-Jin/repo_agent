@@ -1,12 +1,14 @@
 """Reusable metadata inspection and search traversal; callers own scan budgets."""
 
 import os
+import sys
 from dataclasses import dataclass
-from fnmatch import fnmatch
+from fnmatch import fnmatch, fnmatchcase
 from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 
 from host_support.file_scan import DirectoryReader, DirectorySource, ScanMetadata, metadata_entries
+from host_support.read_budget import read_checkpoint
 
 from .file_access import current_file_access
 from .file_policy import PathPolicy
@@ -74,6 +76,7 @@ def iter_search_candidates(
     glob: str | None,
     policy: PathPolicy,
 ):
+    read_checkpoint()
     relative = target.relative_to(workspace_root)
     if not include_hidden and any(part.startswith(".") for part in relative.parts):
         return
@@ -98,6 +101,7 @@ def iter_search_candidates(
         return
     walk = os.walk(target, followlinks=False)
     for root, dirnames, filenames in walk:
+        read_checkpoint(directories=1, entries=len(dirnames) + len(filenames))
         dirnames.sort(key=lambda name: (name.casefold(), name))
         filenames.sort(key=lambda name: (name.casefold(), name))
         root_path = Path(root)
@@ -110,6 +114,7 @@ def iter_search_candidates(
             if not policy.is_protected(root_path / name, (root_path / name).resolve())
         ]
         for name in filenames:
+            read_checkpoint()
             candidate = root_path / name
             relative = candidate.relative_to(workspace_root).as_posix()
             if glob is not None and not fnmatch(relative, glob):
@@ -140,6 +145,7 @@ def _native_search_candidates(
     """
     pending = [target]
     while pending:
+        read_checkpoint()
         root = pending.pop()
         children = []
         try:
@@ -148,6 +154,7 @@ def _native_search_candidates(
                 if not include_hidden:
                     names = [name for name in names if not name.startswith(".")]
                 for name, info in metadata_entries(directory, names):
+                    read_checkpoint()
                     candidate = root / name
                     if isinstance(info, OSError):
                         continue
@@ -164,3 +171,45 @@ def _native_search_candidates(
             # Directory access failures were also skipped by FileAccess.walk.
             continue
         pending.extend(reversed(children))
+
+
+def local_glob_candidates(root, pattern):
+    """Cancellable glob traversal, including directories with no matching names.
+
+    Keep pathlib's segment matching and version-specific trailing ** behavior;
+    recursive ** never follows symlink directories.
+    """
+    parts = Path(pattern).parts
+    pending = [(root, 0)]
+    seen = set()
+    while pending:
+        read_checkpoint()
+        path, index = pending.pop()
+        if (path, index) in seen:
+            continue
+        seen.add((path, index))
+        if index == len(parts):
+            if not pattern.endswith("/") or path.is_dir():
+                yield path, None
+            continue
+        part = parts[index]
+        if part == "**":
+            pending.append((path, index + 1))
+        try:
+            read_checkpoint(directories=1)
+            with os.scandir(path) as entries:
+                children = []
+                for entry in entries:
+                    read_checkpoint(entries=1)
+                    candidate = path / entry.name
+                    if part == "**":
+                        if entry.is_dir(follow_symlinks=False):
+                            children.append((candidate, index))
+                        elif index == len(parts) - 1 and sys.version_info >= (3, 13):
+                            children.append((candidate, index + 1))
+                    elif fnmatchcase(os.path.normcase(entry.name), os.path.normcase(part)):
+                        if index + 1 == len(parts) or entry.is_dir():
+                            children.append((candidate, index + 1))
+                pending.extend(reversed(children))
+        except OSError:
+            continue

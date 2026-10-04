@@ -79,7 +79,7 @@ def test_partial_consumption_leaves_no_workers_or_context_bound():
         on_finish=lambda c, *_: completed.append(c),
     )
     assert next(results) == 1
-    assert set(completed) == {1, 2}
+    assert set(completed) == {1, 2, 3}
     assert current_cancellation() is before
     results.close()
     assert current_cancellation() is before
@@ -215,3 +215,63 @@ def test_builtin_policy_inventory(tmp_path):
         for t in tools
         if t.execution_kind is ExecutionKind.SANDBOXED_PROCESS
     )
+
+
+def test_rolling_refill_does_not_wait_for_slow_peer_or_cross_barrier():
+    third_started = Event()
+    completed = set()
+    active = 0
+    peak = 0
+    lock = Lock()
+    finishes = []
+
+    def invoke(call):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        if call == 0:
+            # Old fixed batches deadlock here: 2 cannot start until 0 ends.
+            assert third_started.wait(3)
+        elif call == 2:
+            assert 1 in finishes  # coordinator has processed the freed slot
+            third_started.set()
+        elif call == 3:
+            assert completed == {0, 1, 2} and active == 1
+        elif call == 4:
+            assert 3 in completed
+        with lock:
+            active -= 1
+            completed.add(call)
+        return call
+
+    assert schedule(
+        range(5),
+        invoke,
+        workers=2,
+        policy=lambda call: SERIAL if call == 3 else READ_ONLY,
+        finish=lambda call, *_: finishes.append(call),
+    ) == list(range(5))
+    assert peak == 2 and completed == set(range(5))
+
+
+def test_refilled_failure_stops_pending_calls_and_joins_slow_peer():
+    failed = Event()
+    invoked = []
+    cleaned = Event()
+
+    def invoke(call):
+        invoked.append(call)
+        if call == 0:
+            assert failed.wait(3)
+            assert current_cancellation().event.wait(3)
+            cleaned.set()
+            current_cancellation().check()
+        if call == 2:
+            failed.set()
+            raise PersistenceError("refill failed")
+        return call
+
+    with pytest.raises(PersistenceError, match="refill failed"):
+        schedule(range(6), invoke, workers=2)
+    assert set(invoked) == {0, 1, 2} and cleaned.is_set()

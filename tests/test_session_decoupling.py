@@ -15,7 +15,7 @@ from prompt_toolkit.output import DummyOutput
 
 from agent import AgentRuntime
 from agent.thinking import ThinkingController
-from agent.Tracing import ModelCallRecord, RunStats
+from agent.Tracing import ModelCallRecord, RunStats, ToolCallRecord
 from cli.runtime_events import RuntimeEventBridge
 from cli.task_execution import TaskRunner
 from cli.terminal.application import ConversationUI
@@ -145,6 +145,56 @@ def test_event_bridge_snapshots_and_restores_callbacks_without_a_terminal():
         original_model,
         original_cancel,
     )
+
+
+@pytest.mark.parametrize("fast_name", ["read_file", "search_files"])
+@pytest.mark.parametrize("end_status", ["success", "failed", "cancelled"])
+def test_tool_progress_tracks_remaining_calls_and_freezes_display(fast_name, end_status):
+    runtime = AgentRuntime(object())
+    pending, phases = [], []
+    bridge = RuntimeEventBridge(
+        runtime,
+        dispatch=lambda callback, *args: pending.append((callback, args)),
+        progress=lambda phase, footer: phases.append(phase),
+        model_boundary=lambda *_: None,
+        thinking=lambda *_: None,
+        status_text=lambda: "usage",
+        write_meta=lambda *_: None,
+        live=lambda *_: None,
+        check_cancelled=lambda: None,
+    )
+    stats = RunStats(1)
+    slow = ToolCallRecord(1, "slow", "search_files", {})
+    fast = ToolCallRecord(1, "fast", fast_name, {})
+    with bridge:
+        for call in (slow, fast):
+            stats.tool_calls.append(call)
+            stats.tool_event = call
+            runtime.on_event("tool_start", stats)
+        fast.status = end_status
+        runtime.on_event("tool_end", stats)
+        slow.status = "success"
+        stats.tool_event = slow
+        runtime.on_event("tool_end", stats)
+
+        # Deliver after the records have changed: queued UI updates must be snapshots.
+        for callback, args in pending:
+            callback(*args)
+        assert phases[0] == "工具 · search_files 执行中…"
+        assert "2 个调用执行中" in phases[1]
+        assert "search_files" in phases[1] and fast_name in phases[1]
+        assert phases[2] == "工具 · search_files 执行中…"
+        assert phases[3] == "工具调用已结束"
+
+        # Previous completions must not appear in a later batch's active count.
+        pending.clear()
+        following = ToolCallRecord(2, "next", "history_read", {})
+        stats.tool_calls.append(following)
+        stats.tool_event = following
+        runtime.on_event("tool_start", stats)
+        for callback, args in pending:
+            callback(*args)
+        assert phases[-1] == "工具 · history_read 执行中…"
 
 
 def test_task_runner_cancellation_prevents_writeback_and_late_output():

@@ -1,6 +1,8 @@
 """Tools available to the coding agent."""
 
-from ._internal.base import ExecutionKind, Tool, ToolResult
+from host_support.read_budget import ReadLimits
+
+from ._internal.base import ExecutionKind, Tool, ToolEffects, ToolResult
 from ._internal.errors import ToolErrorCode, tool_error
 from ._internal.process_runner import ProcessResult, ProcessRunner, ProcessStartError
 from .dispatch import ToolDispatcher
@@ -40,6 +42,7 @@ from .semantic import (
 from .tool_groups import DEFAULT_TOOL_GROUPS, LoadToolGroupTool, ToolGroup
 
 __all__ = [
+    "ReadLimits",
     "SchedulingPolicy",
     "WorkspaceAccess",
     # semantic tools
@@ -78,6 +81,7 @@ __all__ = [
     "ExecutionKind",
     "ToolDispatcher",
     "ToolResult",
+    "ToolEffects",
     "ToolErrorCode",
     "tool_error",
     "create_default_tools",

@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from host_support.read_budget import ReadLimits
+
 from ._internal.base import Tool, validate_tools
 from ._internal.lsp_config import LspRegistry, default_lsp_registry
 from .execute import (
@@ -39,21 +41,23 @@ from .semantic import (
 )
 
 
-def create_file_tools(workspace_root: str | Path) -> list[Tool]:
+def create_file_tools(
+    workspace_root: str | Path, *, read_limits: ReadLimits | None = None
+) -> list[Tool]:
     """Only audited, built-in file implementations may run in the lightweight layer."""
     return validate_tools(
         [
-            ReadFileTool(workspace_root),
+            ReadFileTool(workspace_root, read_limits=read_limits),
             WriteFileTool(workspace_root),
             EditFileTool(workspace_root),
             ApplyPatchTool(workspace_root),
-            ListFileTool(workspace_root),
-            FindFileTool(workspace_root),
-            SearchFilesTool(workspace_root),
+            ListFileTool(workspace_root, read_limits=read_limits),
+            FindFileTool(workspace_root, read_limits=read_limits),
+            SearchFilesTool(workspace_root, read_limits=read_limits),
             MakeDirectoryTool(workspace_root),
             DeleteFileTool(workspace_root),
             MoveFileTool(workspace_root),
-            GetPathInfoTool(workspace_root),
+            GetPathInfoTool(workspace_root, read_limits=read_limits),
         ]
     )
 
@@ -66,6 +70,7 @@ def create_default_tools(
     command_timeout_seconds: int = 120,
     python_timeout_seconds: int = 30,
     execution_context: Mapping[str, Any] | None = None,
+    read_limits: ReadLimits | None = None,
 ) -> list[Tool]:
     """Commands are exposed only by callers providing an isolated environment.
 
@@ -83,7 +88,7 @@ def create_default_tools(
                 command_timeout_seconds=command_timeout_seconds,
                 python_timeout_seconds=python_timeout_seconds,
             ),
-            *create_file_tools(workspace_root),
+            *create_file_tools(workspace_root, read_limits=read_limits),
             # command and code_intelligence tools
             *(
                 [

@@ -9,6 +9,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from host_support.file_scan import DirectoryReader, ScanMetadata
+from host_support.read_budget import bounded_read
 
 from .base import ToolResult
 from .errors import ToolErrorCode, tool_error
@@ -85,7 +86,7 @@ def read_snapshot(
             before = os.fstat(source.fileno())
             if file_signature(before) != file_signature(info):
                 return tool_error(ToolErrorCode.FILE_CHANGED)
-            raw = source.read(max_bytes + 1)
+            raw = bounded_read(source, max_bytes + 1, info.st_size)
             after = os.fstat(source.fileno())
             access.regular(after)
         if file_signature(before) != file_signature(after):
@@ -103,7 +104,7 @@ def read_snapshot(
             before = os.fstat(source.fileno())
             if file_signature(before) != file_signature(info):
                 return tool_error(ToolErrorCode.FILE_CHANGED)
-            raw = source.read(max_bytes + 1)
+            raw = bounded_read(source, max_bytes + 1, info.st_size)
             after = os.fstat(source.fileno())
         if file_signature(before) != file_signature(after) or file_signature(
             candidate.lstat()
@@ -112,7 +113,12 @@ def read_snapshot(
         info = after
     else:
         with target.open("rb") as source:
-            raw = source.read(max_bytes + 1)
+            before = os.fstat(source.fileno())
+            raw = bounded_read(source, max_bytes + 1, before.st_size)
+            after = os.fstat(source.fileno())
+        if file_signature(before) != file_signature(after):
+            return tool_error(ToolErrorCode.FILE_CHANGED)
+        info = after
     if len(raw) > max_bytes:
         return tool_error(ToolErrorCode.FILE_TOO_LARGE, size_message)
     return FileSnapshot(target=target, raw=raw, info=info)

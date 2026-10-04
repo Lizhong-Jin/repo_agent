@@ -175,6 +175,8 @@ def test_partial_commit_is_structured_and_remaining_files_preserved(tmp_path, mo
     assert result.error_code == (
         "FILE_CHANGED" if failure == "concurrent_edit" else "MULTI_FILE_COMMIT_FAILED"
     )
+    assert result.effects.status == "reported"
+    assert result.effects.details == result.data
     assert result.data["committed"] == ["a.txt"]
     assert result.data["not_committed"] == ["b.txt"]
     assert result.data["changes"][0]["new_sha256"] == digest(a.read_bytes())
@@ -416,6 +418,8 @@ def test_worker_preserves_structured_partial_commit(tmp_path, monkeypatch, capsy
         str(tmp_path),
     )
     payload = json.loads(capsys.readouterr().out)
+    assert payload["effects"]["status"] == "reported"
+    assert payload["effects"]["details"] == payload["data"]
     assert payload["error_code"] == "MULTI_FILE_COMMIT_FAILED"
     assert payload["data"]["committed"] == ["a.txt"]
     assert payload["data"]["not_committed"] == ["b.txt"]
@@ -453,3 +457,24 @@ def test_native_patch_commit_and_validation_failure_preserve_health(tmp_path):
         assert (tmp_path / "a.txt").read_bytes() == b"a\r\n"
     finally:
         backend.close()
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"])
+@pytest.mark.parametrize("final_newline", [True, False])
+def test_many_reordered_hunks_assemble_disjoint_spans(tmp_path, newline, final_newline):
+    lines = [f"original {i}" for i in range(200)]
+    expected = []
+    hunks = []
+    for i, line in enumerate(lines):
+        if i % 3 == 0:
+            replacement = [f"new {i}.{j}" for j in range(i % 5)]
+            hunks.append("@@\n-" + line + "\n" + "".join("+" + x + "\n" for x in replacement))
+            expected.extend(replacement)
+        else:
+            expected.append(line)
+    suffix = newline if final_newline else ""
+    path = tmp_path / "a.txt"
+    path.write_bytes(b"\xef\xbb\xbf" + (newline.join(lines) + suffix).encode())
+    result = run(tmp_path, ("a.txt", "".join(reversed(hunks))))
+    assert result.success, result
+    assert path.read_bytes() == b"\xef\xbb\xbf" + (newline.join(expected) + suffix).encode()

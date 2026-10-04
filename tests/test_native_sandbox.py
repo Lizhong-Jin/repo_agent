@@ -288,6 +288,9 @@ def test_outer_supervisor_confirmation_recovers_inner_timeout(bare_backend, monk
     assert result.error_code == "LSP_TIMEOUT"
     assert result.data["inner_cleanup_error"] == "inner permission denied"
     assert result.data["cleanup_error"] is None and bare_backend.healthy
+    assert result.effects.status == "unknown"
+    assert result.effects.details["cleanup_status"] == "confirmed"
+    assert result.effects.details["cleanup_error"] is None
 
 
 @pytest.fixture

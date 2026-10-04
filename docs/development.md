@@ -142,7 +142,11 @@ with LLMClient(LLMConfig("deepseek", "你的模型 ID")) as client:
 
 未知工具、工具失败及执行异常会作为错误结果回传，让模型有机会修正。认证、网络等模型调用异常保留为 `LLMError` 交给调用方；单任务 CLI 打印错误并以非零状态退出，交互 CLI 在任务失败后允许继续输入。Runtime 不重复实现 HTTP 重试，也不负责关闭传入的模型客户端。
 
-Runtime 负责同步任务循环、轮数限制和输出截断恢复。CLI 通过 `SavedConversation`、`SessionStore` 和 `SessionCatalog` 管理跨进程保存、恢复、命名与日志，直接使用 Runtime 的库调用方需自行管理持久化。CLI 已通过 `SavedConversation` 将 `ContextCompactor.before_request` 接入 Runtime，支持自动检查及 `/compact` 手动压缩，并由 `HistoryArchive` 保存原始消息。独立使用 Runtime 仅提供回调入口，需要调用方自行装配压缩及持久化。当前没有并行工具执行或整项任务的 token／费用预算。命令、Python、Git、语言服务器及 Docker 后端各自管理执行超时；Runtime 不统一管理工具超时。`read_file` 的路径范围和读取限制仍由工具自身管理。
+Runtime 负责同步任务循环、轮数限制和输出截断恢复。CLI 通过 `SavedConversation`、`SessionStore` 和 `SessionCatalog` 管理跨进程保存、恢复、命名与日志，直接使用 Runtime 的库调用方需自行管理持久化。CLI 已通过 `SavedConversation` 将 `ContextCompactor.before_request` 接入 Runtime，支持自动检查及 `/compact` 手动压缩，并由 `HistoryArchive` 保存原始消息。独立使用 Runtime 仅提供回调入口，需要调用方自行装配压缩及持久化。
+
+Runtime 通过 `ToolScheduler` 在单项任务内并发执行明确允许并发的工具调用，默认上限为 4，可通过构造参数 `max_tool_workers` 设置为 1～32。调度按相邻调用分批进行，写入、进程和会话操作保持串行屏障，Docker 代理进一步收紧为串行。同一 Runtime 不允许任务重叠运行，CLI 任务队列仍为单消费者；工具结果按原调用顺序回填历史。策略、取消收尾和账本回执约束见[并发调度策略](tools.md#并发调度策略)。
+
+当前没有整项任务的 token／费用预算。命令、Python、Git、语言服务器及 Docker 后端各自管理执行超时；Runtime 不统一管理工具超时。`read_file` 的路径范围和读取限制仍由工具自身管理。
 
 ### 压缩集成边界
 

@@ -20,7 +20,7 @@ from typing import Any
 
 from llm import ToolDefinition
 
-from ._internal.base import ExecutionKind, ToolResult
+from ._internal.base import ExecutionKind, ToolEffects, ToolResult
 from ._internal.errors import ToolErrorCode, tool_error
 from ._internal.file_policy import is_credential_path
 from ._internal.process_runner import ProcessRunner, ProcessStartError
@@ -148,8 +148,14 @@ class GetExecutionEnvironmentTool:
                 data["gpu"] = self._gpu(deadline)
         except _ProbeCleanupError:
             data["cleanup_error"] = "Environment probe process cleanup could not be confirmed."
-            return ToolResult(False, data, "PROBE_CLEANUP_FAILED", data["cleanup_error"])
-        return ToolResult(True, data)
+            return ToolResult(
+                False,
+                data,
+                "PROBE_CLEANUP_FAILED",
+                data["cleanup_error"],
+                ToolEffects.process(data),
+            )
+        return ToolResult(True, data, effects=ToolEffects.process(data))
 
     def _execution(self) -> dict[str, Any]:
         allowed = self.execution_allowed
@@ -384,6 +390,7 @@ class _ProcessTool:
                 "cwd": target_cwd.relative_to(self.workspace_root).as_posix(),
                 **asdict(result),
             },
+            effects=ToolEffects.process(asdict(result)),
         )
 
 

@@ -27,7 +27,7 @@ from tools._internal.base import ExecutionKind, ToolResult, execution_kind_of
 from tools._internal.file_policy import runtime_protected_paths
 from tools.execute import PROCESS_EXECUTION_TOOLS
 from tools.factory import create_default_tools
-from tools.scheduling import SERIAL
+from tools.scheduling import SERIAL, SchedulingPolicy, scheduling_policy_of
 
 from .concurrency import backend_gate
 from .docker import DockerBackend, SandboxBackend
@@ -88,8 +88,11 @@ def files(
 class SandboxedTool:
     scheduling_policy = SERIAL
 
-    def __init__(self, definition, session, *, execution_kind, writeback_mode=None):
+    def __init__(
+        self, definition, session, *, execution_kind, writeback_mode=None, scheduling_policy=SERIAL
+    ):
         self.execution_kind = execution_kind
+        self.scheduling_policy = SchedulingPolicy(scheduling_policy.workspace_access)
         if execution_kind_of(self) not in {
             ExecutionKind.TRUSTED_FILE,
             ExecutionKind.SANDBOXED_PROCESS,
@@ -335,6 +338,7 @@ class SandboxSession:
                 tool.definition,
                 self,
                 execution_kind=execution_kind_of(tool),
+                scheduling_policy=scheduling_policy_of(tool),
                 writeback_mode=writeback_mode,
             )
             for tool in create_default_tools(
