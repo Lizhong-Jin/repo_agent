@@ -17,6 +17,7 @@ from ..conversation_help import HELP, RESET_NOTICE, describe_skills
 from ..model_picker import ModelPicker
 from ..output import LiveOutput
 from ..runtime_events import RuntimeEventBridge
+from ..session_switch import SessionSwitch, prepare_switch
 from ..sessions_command import new_name, ui_command
 from ..shortcuts import shortcut_help, shortcut_label
 from ..task_controller import TaskController
@@ -344,6 +345,17 @@ class ConversationUI:
             except (ValueError, OSError) as error:
                 self.append(str(error) + "\n")
             return
+        if task.split()[0] == "/switch" and self.conversation:
+            try:
+                self.flush_text()
+                result = prepare_switch(self.conversation, self.controller, task)
+                if result is not None:
+                    self.app.exit(result=result)
+                else:
+                    self.append(f"已经在当前会话：{self.conversation.label}\n")
+            except (OSError, ValueError) as error:
+                self.append(f"会话未切换：{error}\n")
+            return
         if task.split()[0] == "/new" and self.conversation:
             try:
                 notice = self.conversation.new_session(name=new_name(task), transcript=self.blocks)
@@ -591,7 +603,7 @@ class ConversationUI:
         )
         with bridge:
             try:
-                await self.app.run_async()
+                return await self.app.run_async()
             finally:
                 self.controller.closing = True
                 if self.controller.active or self.controller.queue.pending:
@@ -624,8 +636,9 @@ class ConversationUI:
         self.app.invalidate()
 
     def run(self):
-        asyncio.run(self.run_async())
+        result = asyncio.run(self.run_async())
         # Preserve a readable final transcript in the terminal scrollback/session log.
         print(self.transcript)
         print(self.footer_text)
-        print("会话已结束。")
+        print("正在切换会话…" if isinstance(result, SessionSwitch) else "会话已结束。")
+        return result

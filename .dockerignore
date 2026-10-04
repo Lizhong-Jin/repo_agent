@@ -96,6 +96,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !cli/runtime_events.py
 !cli/runtime_setup.py
 !cli/session_status.py
+!cli/session_switch.py
 !cli/sessions_command.py
 !cli/settings.py
 !cli/shortcuts.py

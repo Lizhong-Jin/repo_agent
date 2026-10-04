@@ -152,7 +152,10 @@ def validate_record(data, project, sid):
 
 
 class SessionStore:
-    def __init__(self, project, *, new=False, directory=None, name=None):
+    def __init__(self, project, *, new=False, directory=None, name=None, session=None):
+        if session is not None and (new or name is not None):
+            raise ValueError("--session 不能与 --new-session 或 --name 一起使用")
+        self.requested_session = session
         self.project = Path(project).resolve(strict=True)
         key = hashlib.sha256(str(self.project).encode()).hexdigest()
         self.directory = (Path(directory) if directory is not None else session_state_root()) / key
@@ -185,7 +188,9 @@ class SessionStore:
             # Repair an interrupted multi-file commit before choosing a session.
             with self.catalog.locked():
                 pass
-            if not self.new:
+            if self.requested_session is not None:
+                self.select(self.requested_session)
+            elif not self.new:
                 self._load()
             if self.data is not None and self.requested_name is not None:
                 raise ValueError("恢复会话时请用 /rename 或 sessions rename；--name 用于新会话")
@@ -212,6 +217,28 @@ class SessionStore:
                 f"上次会话记录无法恢复（{type(error).__name__}）：{self.directory}；"
                 "可修复记录，或使用 --new-session 启动新会话，旧记录会保留"
             ) from None
+
+    def read_session(self, selector):
+        """Resolve only this project's catalog; reading never changes the current session."""
+        if not isinstance(selector, str) or not selector.strip():
+            raise ValueError("请指定会话序号、完整 ID、名称或 latest")
+        sid = self.catalog.resolve(selector.strip())["session_id"]
+        try:
+            data = _read(self.directory / f"{sid}.json")
+            validate_record(data, self.project, sid)
+        except (KeyError, TypeError, ValueError, OSError, LLMError) as error:
+            raise ValueError(
+                f"指定会话记录无法恢复（{type(error).__name__}）；请检查记录或选择其他会话"
+            ) from None
+        return sid, data
+
+    def select(self, selector):
+        """Select under the existing project execution lock; publication waits for save()."""
+        if self._lock_fd is None:
+            raise ValueError("会话存储尚未打开")
+        sid, data = self.read_session(selector)
+        self.id, self.data = sid, data
+        self.requested_session = sid
 
     def _write(self, path, data):
         content = json.dumps(data, ensure_ascii=False, allow_nan=False).encode()

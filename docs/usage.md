@@ -10,6 +10,7 @@
 repo-agent                                      # 默认恢复最后一次会话
 repo-agent '读取 README.md，介绍当前项目'           # 单次任务，也会保存与恢复
 repo-agent --root /path/to/project               # 显式指定项目
+repo-agent --session 3                          # 恢复指定会话
 repo-agent --new-session --name "修复测试"          # 新会话
 repo-agent --max-steps 12 --max-output-tokens 8192 # 临时覆盖任务轮数和单次输出上限
 ```
@@ -37,6 +38,7 @@ local 的 `git_diff` / `git_status` 会拒绝配置了外部 clean/process 过�
 | `/new [名称]` | 保存旧会话、新建对话；重置用量，保留文件及当前沙箱 |
 | `/rename 名称` | 修改当前名称，立即保存 |
 | `/sessions` | 查看当前项目的会话列表 |
+| `/switch 序号或名称` | 保存当前会话并切换到本项目已有会话 |
 | `/logs [序号] --tail 100` | 查看对话日志；`--kind trace` 选择执行日志 |
 | `/clear` | 清空模型上下文，保留显示历史、累计用量和文件 |
 | `/model` | 选择供应商、模型和 Key，保存并切换；成功后清空模型上下文 |

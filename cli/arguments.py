@@ -25,8 +25,12 @@ def create_parser():
         allow_abbrev=False,
     )
     parser.add_argument("task", nargs="?", help="需要完成的任务；省略时进入交互模式")
-    parser.add_argument(
+    sessions = parser.add_mutually_exclusive_group()
+    sessions.add_argument(
         "--new-session", action="store_true", help="启动全新会话；默认恢复当前项目上次会话"
+    )
+    sessions.add_argument(
+        "--session", metavar="会话", help="恢复本项目指定序号、完整 ID、名称或 latest 的会话"
     )
     parser.add_argument("--name", help="新会话名称；省略时使用项目内递增序号")
     parser.add_argument("--root", default=".", help="项目根目录，默认当前目录")
@@ -79,6 +83,11 @@ def create_parser():
 def parse_arguments(argv=None):
     parser = create_parser()
     args = parser.parse_args(argv)
+    if args.session is not None:
+        if not args.session.strip():
+            parser.error("--session 不能为空")
+        if args.name is not None:
+            parser.error("--session 不能与 --name 一起使用；改名请使用 /rename")
     if args.compact_summary_tokens is not None or os.getenv("AGENT_COMPACT_SUMMARY_TOKENS"):
         print("提示：compact-summary-tokens 已弃用并忽略；压缩大小由 compact-target 指导。")
     return parser, args

@@ -50,6 +50,7 @@ def build_layout(ui, *, terminal_input=None, terminal_output=None):
                 "/new",
                 "/rename",
                 "/sessions",
+                "/switch",
                 "/logs",
                 "/exit",
                 "/model",

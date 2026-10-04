@@ -1,15 +1,18 @@
 """Run the assembled CLI application and release resources on every exit path."""
 
+import subprocess
 from contextlib import ExitStack
 from pathlib import Path
 
 from agent.session import SessionStore
+from llm import LLMError
 from tools._internal.web_backend import WebBackend
 
 from .execution_environment import open_execution_environment
 from .interactive import run_interactive
 from .models import ModelControl
 from .runtime_setup import open_runtime
+from .session_switch import SessionSwitch, continuation_args
 from .task_controller import TaskController
 
 
@@ -45,44 +48,70 @@ def run_single_task(args, session, sandbox):
 
 
 def run_application(args, capabilities):
-    """Return success; resource teardown also runs on SystemExit and KeyboardInterrupt."""
+    """Keep the project lock while replacing a session's complete runtime and environment."""
     workspace_root = Path(args.root).resolve(strict=True)
     with ExitStack() as resources:
         web = WebBackend.from_environment()
         if web is not None:
             resources.callback(web.close)
-        store = SessionStore(workspace_root, new=args.new_session, name=args.name).open()
+        store = SessionStore(
+            workspace_root,
+            new=args.new_session,
+            name=args.name,
+            session=getattr(args, "session", None),
+        ).open()
         resources.callback(store.close)
-        environment = open_execution_environment(
-            args, workspace_root, store, capabilities, resources
-        )
-        with open_runtime(args, workspace_root, store, environment, web) as session:
-            # A checkpoint runs while store, trace and execution backend are still alive.
-            with ExitStack() as session_resources:
-                session_resources.callback(save_before_close, session.conversation)
-                session.conversation.checkpoint(strict=True)
-                print(session.conversation.notice)
-                if args.task is not None:
-                    return run_single_task(args, session, environment.sandbox)
-                models = ModelControl(
-                    session.runtime,
-                    session.config,
-                    thinking=session.thinking,
-                    status=session.status,
-                    tracer=session.tracer,
-                    client_factory=session.client_factory,
-                )
-                session_resources.callback(models.close)
-                options = {}
-                if environment.sandbox is not None:
-                    options.update(sandbox=environment.sandbox, writeback=args.sandbox_writeback)
-                run_interactive(
-                    session.runtime,
-                    thinking=session.thinking,
-                    status=session.status,
-                    models=models,
-                    display=session.display,
-                    conversation=session.conversation,
-                    **options,
-                )
-                return True
+        selector = fallback_id = None
+        while True:
+            try:
+                if selector is not None:
+                    store.select(selector)
+                # Old models, callbacks and native tools are closed before switching IDs.
+                with ExitStack() as session_resources:
+                    environment = open_execution_environment(
+                        args, workspace_root, store, capabilities, session_resources
+                    )
+                    with open_runtime(args, workspace_root, store, environment, web) as session:
+                        # Do not checkpoint a target that failed restoration or validation.
+                        session.conversation.checkpoint(strict=True)
+                        fallback_id = None
+                        with ExitStack() as interaction:
+                            interaction.callback(save_before_close, session.conversation)
+                            print(session.conversation.notice)
+                            if args.task is not None:
+                                return run_single_task(args, session, environment.sandbox)
+                            models = ModelControl(
+                                session.runtime,
+                                session.config,
+                                thinking=session.thinking,
+                                status=session.status,
+                                tracer=session.tracer,
+                                client_factory=session.client_factory,
+                            )
+                            interaction.callback(models.close)
+                            options = {}
+                            if environment.sandbox is not None:
+                                options.update(
+                                    sandbox=environment.sandbox, writeback=args.sandbox_writeback
+                                )
+                            result = run_interactive(
+                                session.runtime,
+                                thinking=session.thinking,
+                                status=session.status,
+                                models=models,
+                                display=session.display,
+                                conversation=session.conversation,
+                                **options,
+                            )
+                            if isinstance(result, SessionSwitch):
+                                next_args = continuation_args(args, session)
+                            else:
+                                return True
+                # Teardown failures abort rather than starting a second uncertain backend.
+                fallback_id, selector = store.id, result.session_id
+                args = next_args
+            except (LLMError, ValueError, OSError, subprocess.SubprocessError) as error:
+                if fallback_id is None:
+                    raise
+                print(f"会话切换失败：{error}；正在恢复原会话。")
+                selector, fallback_id = fallback_id, None

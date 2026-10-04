@@ -93,7 +93,10 @@ class SavedConversation:
                 restore_window=restore_window and same_model,
             )
             runtime._task_number = data["task_number"]
-            self.notice = f"已恢复此项目上次会话：{store.label}（{len(self.history)} 条上下文消息）"
+            kind = "指定" if getattr(store, "requested_session", None) is not None else "上次"
+            self.notice = (
+                f"已恢复此项目{kind}会话：{store.label}（{len(self.history)} 条上下文消息）"
+            )
             if not same_model:
                 self.notice += "；模型或地址已变化，保留消息并移除旧模型原生状态"
             if data["mode"] != self.mode:

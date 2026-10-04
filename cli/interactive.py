@@ -6,6 +6,7 @@ from llm import LLMError
 
 from .conversation_help import HELP, RESET_NOTICE, describe_skills
 from .input import SessionInput
+from .session_switch import prepare_switch
 from .sessions_command import new_name, ui_command
 from .task_controller import TaskController
 from .thinking_display import ThinkingDisplay
@@ -31,7 +32,7 @@ def run_interactive(
     models=None,
     display=None,
     conversation=None,
-) -> None:
+):
     """Keep completed/pausable histories; discard uncertain failures and cancellations."""
     import sys
 
@@ -39,7 +40,7 @@ def run_interactive(
     if sys.stdin.isatty() and sys.stdout.isatty():
         from .terminal.application import ConversationUI
 
-        ConversationUI(
+        return ConversationUI(
             runtime,
             sandbox=sandbox,
             writeback=writeback,
@@ -49,7 +50,6 @@ def run_interactive(
             display=display,
             conversation=conversation,
         ).run()
-        return
     controller = TaskController(
         runtime,
         conversation=conversation,
@@ -148,6 +148,15 @@ def run_interactive(
                 print(ui_command(conversation, task))
             except (OSError, ValueError) as error:
                 print(str(error))
+            continue
+        if task.split()[0] == "/switch" and conversation:
+            try:
+                result = prepare_switch(conversation, controller, task)
+                if result is not None:
+                    return result
+                print(f"已经在当前会话：{conversation.label}")
+            except (OSError, ValueError) as error:
+                print(f"会话未切换：{error}")
             continue
         if task.split()[0] == "/new" and conversation:
             try:

@@ -68,6 +68,7 @@ repo-agent                                      # 继续项目最后一次会话
 repo-agent '读取 README.md，介绍这个项目'           # 单次任务，同样恢复并保存上下文
 repo-agent --root /path/to/another-project       # 指定项目
 repo-agent --new-session --name "修复登录问题"      # 新会话；省略名称时使用“会话 N”
+repo-agent --session 3                           # 恢复指定会话
 repo-agent sessions list                         # 查看会话
 repo-agent sessions rename 1 "登录问题排查"        # 改名
 repo-agent sessions logs 1 --tail 100 -f          # 持续查看对话日志
@@ -84,6 +85,7 @@ repo-agent doctor                               # 按安装模式诊断依赖和
 | `/continue` | 达到调用上限后继续任务，再获得当前 `max_steps` 轮预算 |
 | `/queue` | 查看和管理持久化串行队列，见[任务队列](docs/task-queue.md) |
 | `/new [名称]` | 新建会话，保留当前文件和沙箱副本 |
+| `/switch 序号或名称` | 保存当前会话，恢复指定会话的上下文和用量 |
 | `/rename 名称` 或 F2 | 修改当前会话名称 |
 | `/sessions`、`/logs --tail 100` | 查看会话列表、日志 |
 | `/clear` | 清空模型上下文，保留显示历史和累计用量 |
