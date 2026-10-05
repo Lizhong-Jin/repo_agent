@@ -43,13 +43,15 @@ DEFAULT_TOOL_GROUPS = (
     ToolGroup(
         "coding",
         "Code execution and checking, including the following tools: "
-        "git tools, inspect Git status and diffs; "
+        "git tools, inspect Git status, diffs and commit history; "
         "execution tools, run commands, tests or Python in the configured sandbox; "
         "code_intelligence tools, find symbols, definitions, references, "
         "hover info and diagnostics;",
         (
             "git_status",
             "git_diff",
+            "git_log",
+            "git_show",
             "run_command",
             "run_shell",
             "run_python",

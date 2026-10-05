@@ -3,7 +3,7 @@
 import json
 from collections.abc import Callable, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import Lock
 from typing import Any, Literal
 
@@ -17,6 +17,7 @@ from tools.scheduling import SERIAL
 from tools.tool_groups import LoadToolGroupTool, ToolGroup, ToolGroupRegistry
 
 from .prompt import make_default_system_prompt
+from .result_refs import ResultReadError
 from .skills import LoadSkillTool, SkillRegistry
 from .tool_output import (
     DEFAULT_ROUND_CHARS,
@@ -24,6 +25,7 @@ from .tool_output import (
     ToolOutputBudget,
     validate_output_limit,
 )
+from .tool_results import ReadToolResultTool
 from .tool_scheduler import ToolScheduler
 from .Tracing import RunStats, RunTrace
 
@@ -123,6 +125,8 @@ class AgentRuntime:
         self.check_cancelled = checkpoint
         self.thinking_settings = None
         self._run_lock = Lock()
+        self._execution_ledger = None
+        self._result_reader = None
         self.scheduler = ToolScheduler(max_tool_workers)
         self.max_tool_output_chars = validate_output_limit(max_tool_output_chars)
         self.dispatcher = ToolDispatcher()
@@ -143,6 +147,44 @@ class AgentRuntime:
         self._definition_by_name = {definition.name: definition for definition in definitions}
         # Validate request settings before an interactive session accepts its first task.
         self._request([Message("user", "Validate configuration")])
+
+    @property
+    def execution_ledger(self):
+        return self._execution_ledger
+
+    @execution_ledger.setter
+    def execution_ledger(self, ledger):
+        """Attach durable evidence and its host-only reader between runs."""
+        if not self._run_lock.acquire(blocking=False):
+            raise RuntimeError("Cannot change the execution ledger during an active run")
+        try:
+            if ledger is not None and not callable(getattr(ledger, "read_result", None)):
+                raise TypeError("Execution ledger must support read_result")
+            if ledger is not None and self._result_reader is None:
+                tool = ReadToolResultTool(self._lookup_tool_result)
+                definition = deepcopy(tool.definition)
+                self.dispatcher.register(tool)
+                self._result_reader = tool
+                self._all_definitions += (definition,)
+                self._definition_by_name[definition.name] = definition
+                self.tool_groups.available = frozenset(self._tools)
+                if self.tool_groups.groups:
+                    # Custom catalogs may put the reader in a specialized group.
+                    # Refresh the loader's catalog after its availability changes.
+                    loader = deepcopy(self._tools["load_tool_group"].definition)
+                    self._definition_by_name[loader.name] = loader
+                    self._all_definitions = tuple(
+                        loader if item.name == loader.name else item
+                        for item in self._all_definitions
+                    )
+            self._execution_ledger = ledger
+        finally:
+            self._run_lock.release()
+
+    def _lookup_tool_result(self, reference):
+        if self.execution_ledger is None:
+            raise ResultReadError("RESULT_STORE_UNAVAILABLE", "No execution ledger is attached.")
+        return self.execution_ledger.read_result(reference)
 
     @property
     def _definitions(self):
@@ -463,10 +505,11 @@ class AgentRuntime:
             return self._execute(call, exposed_names=exposed_names)
         ledger.start(run_id, call.id)
         recorded = False
+        result_ref = None
 
         def receipt(result, effects):
-            nonlocal recorded
-            ledger.finish(run_id, call.id, result.to_message(call), effects)
+            nonlocal recorded, result_ref
+            result_ref = ledger.finish(run_id, call.id, result.to_message(call), effects)
             recorded = True
             if result.data.get("cleanup_status") == "unknown" or result.data.get("cleanup_error"):
                 context = current_cancellation()
@@ -479,7 +522,7 @@ class AgentRuntime:
         if not recorded:
             payload = json.loads(observation.content)
             uncertain = payload.get("error", {}).get("code") == "TOOL_EXECUTION_ERROR"
-            ledger.finish(
+            result_ref = ledger.finish(
                 run_id,
                 call.id,
                 observation,
@@ -488,7 +531,9 @@ class AgentRuntime:
             )
             if uncertain:
                 raise OSError("工具异常退出，外部效果待核实；执行已停止，请查看 /ledger")
-        return observation
+        payload = json.loads(observation.content)
+        payload["result_ref"] = result_ref
+        return replace(observation, content=json.dumps(payload, ensure_ascii=False))
 
     def _execute(self, call: ToolCall, *, exposed_names: frozenset[str] | None = None) -> Message:
         tool = self._tools.get(call.name)

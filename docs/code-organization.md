@@ -11,7 +11,7 @@
 | `cli/` | 解析命令、终端交互、展示、装配运行环境 | `main.py`、`interactive.py`、`terminal/application.py` |
 | `installer/` | 安装/卸载、依赖准备、资源定位、发行校验和安装事务 | `setup.py`、`uninstall.py`、`release_install.py` |
 | `configuration/` | 配置环境加载、保存、备份与恢复 | `environment.py`、`storage.py` |
-| `agent/` | Agent 循环、会话持久化与协调、压缩、Skills、追踪 | `runtime.py`、`session.py`、`conversation.py` |
+| `agent/` | Agent 循环、会话持久化与协调、压缩、Skills、追踪 | `runtime.py`、`tool_scheduler.py`、`execution_ledger.py`、`session.py`、`conversation.py` |
 | `rust/` | Rust 基础能力源码；策略扫描和 native 文件系统共用一个扩展，根目录统一管理构建配置 | `src/lib.rs`、`src/policy_scan/`、`src/filesystem/` |
 | `host_support/` | 默认标准库实现的宿主文件、锁、路径与进程机制；可选 Rust 适配器延迟加载 | `filesystem.py`、`locking.py`、`storage.py` |
 
@@ -33,6 +33,7 @@
 | `terminal/layout.py`、`terminal/bindings.py`、`terminal/widgets.py` | 布局、快捷键、消息样式与滚动组件 |
 | `session_status.py`、`thinking_control.py` | 核心会话状态的终端描述、命令解析、偏好存储装配 |
 | `task_controller.py` | 三种入口共用的持久化队列调度、取消与结果提交 |
+| `session_switch.py` | 校验会话切换条件，保存当前会话并向应用层交接目标身份和实时模型设置 |
 | `runtime_events.py`、`task_execution.py`、`writeback.py` | 事件投递与回调恢复、后台执行、任务边界回写 |
 | `conversation_help.py` | 普通终端与 TUI 共用的帮助和提示 |
 | `config_command.py`、`models.py`、`model_picker.py` | 配置命令、模型选择流程与选择界面 |
@@ -191,6 +192,10 @@ Rust `src/scan_pool.rs` 提供每次调用的有界线程池；`policy_scan/engi
 
 `agent/task_queue.py` 保存纯状态；`cli/task_controller.py` 协调会话持久化和单项执行器，不依赖 TUI。`TaskRunner` 返回任务、回写、清理的结构化结果，控制器确认完整结果保存后才能推进下一项。工作线程的自动压缩和主线程的队列更新共用会话状态锁。详见[任务队列](task-queue.md)。
 
+### 工具并发与输出预算
+
+`agent/tool_scheduler.py` 按 `tools/scheduling.py` 的不可变策略，将相邻可并发调用组成区段并滚动补位；`tools/dispatch.py` 校验执行边界并派发到授权后端。串行工具形成屏障，区段收尾后才按原调用顺序返回结果；任务队列不因此变成多消费者。`agent/tool_output.py` 在回执落盘后对模型结果应用整轮字符预算。具体参数、取消和后端状态约束见[工具调度](tools.md#并发调度策略)。
+
 ### 工具执行证据与提交修复
 
-`agent/execution_ledger.py` 管理执行证据事务；Runtime 注入结果回执，分派器在取消检查前提交结果，工具和界面不直接访问数据库。会话记录通过 `ledger_cursor` 关联证据。`SessionStore` 使用 `.pending-save` 与单调提交版本修复会话、索引和最新指针的部分发布，保持原有名称权威规则。详见[执行账本与崩溃恢复](execution-ledger.md)。
+`agent/execution_ledger.py` 管理执行证据事务；Runtime 注入结果回执，分派器在取消检查前提交结果，工具和界面不直接访问数据库。`agent/result_refs.py` 定义引用格式，`agent/tool_results.py` 通过 Runtime 注入的会话查询接口提供 `read_tool_result`；其归属是执行证据，不是工作区文件工具。会话记录通过 `ledger_cursor` 关联证据。`SessionStore` 使用 `.pending-save` 与单调提交版本修复会话、索引和最新指针的部分发布，保持原有名称权威规则。详见[执行账本与崩溃恢复](execution-ledger.md)。

@@ -28,6 +28,8 @@ from .filesystem import (
 )
 from .git_tools import (
     GitDiffTool,
+    GitLogTool,
+    GitShowTool,
     GitStatusTool,
 )
 from .scheduling import SchedulingPolicy, WorkspaceAccess
@@ -71,6 +73,8 @@ __all__ = [
     "RunShellTool",
     # git tools
     "GitDiffTool",
+    "GitLogTool",
+    "GitShowTool",
     "GitStatusTool",
     # process runner
     "ProcessRunner",

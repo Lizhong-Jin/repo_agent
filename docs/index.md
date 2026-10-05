@@ -11,7 +11,7 @@
 | [安装与卸载](installation.md) | macOS/Linux 源码或发行包、Windows ZIP、升级、诊断、恢复与卸载 |
 | [启动、交互与上下文](usage.md) | 启动参数、会话命令、快捷键、截断恢复与上下文估算 |
 | [配置参考](configuration.md) | 配置优先级、模板和内置默认值、备份恢复 |
-| [执行账本与崩溃恢复](execution-ledger.md) | 工具执行证据、未知效果、快照版本与多文件提交修复 |
+| [执行账本与崩溃恢复](execution-ledger.md) | 工具执行证据、结果引用回读、未知效果与多文件提交修复 |
 | [任务队列](task-queue.md) | 串行排队、暂停取消、编辑排序、持久化及恢复边界 |
 | [会话管理](sessions.md) | 命名、重启恢复、检查点、保存位置与异常处理 |
 | [上下文压缩与历史回查](context-compaction.md) | 自动/手动压缩、独立请求、原文归档与恢复边界 |
@@ -28,7 +28,7 @@
 | [GPU 算子开发](gpu-operators.md) | native / Docker 的差异、环境自检、正确性和性能验证 |
 | [Skills](skills.md) | 内置及项目技能、显式加载、发现规则与提示词分工 |
 | [Web 搜索](web-search.md) | Brave 配置、查询参数、结果与外发边界 |
-| [Web 页面读取](web-fetch.md) | 公开页面抓取、内容提取、缓存分页与限制 |
+| [Web 页面读取](web-fetch.md) | 公开页面抓取、内容提取、缓存分页、快照内查找与限制 |
 
 ## 开发与发布
 
@@ -39,7 +39,7 @@
 | [项目架构](../Project_Architecture.md) | 模块职责、任务流程与状态归属 |
 | [平台适配边界](platform-adaptation.md) | 公共宿主服务、Windows 文件/安装适配、原生后端分工和验证范围 |
 | [开发指南](development.md) | 开发环境、验证矩阵、最小 Runtime 与压缩集成 |
-| [工具开发参考](tools.md) | 工厂、Git 策略、文件/进程工具、LSP 参数和边界 |
+| [工具开发参考](tools.md) | 工厂、并发与预算、结果回读、Git 历史、文件/进程工具及 LSP |
 | [统一模型接口](llm.md) | 同步/异步客户端、工具消息、协议、用量、错误与流式事件 |
 | [模型目录](model-catalog.md) | 模型字段、能力匹配、上下文回退和独立请求策略 |
 | [代码组织](code-organization.md) | 目录归属、依赖方向、安装兼容入口与验证 |

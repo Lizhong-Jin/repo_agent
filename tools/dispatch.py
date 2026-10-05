@@ -105,10 +105,11 @@ class ToolDispatcher:
         # with repository-provided clean/process filters refused. No subclass
         # or execution_allowed=True instance can use this compatibility route.
         from .execute import GetExecutionEnvironmentTool
-        from .git_tools import GitDiffTool, GitStatusTool
+        from .git_tools import GitDiffTool, GitLogTool, GitShowTool, GitStatusTool
 
         if (
-            type(tool) in {GetExecutionEnvironmentTool, GitDiffTool, GitStatusTool}
+            type(tool)
+            in {GetExecutionEnvironmentTool, GitDiffTool, GitLogTool, GitShowTool, GitStatusTool}
             and tool.execution_allowed is False
         ):
             return tool.execute(arguments)

@@ -561,8 +561,8 @@ class NativeBackendBase:
         # -I excludes the workspace/PYTHONPATH; trusted package copies take precedence.
         result = self._run(
             request=request,
-            git_read=name in {"git_status", "git_diff"},
-            project=name not in {"git_status", "git_diff"},
+            git_read=name in {"git_status", "git_diff", "git_log", "git_show"},
+            project=name not in {"git_status", "git_diff", "git_log", "git_show"},
         )
         if (
             result.exit_code != 0

@@ -1,5 +1,6 @@
 """In-memory immutable page snapshots, scoped to one host Web backend."""
 
+import asyncio
 import json
 import time
 import uuid
@@ -7,6 +8,9 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from host_support.cancellation import checkpoint
+
+from .text_search import literal_span
 from .web_content import extract_page
 from .web_errors import WebError
 from .web_http import PublicHTTP
@@ -96,6 +100,12 @@ class WebPages:
         self.http = http if http is not None else PublicHTTP()
         self.cache = cache if cache is not None else PageCache()
 
+    async def find(self, arguments, *, budget, deadline):
+        # All cache access happens on the backend loop. Holding an immutable
+        # snapshot keeps this call consistent even if another call evicts it.
+        snapshot = self.cache.get(arguments["ref_id"])
+        return await find_in_snapshot(snapshot, arguments, budget=budget, deadline=deadline)
+
     async def retrieve(self, target, *, index, budget):
         if "url" in target:
             downloaded = await self.http.download(target["url"])
@@ -158,4 +168,90 @@ def page_slice(snapshot, start, count, *, index, budget):
             )
         else:
             raise WebError("OUTPUT_TOO_LARGE", "Page metadata exceeds this batch's output budget.")
+    return result
+
+
+async def find_in_snapshot(snapshot, arguments, *, budget, deadline):
+    """Find the first literal occurrence per matching line, with bounded context."""
+    query = arguments["query"]
+    start = arguments["start_line"]
+    total = len(snapshot.lines)
+    if start > max(1, total):
+        raise WebError("INVALID_RANGE", "start_line is beyond the cached document.")
+    result = {
+        "result_kind": "web_matches",
+        "untrusted": True,
+        "notice": FETCH_NOTICE,
+        "ref_id": snapshot.ref_id,
+        "final_url": snapshot.final_url,
+        "title": snapshot.title,
+        "fetched_at": snapshot.fetched_at,
+        "total_lines": total,
+        "long_lines_wrapped": snapshot.long_lines_wrapped,
+        "query": query,
+        "case_sensitive": arguments["case_sensitive"],
+        "start_line": start,
+        "matches": [],
+        "returned_matches": 0,
+        "truncated": False,
+        "truncation_reason": None,
+        "next_start_line": None,
+    }
+
+    # Reserve continuation metadata before accepting any match, so adding a
+    # next_start_line later cannot push a previously accepted page over budget.
+    def fits():
+        reserved = {
+            **result,
+            "truncated": False,
+            "truncation_reason": "output_budget",
+            "next_start_line": max(1, total),
+        }
+        return len(json.dumps(reserved, ensure_ascii=False)) <= budget
+
+    if not fits():
+        raise WebError("OUTPUT_TOO_LARGE", "Search metadata exceeds the output budget.")
+    for index in range(start - 1, total):
+        if (index - start + 1) % 64 == 0:
+            await asyncio.sleep(0)
+        checkpoint()
+        if time.monotonic() > deadline:
+            raise TimeoutError
+        span = literal_span(
+            snapshot.lines[index], query, case_sensitive=arguments["case_sensitive"]
+        )
+        if span is None:
+            continue
+        if len(result["matches"]) == arguments["max_results"]:
+            result.update(
+                truncated=True, truncation_reason="max_results", next_start_line=index + 1
+            )
+            break
+        context = arguments["context_lines"]
+        left, right = max(0, index - context), min(total, index + context + 1)
+        item = {
+            "line": index + 1,
+            "column": span[0] + 1,
+            "end_column": span[1] + 1,
+            "start_line": left + 1,
+            "end_line": right,
+            "content": "\n".join(snapshot.lines[left:right]),
+        }
+        result["matches"].append(item)
+        result["returned_matches"] += 1
+        if not fits():
+            result["matches"].pop()
+            result["returned_matches"] -= 1
+            if not result["matches"]:
+                raise WebError(
+                    "OUTPUT_TOO_LARGE",
+                    "One match with context exceeds the output budget; reduce context_lines.",
+                )
+            result.update(
+                truncated=True, truncation_reason="output_budget", next_start_line=index + 1
+            )
+            break
+    checkpoint()
+    if time.monotonic() > deadline:
+        raise TimeoutError
     return result

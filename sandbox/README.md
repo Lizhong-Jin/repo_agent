@@ -2,7 +2,7 @@
 
 [文档首页](../docs/index.md) · [项目首页](../README.md) · [会话管理](../docs/sessions.md)
 
-CLI 首次在 macOS/Linux 默认 native，Windows 默认 local；本文描述显式选择 `--sandbox docker` 的行为。macOS / Linux 也支持直接修改原项目的 [native 后端](../docs/native-sandbox.md)。Docker 模式下，宿主机运行模型循环、管理密钥/会话/日志/容器，并提供技能加载、历史回查及可选 Web 工具；文件、命令、Python 和 Git 工具均在容器中执行。Python 库直接调用 `create_default_tools` 提供本地文件、Git 和不启动探测子进程的基础环境查询；需要命令执行和隔离时使用 `SandboxSession(root).tools()`。
+CLI 首次在 macOS/Linux 默认 native，Windows 默认 local；本文描述显式选择 `--sandbox docker` 的行为。macOS / Linux 也支持直接修改原项目的 [native 后端](../docs/native-sandbox.md)。Docker 模式下，宿主机运行模型循环、管理密钥/会话/日志/容器，并提供技能加载、历史回查、执行结果回读及可选 Web 工具；文件、命令、Python 和 Git 工具均在容器中执行。Python 库直接调用 `create_default_tools` 提供本地文件、Git 和不启动探测子进程的基础环境查询；需要命令执行和隔离时使用 `SandboxSession(root).tools()`。
 
 ## 准备与使用
 
@@ -91,9 +91,9 @@ repo-agent --sandbox-review /absolute/session-directory --restore-backup 32位�
 
 导入当前磁盘文件，包含未提交修改和普通未跟踪文件。默认排除 `.env` / `.env.*`、`.pem`/`.key`、原 `.git`、日志、虚拟环境、node_modules、常见缓存与凭据目录、`.codex`/`.agents`，以及 `AGENT_ENV_FILE`、`AGENT_LOG_DIR` 指定的内容和用户会话状态目录。符号链接、硬链接和特殊文件不导入；导出发现这些类型会拒绝。文件名过滤不能识别所有嵌入源码的密钥，请勿在可导入源码中存放凭据。
 
-副本建立全新的 Git 基线，不导入宿主机历史、索引或 Git 配置。`git_diff`/`git_status` 表示副本相对于会话开始时的变化；`/diff` 与 `/apply` 使用宿主机记录的内容摘要，不能被修改容器内 Git 历史绕过。`/apply` 后宿主机内容摘要更新，容器 Git 初始基线不变。
+副本建立全新的 Git 基线，不导入宿主机历史、索引或 Git 配置。`git_log` / `git_show` 只读取副本基线和容器内后来产生的提交，不能读取宿主仓库原有历史。`git_diff`/`git_status` 表示副本相对于会话开始时的变化；`/diff` 与 `/apply` 使用宿主机记录的内容摘要，不能被修改容器内 Git 历史绕过。`/apply` 后宿主机内容摘要更新，容器 Git 初始基线不变。
 
-所有工具共享一份副本，但每次调用启动并销毁独立容器。文件持久化；进程、内存、临时目录和环境变量修改不跨工具调用保留。网络关闭，HOME 指向容器临时目录，模型密钥不通过环境变量传入。
+所有容器工具共享一份副本，但每次调用启动并销毁独立容器。Docker 代理统一串行调度，runner 和回写检查也分别串行保护；宿主的结果回读、历史和 Web 等工具仍可按各自策略并发。文件持久化；进程、内存、临时目录和环境变量修改不跨工具调用保留。网络关闭，HOME 指向容器临时目录，模型密钥不通过环境变量传入。
 
 ## 边界与限制
 

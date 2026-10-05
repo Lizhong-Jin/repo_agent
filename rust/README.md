@@ -13,12 +13,13 @@ rust/
 ├── build.rs
 ├── pyproject.toml
 ├── README.md
-├── docs/policy-scan.md
+├── docs/                 # 策略契约、内存布局与扫描并行说明
 └── src/
     ├── lib.rs                # Python 模块入口
     ├── error.rs              # 共享错误与 Python 异常转换
     ├── directory_batch.rs    # 可复用目录名称块
     ├── path_nodes.rs         # 可回收的父节点/名称存储
+    ├── scan_pool.rs         # 每次扫描的有界线程池、目录批次与回收
     ├── scan_diagnostics.rs   # 结构与容量高水位
     ├── allocation_profile.rs # 可选开发分配统计
     ├── filesystem/
@@ -165,15 +166,15 @@ python scripts/build_release.py --target macos-arm64 --require-rust
 
 ## 验证
 
-先将本机 wheel 安装到运行测试的 Agent Python，核验两个接口版本，再运行策略与文件工具契约：
+先将本机 wheel 安装到运行测试的 Agent Python，核验接口版本及扫描能力，再运行策略与文件工具契约：
 
 ```sh
-python -c 'import rust_backend; assert rust_backend.API_VERSION == 1; assert rust_backend.FILESYSTEM_API_VERSION == 2'
-python -m pytest -q tests/test_rust_policy_scan.py tests/test_policy_scan_contract.py tests/test_rust_filesystem.py tests/test_directory_batches.py tests/test_search_scan_contract.py tests/test_native_file_layer.py tests/test_linux_native.py
+python -c 'import rust_backend; assert rust_backend.API_VERSION == 1; assert rust_backend.FILESYSTEM_API_VERSION == 2; assert rust_backend.SCAN_PARALLEL_VERSION == 1; assert rust_backend.SCAN_BATCH_VERSION == 1'
+python -m pytest -q tests/test_rust_policy_scan.py tests/test_policy_scan_contract.py tests/test_rust_filesystem.py tests/test_directory_batches.py tests/test_scan_memory_layout.py tests/test_scan_parallel.py tests/test_scan_benchmark.py tests/test_search_scan_contract.py tests/test_native_file_layer.py tests/test_linux_native.py
 export CARGO_TARGET_DIR="$(mktemp -d)"
 export PYO3_PYTHON="$(python -c 'import sys; print(sys.executable)')"
 cargo fmt --manifest-path rust/Cargo.toml --check
-cargo clippy --manifest-path rust/Cargo.toml --all-targets --locked -- -D warnings
+cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features --locked -- -D warnings
 cargo test --manifest-path rust/Cargo.toml --locked
 ```
 
@@ -194,7 +195,6 @@ python scripts/benchmark_directory_io.py --engine python
 输出 JSON 中位数并校验两个后端结果一致。比较改动前后时保持参数和主机负载一致；
 热缓存测量不包含隔离启动，也不能替代真实 WSL/Conda 环境的性能记录。
 
-
 ## 0.4.0 内存布局与诊断
 
 0.4.0 增加可复用的 256 项目录工作块、可回收路径节点、固定布局统计、ASCII 匹配缓冲区，
@@ -202,13 +202,13 @@ python scripts/benchmark_directory_io.py --engine python
 FILESYSTEM_API_VERSION=2 保持兼容；旧 API 2 扩展继续使用原有完整 Rust 元数据路径。
 普通发行 wheel 不启用分配统计，开发构建可选择 `allocation-profile`。
 
-测量命令、指标口径、资源边界与后续有序并行设计见 [内存布局与测量](docs/memory-layout.md)。
+测量命令、指标口径、资源边界与文件工具内部扫描限制见 [内存布局与测量](docs/memory-layout.md)。
 
 ## 0.5.0 有限并行预检与策略扫描
 
 Rust 后端新增 `AGENT_SCAN_WORKERS=2`，默认上限 2，允许 1～8；1 保持串行扫描。
 只在有目录分支可并行时启动每次调用的线程池，Linux 工作区/系统读取根策略扫描和
-macOS 工作区预检均接入。文件工具搜索/读取仍按原顺序执行。
+macOS 工作区预检均接入。单次文件工具内部的搜索/读取保持原遍历顺序；不同文件工具调用是否并发由独立的 Runtime 调度器决定。
 
 配置、无序汇总后的稳定策略顺序、取消回收、资源上限及跨线程计时口径见
 [有限并行扫描](docs/scan-parallel.md)。分支目录基准：

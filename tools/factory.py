@@ -29,6 +29,8 @@ from .filesystem import (
 )
 from .git_tools import (
     GitDiffTool,
+    GitLogTool,
+    GitShowTool,
     GitStatusTool,
 )
 from .semantic import (
@@ -158,6 +160,8 @@ def create_default_tools(
             ),
             # git tools
             GitDiffTool(workspace_root, execution_allowed=isolated_execution),
+            GitLogTool(workspace_root, execution_allowed=isolated_execution),
+            GitShowTool(workspace_root, execution_allowed=isolated_execution),
             GitStatusTool(workspace_root, execution_allowed=isolated_execution),
         ]
     )

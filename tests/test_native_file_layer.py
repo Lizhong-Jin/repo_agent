@@ -136,7 +136,15 @@ def test_all_file_tools_work_without_processes_or_global_scans(backend, monkeypa
 
 @pytest.mark.parametrize(
     "name",
-    ["git_status", "git_diff", "get_symbols", "get_diagnostics", "get_execution_environment"],
+    [
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_show",
+        "get_symbols",
+        "get_diagnostics",
+        "get_execution_environment",
+    ],
 )
 def test_non_file_tools_keep_isolated_worker(backend, monkeypatch, name):
     calls = []
@@ -159,6 +167,8 @@ def test_non_file_tools_keep_isolated_worker(backend, monkeypatch, name):
     monkeypatch.setattr(backend, "_run", run)
     assert call(backend, name).success
     assert calls[-1]["request"]["name"] == name
+    assert calls[-1]["git_read"] == name.startswith("git_")
+    assert calls[-1]["project"] != name.startswith("git_")
     # Linux validates inside the real _run policy scan (mocked in this test).
     assert calls[:-1] == ([] if isinstance(backend, LinuxNativeBackend) else ["scan"])
     assert current_file_access() is None

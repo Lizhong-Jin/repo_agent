@@ -15,7 +15,7 @@ from sandbox.writeback import WritebackGuard
 from tools import ExecutionKind, ToolDispatcher, ToolResult, create_default_tools
 from tools._internal.base import execution_kind_of
 from tools.execute import GetExecutionEnvironmentTool, RunCommandTool, RunPythonTool
-from tools.git_tools import GitDiffTool, GitStatusTool
+from tools.git_tools import GitDiffTool, GitLogTool, GitShowTool, GitStatusTool
 from tools.tool_groups import DEFAULT_TOOL_GROUPS, LoadToolGroupTool, ToolGroupRegistry
 from tools.web_tools import WebFetchTool, WebSearchTool
 
@@ -100,6 +100,8 @@ def test_every_builtin_tool_has_concrete_metadata_and_unchanged_model_schema(tmp
         "run_python",
         "git_status",
         "git_diff",
+        "git_log",
+        "git_show",
         "get_symbols",
         "go_to_definition",
         "find_references",
@@ -150,7 +152,15 @@ def test_declared_process_without_adapter_never_runs_host_code():
 
 @pytest.mark.parametrize(
     "tool_type",
-    [RunCommandTool, RunPythonTool, GetExecutionEnvironmentTool, GitDiffTool, GitStatusTool],
+    [
+        RunCommandTool,
+        RunPythonTool,
+        GetExecutionEnvironmentTool,
+        GitDiffTool,
+        GitLogTool,
+        GitShowTool,
+        GitStatusTool,
+    ],
 )
 def test_execution_allowed_flag_alone_cannot_bypass_isolation(tmp_path, monkeypatch, tool_type):
     tool = tool_type(tmp_path, execution_allowed=True)
@@ -160,7 +170,9 @@ def test_execution_allowed_flag_alone_cannot_bypass_isolation(tmp_path, monkeypa
     assert dispatcher.execute(tool.definition.name, {}).error_code == "SANDBOX_REQUIRED"
 
 
-@pytest.mark.parametrize("tool_type", [GetExecutionEnvironmentTool, GitDiffTool, GitStatusTool])
+@pytest.mark.parametrize(
+    "tool_type", [GetExecutionEnvironmentTool, GitDiffTool, GitLogTool, GitShowTool, GitStatusTool]
+)
 def test_only_exact_restricted_local_implementations_have_compatibility_route(
     tmp_path,
     monkeypatch,

@@ -33,7 +33,7 @@ macOS 和 Linux native 共用以下分层，模型可见的工具参数不变：
 
 ### Rust 扫描与文件系统后端
 
-可选 Rust 策略扫描：源码安装自动尝试编译扩展，发行包安装直接使用包内匹配平台的预编译 wheel，无需安装端编译器。确认安装成功后设置 `AGENT_NATIVE_SCANNER=rust` 并重新启动；默认值仍为 `python`。扩展安装失败不影响核心安装。它切换 Linux 隔离执行前的策略扫描和 macOS 工作区硬链接检查，同时切换两个平台 native 文件工具的目录枚举、相对路径遍历和批量元数据后端。Linux 工作区预检继续合并在 Linux 策略扫描中；macOS 隔离仍使用 Seatbelt。两平台 native 文件系统后端需要 兼容 FILESYSTEM_API_VERSION=2 的扩展（当前版本 0.6.0）；glob/路径规则与文本匹配仍由 Python 执行。显式选择 Rust 后，扩展缺失、版本不兼容或扫描失败仍会报错，不在运行时自动切换实现。缺少扩展的旧发行包可另行安装，见 [扩展构建说明](../rust/docs/policy-scan.md)。
+可选 Rust 策略扫描：源码安装自动尝试编译扩展，发行包安装直接使用包内匹配平台的预编译 wheel，无需安装端编译器。确认安装成功后设置 `AGENT_NATIVE_SCANNER=rust` 并重新启动；默认值仍为 `python`。扩展安装失败不影响核心安装。它切换 Linux 隔离执行前的策略扫描和 macOS 工作区硬链接检查，同时切换两个平台 native 文件工具的目录枚举、相对路径遍历和批量元数据后端。Linux 工作区预检继续合并在 Linux 策略扫描中；macOS 隔离仍使用 Seatbelt。两平台 native 文件系统后端需要兼容 FILESYSTEM_API_VERSION=2 的扩展（当前版本 0.6.0）；glob/路径规则与文本匹配仍由 Python 执行。显式选择 Rust 后，扩展缺失、版本不兼容或扫描失败仍会报错，不在运行时自动切换实现。缺少扩展的旧发行包可另行安装，见 [扩展构建说明](../rust/docs/policy-scan.md)。
 
 ## Linux 实现、依赖与权限
 
@@ -116,7 +116,7 @@ repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all
 - 允许读取工作区、系统库、当前 Python 安装及依赖、常见系统工具链；目录元数据查询范围较宽，文件内容读取仍受策略控制。
 - 仅工作目录和每次调用的私有临时目录可写。解释器及其依赖目录只读，即使位于项目内也不允许安装或修改。
 - `.env`、密钥文件、凭据目录、`.codex`、`.agents`、日志及配置指定的受保护路径限制由内核执行；模型通过命令/Python 也不能绕过这些路径规则。
-- `.git` 禁止写入；仅 `git_status` / `git_diff` 工具允许读取 Git 元数据。普通命令中的 Git 操作可能被拒绝，提交、切换分支等应由用户在终端执行。
+- `.git` 禁止写入；仅 `git_status` / `git_diff` / `git_log` / `git_show` 工具允许读取 Git 元数据。普通命令中的 Git 操作可能被拒绝，提交、切换分支等应由用户在终端执行。
 - 拒绝包含已有普通文件硬链接的工作区，并禁止沙箱内创建硬链接。符号链接目标仍必须满足内核路径策略。
 - 工具环境不继承 API Key、代理设置、SSH Agent socket 或 Python 启动变量。HOME、缓存及临时目录指向本次调用的私有目录。
 - 开始会话时复制受信任的工具实现，worker 通过隔离的 Python 启动方式加载副本；修改 Agent 自身项目不会改变当前会话的工具实现。
@@ -135,7 +135,7 @@ repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all
 | 其他项目、工作区外的个人文档 | 默认不允许读取内容或写入；白名单目录例外 |
 | `.env` / `.env.*`、`.ssh`、`.aws`、私钥后缀文件、`.codex`、`.agents`、`logs` 等 | 禁止读写，名称匹配不区分大小写 |
 | 会话状态目录、`AGENT_ENV_FILE` / `AGENT_LOG_DIR` 指定的路径 | 禁止读写 |
-| `.git` | 禁止写；仅 `git_status` / `git_diff` 工具可读 |
+| `.git` | 禁止写；仅 `git_status` / `git_diff` / `git_log` / `git_show` 工具可读 |
 
 系统读取白名单还包括 `/usr`、`/bin`、`/sbin`、`/opt/homebrew`、部分 `/Library` 和 `/System` 子目录、`/private/etc` 及必要的系统数据库目录；具体列表见 `MacOSNativeBackend._read_paths()`。这意味着隔离规则不是“只能读取项目”，也不保证隐藏白名单外的文件元数据。当前没有按命令临时追加任意目录权限的 CLI 开关。
 
@@ -180,9 +180,9 @@ Apple 将 `sandbox-exec` 标记为弃用；不同 macOS 版本和外层沙箱可
 
 ## 主进程 Web 工具
 
-已实现可选的 `web_search` 和 `web_fetch`，由 CLI 在主进程注册，local/native/Docker 均可使用。
+已实现可选的 `web_search`、`web_fetch` 和 `web_find`，由 CLI 在主进程注册，local/native/Docker 均可使用。
 搜索通过 `AGENT_WEB_SEARCH_PROVIDER=brave` 和 `BRAVE_SEARCH_API_KEY` 启用；网页读取
-通过 `AGENT_WEB_FETCH_ENABLED=true` 独立启用，不需要搜索密钥。默认均关闭。
+通过 `AGENT_WEB_FETCH_ENABLED=true` 独立启用，并同时注册不联网的快照内查找 `web_find`，不需要搜索密钥。默认均关闭。
 
 网络请求由沙箱外的受控后端执行；native 命令、Python 和语言服务器继续断网，Web 请求失败
 不会解除隔离或改变 native 健康状态。搜索不自动抓取结果网页，抓取也不会开放包安装或
@@ -263,4 +263,4 @@ WSL 驱动 9p 挂载的跨系统访问成本；网络盘、FUSE 或缓慢存储�
 驱动挂载收窄；评估 WSL 实际收益应使用 `end_to_end`。真实 GPU 验证命令见上文，硬件测试
 同时检查 CUDA 可运行、GPU 模式只暴露已选驱动包、standard 下驱动存储为空。
 
-Rust 0.5+ 预检和隔离策略扫描默认最多 2 个目录任务并行，可用 `AGENT_SCAN_WORKERS=1` 关闭，或设为 2～8。仅有一条目录链时不启动线程池。资源边界、顺序和取消语义见 [有限并行扫描](../rust/docs/scan-parallel.md)。
+Rust 0.5+ 预检和隔离策略扫描默认最多 2 个工作线程；`AGENT_SCAN_WORKERS` 可设为 1～8，1 使用串行扫描。0.6+ 每个在途批次默认最多合并 32 个目录，`AGENT_SCAN_BATCH_SIZE` 可设为 1～64。仅有一条目录链时不启动线程池。资源边界、顺序和取消语义见 [有限并行扫描](../rust/docs/scan-parallel.md)。

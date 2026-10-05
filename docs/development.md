@@ -72,7 +72,18 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py t
 
 开关只选择测试，不能补齐依赖；缺少目标平台或硬件时的跳过不计为通过。真实模型 API 的可用性、参数和计费需要另行验证，不属于默认套件的结论。
 
-原生 Windows 开发测试需另行准备 Python 和开发依赖，虚拟环境入口为 `.venv\Scripts\python.exe`；发行 ZIP 不安装 pytest/Ruff。当前 Windows CI 运行架构边界、共享文件、Windows 文件、发行安装和取消协议五份测试模块，没有声明整个默认套件已适配 Windows。工作流范围见[平台验证说明](platform-adaptation.md#扩展与验证)。
+原生 Windows 开发测试需另行准备 Python 和开发依赖，虚拟环境入口为 `.venv\Scripts\python.exe`；发行 ZIP 不安装 pytest/Ruff。当前 Windows CI 运行架构边界、共享文件、Windows 文件、发行安装、取消协议、任务队列、任务续接和执行账本八份测试模块，没有声明整个默认套件已适配 Windows。工作流范围见[平台验证说明](platform-adaptation.md#扩展与验证)。
+
+### 调度、恢复与新增查询的定向回归
+
+排查相关改动时，可以先运行下列范围，再按变更影响决定是否运行全量：
+
+```bash
+.venv/bin/python -m pytest -q tests/test_tool_scheduler.py tests/test_parallel_runtime.py tests/test_backend_concurrency.py tests/test_cancellation.py tests/test_task_queue.py tests/test_continue.py tests/test_execution_ledger.py tests/test_read_tool_result.py tests/test_tool_output_budget.py tests/test_read_budgets.py
+.venv/bin/python -m pytest -q tests/test_git_history.py tests/test_tool_dispatch.py tests/test_tool_groups.py tests/test_native_file_layer.py tests/test_web_find.py tests/test_web_fetch.py tests/test_web_fetch_cli.py
+```
+
+前一组检查滚动补位、串行屏障、取消收尾、回执落盘、队列和结果回读；后一组检查 Git 历史的路径/进程边界、工具可见性、网页缓存定位及主进程装配。这些仍是本地契约和模拟环境测试，不替代 native、Docker、Windows 或真实在线服务验收。
 
 ## 离线开发环境
 
@@ -90,15 +101,15 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py t
 
 ## 可选 Rust 后端开发
 
-主应用版本取自 `pyproject.toml`，扩展版本取自 `rust/pyproject.toml` 并与 `rust/Cargo.toml` 保持一致，两者独立。当前扩展为 `rust-backend` 0.3.0，模块名 `rust_backend`，策略 API 为 1，文件系统 API 为 2；新增批量元数据后旧文件系统扩展需要重新构建。
+主应用版本取自 `pyproject.toml`，扩展版本取自 `rust/pyproject.toml` 并与 `rust/Cargo.toml` 保持一致，两者独立。当前扩展为 `rust-backend` 0.6.0，模块名 `rust_backend`，策略 API 为 1，文件系统 API 为 2；并行扫描及目录批处理能力标记均为 1。仅通过 API 1/2 检查不代表扩展已支持当前全部能力。
 
 ```bash
 .venv/bin/python scripts/build_rust.py wheel --target host --check
 .venv/bin/python scripts/build_rust.py wheel --target host
 # 使用上一步输出的确切本机 wheel，不要一次安装目录中的全部平台 wheel
 .venv/bin/python -m pip install --no-deps rust_wheels/<版本>/<本机wheel文件名>.whl
-.venv/bin/python -c 'import rust_backend; assert rust_backend.API_VERSION == 1; assert rust_backend.FILESYSTEM_API_VERSION == 2'
-.venv/bin/python -m pytest -q tests/test_rust_policy_scan.py tests/test_rust_filesystem.py tests/test_directory_batches.py tests/test_search_scan_contract.py tests/test_native_file_layer.py tests/test_linux_native.py
+.venv/bin/python -c 'import rust_backend; assert rust_backend.API_VERSION == 1; assert rust_backend.FILESYSTEM_API_VERSION == 2; assert rust_backend.SCAN_PARALLEL_VERSION == 1; assert rust_backend.SCAN_BATCH_VERSION == 1'
+.venv/bin/python -m pytest -q tests/test_rust_policy_scan.py tests/test_rust_filesystem.py tests/test_directory_batches.py tests/test_scan_memory_layout.py tests/test_scan_parallel.py tests/test_scan_benchmark.py tests/test_search_scan_contract.py tests/test_native_file_layer.py tests/test_linux_native.py
 ```
 
 `--check` 仅检查已安装工具链，不编译、不补齐依赖，也不证明 Cargo 缓存完整。省略 `--target` 会尝试四种 Linux/macOS 目标；某一目标未完成时命令返回非零，已成功产物保留。常规 Python 回归可能跳过未安装扩展的测试，因此需要上面的导入检查和独立 Rust CI。
@@ -132,7 +143,7 @@ with LLMClient(LLMConfig("deepseek", "你的模型 ID")) as client:
     print(result.text)
 ```
 
-运行流程：用户任务 → 模型回复 → 按名称查找工具 → 顺序执行工具 → 回传结果 → 再次调用模型。每次调用保留完整历史及厂商状态；一轮返回多个工具调用时，按原顺序执行和回传。默认 `run()` 开启独立任务；传入 `runtime.run("后续任务", history=previous_result.history)` 可延续上下文，输入历史不会被修改。交互 CLI 自动管理这份历史。
+运行流程：用户任务 → 模型回复 → 验证工具调用及整轮输出预算 → 按并发策略调度工具 → 按原调用顺序回传结果 → 再次调用模型。每次调用保留有效历史及厂商状态；执行完成顺序可以不同于模型调用顺序。默认 `run()` 开启独立任务；传入 `runtime.run("后续任务", history=previous_result.history)` 可延续上下文，输入历史不会被修改。交互 CLI 自动管理这份历史。
 
 `RunResult` 包含 `status`、`text`（最终正文及其自动续写片段）、`response`、`responses`（各轮响应）、`history`、`steps`、`resumable`、`notice` 和 `stats`（本次任务的模型/工具记录、用量和耗时）。异常或中断时可从 `runtime.last_stats` 查看统计；库调用可以通过 `on_event` 接入自己的日志处理器，或使用 `with Tracer(log_dir) as tracer:` 并传入 `on_event=tracer`。`Tracer` 从 `agent.Tracing` 导入；离开上下文时写入该运行片段汇总并关闭文件。状态含义：
 
@@ -144,7 +155,11 @@ with LLMClient(LLMConfig("deepseek", "你的模型 ID")) as client:
 
 Runtime 负责同步任务循环、轮数限制和输出截断恢复。CLI 通过 `SavedConversation`、`SessionStore` 和 `SessionCatalog` 管理跨进程保存、恢复、命名与日志，直接使用 Runtime 的库调用方需自行管理持久化。CLI 已通过 `SavedConversation` 将 `ContextCompactor.before_request` 接入 Runtime，支持自动检查及 `/compact` 手动压缩，并由 `HistoryArchive` 保存原始消息。独立使用 Runtime 仅提供回调入口，需要调用方自行装配压缩及持久化。
 
-Runtime 通过 `ToolScheduler` 在单项任务内并发执行明确允许并发的工具调用，默认上限为 4，可通过构造参数 `max_tool_workers` 设置为 1～32。调度按相邻调用分批进行，写入、进程和会话操作保持串行屏障，Docker 代理进一步收紧为串行。同一 Runtime 不允许任务重叠运行，CLI 任务队列仍为单消费者；工具结果按原调用顺序回填历史。策略、取消收尾和账本回执约束见[并发调度策略](tools.md#并发调度策略)。
+Runtime 通过 `ToolScheduler` 在单项任务内并发执行明确允许并发的工具调用，默认上限为 4，可通过构造参数 `max_tool_workers` 设置为 1～32。调度将相邻可并发调用组成区段，在上限内滚动补位，写入、进程和会话操作保持串行屏障，Docker 代理进一步收紧为串行。同一 Runtime 不允许任务重叠运行，CLI 任务队列仍为单消费者；工具结果按原调用顺序回填历史。策略、取消收尾和账本回执约束见[并发调度策略](tools.md#并发调度策略)。
+
+`max_tool_workers`、`max_tool_output_chars` 和文件工具的 `ReadLimits` 目前是库构造参数，没有对应 CLI 参数或 `.env` 配置。`AGENT_SCAN_WORKERS` 只控制 Rust 内部扫描线程，不能替代工具并发设置。
+
+CLI 会话绑定 `ExecutionLedger` 后自动注册 `read_tool_result`，用于分页回读输出预算裁剪前保存的结果。独立 Runtime 默认不保存账本，也不注册此工具。实现和接入方式见[结果回读](tools.md#读取已保存的工具结果)。
 
 当前没有整项任务的 token／费用预算。命令、Python、Git、语言服务器及 Docker 后端各自管理执行超时；Runtime 不统一管理工具超时。`read_file` 的路径范围和读取限制仍由工具自身管理。
 
@@ -165,7 +180,7 @@ Runtime 通过 `ToolScheduler` 在单项任务内并发执行明确允许并发�
 - 默认 `LLMClient` 在任务上下文内使用自己持有的异步 I/O 循环和连接池，取消后等待当前请求的关闭流程完成。流式读取、普通响应读取、连接等待和重试退避均可取消，轮询周期为 50 ms，不是总收尾耗时保证。自定义同步 `http_client` 仍使用注入的传输，支持边界检查和可中断退避，但阻塞读取仍受其自身超时约束；需要主动中断自定义网络读取时使用 `AsyncLLMClient`。
 - 操作系统 DNS 解析不能强制中断。取消不等待遗留的解析线程，也不会在解析返回后继续发送已取消请求；这些线程会在解析完成后自行结束。
 - 进程输出轮询接入同一上下文，收到取消后进入原有进程组/监督器清理。清理不复用已取消的等待信号；其时限独立，重复 Ctrl+C 不会直接跳过清理。Docker 仍必须额外删除对应容器，不能只终止 Docker 客户端。
-- 文件工具调用内延迟取消，在返回结果、记录已报告的操作后检查信号，避免从中间打断提交。Docker 文件工具也遵循此约定，因此其启动与调用等待可能长于网络取消。
+- 只读文件工具在遍历、读取和处理长行时检查取消及单次预算；Docker 只读代理保留这一属性，但仍串行执行。文件修改工具在调用内延迟取消，先完成提交和回执再检查信号，避免从中间打断提交；其收尾可能长于网络取消。
 - Web 请求与 LSP 响应等待接入同一信号。LSP 取消会关闭当前语言服务连接；旧的 LSP 进程清理未提供完整后代跟踪，因此保守记录 `unknown`。
 
 任务 trace 使用 `cancelled` 状态；取消异常的 `report`、任务统计与会话日志分别记录任务状态、进程清理情况和工具已报告的文件操作。任意命令的文件副作用不能完整枚举，`changes_complete=false` 明确表示清单可能不完整。停止后保留此前完整上下文并提示核实状态，不自动重放工具或回滚已提交文件。`confirmed` 仅表示对应进程管理机制确认的范围；Windows 通用分支及无法确认的后代进程仍报告 `unknown`，不等同于已实现 Windows Job Object 管理。

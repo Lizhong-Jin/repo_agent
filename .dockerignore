@@ -60,6 +60,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !agent/execution_ledger.py
 !agent/history.py
 !agent/prompt.py
+!agent/result_refs.py
 !agent/runtime.py
 !agent/session.py
 !agent/session_state.py
@@ -72,6 +73,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !agent/task_queue.py
 !agent/thinking.py
 !agent/tool_output.py
+!agent/tool_results.py
 !agent/tool_scheduler.py
 !agent/transcript.py
 !build_manifest.py
@@ -247,6 +249,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !tools/_internal/errors.py
 !tools/_internal/file_access.py
 !tools/_internal/file_policy.py
+!tools/_internal/git_history.py
 !tools/_internal/lsp_client.py
 !tools/_internal/lsp_config.py
 !tools/_internal/process_runner.py

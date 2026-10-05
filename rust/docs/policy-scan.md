@@ -13,7 +13,7 @@ macOS-only hard-link preflight entry point.
 The crate and Python packaging root is `rust/`. The package is `rust-backend`
 and the imported module is `rust_backend`; the Linux scanner requires
 `API_VERSION=1`. Native file tools also require `FILESYSTEM_API_VERSION=2`
-(current extension version 0.3.0). Install the wheel into the Agent's Python,
+(current extension version 0.6.0). Install the wheel into the Agent's Python,
 not only the task project's environment.
 
 Build commands, target platforms, offline dependencies, source installation,

@@ -47,9 +47,11 @@ Docker 会话可使用 `/diff` 查看副本变更、`/apply` 回写原项目；l
 | --- | --- |
 | 模型接入 | 9 个厂商预设，支持 Chat Completions、OpenAI Responses、Anthropic Messages、Gemini generateContent；[供应商列表](docs/llm.md#接入模型) |
 | 对话界面 | 流式回复、可滚动历史、思考内容显示、模型切换、累计用量与上下文占比 |
-| 会话管理 | 按项目保存，默认恢复最后一次会话；支持命名、改名、列表和日志跟随 |
+| 会话管理 | 按项目保存，默认恢复最后一次会话；支持命名、改名、列表、指定恢复、会话切换和日志跟随 |
+| 任务与执行证据 | 持久化串行队列、取消与暂停、`/continue` 续接；执行账本保存回执，支持按引用回读结果，见[执行账本](docs/execution-ledger.md) |
+| 工具并发 | 相邻且允许并发的调用滚动调度，默认最多 4 个；写入、进程和 Docker 代理保持串行，见[调度策略](docs/tools.md#并发调度策略) |
 | 上下文管理 | `/compact` 手动/自动压缩、独立思考策略、有限精简与格式修复、失败诊断、原始消息归档及只读历史回查；[使用说明](docs/context-compaction.md) |
-| 文件与检索 | 文件读写、局部编辑、多文件严格补丁、目录操作、文件查找、内容搜索、Git 状态与差异 |
+| 文件与检索 | 文件读写、局部编辑、多文件严格补丁、目录操作、文件查找、内容搜索、Git 状态、差异与提交历史 |
 | 隔离执行 | macOS / Linux 原生沙箱直接运行本机工具；Docker 使用工作副本，支持回写、冲突检查与备份恢复 |
 | 代码语义 | Python、JS/TS、Go、C/C++、CUDA 文件的符号、定义、引用、诊断、悬浮信息和工作区符号查询；具体能力取决于语言服务器 |
 | 环境查询 | `get_execution_environment` 报告实际执行模式、工具链、权限、超时与可选 GPU 状态 |
@@ -57,7 +59,7 @@ Docker 会话可使用 `/diff` 查看副本变更、`/apply` 回写原项目；l
 | GPU 开发 | Docker、Linux / WSL2 native 默认自动检测 NVIDIA GPU；CUDA / Triton 环境自检 |
 | 诊断与追踪 | 配置校验及恢复、安装诊断、对话日志、模型和工具调用记录 |
 | Web 搜索 | 可选 Brave Search API，支持批量查询、域名过滤及逐项错误；由主进程联网，命令沙箱保持断网，见 [Web 搜索](docs/web-search.md) |
-| 网页读取 | 公开 HTML、纯文本和 JSON 的受控抓取、正文提取与缓存分页；不需要搜索密钥，见 [Web 页面读取](docs/web-fetch.md) |
+| 网页读取 | 公开 HTML、纯文本和 JSON 的受控抓取、正文提取、缓存分页与 `web_find` 快照内查找；不需要搜索密钥，见 [Web 页面读取](docs/web-fetch.md) |
 
 ## 常用命令
 
@@ -83,6 +85,7 @@ repo-agent doctor                               # 按安装模式诊断依赖和
 | --- | --- |
 | `/help` | 查看命令 |
 | `/continue` | 达到调用上限后继续任务，再获得当前 `max_steps` 轮预算 |
+| `/ledger` | 查看近期工具执行证据及已保存结果引用 |
 | `/queue` | 查看和管理持久化串行队列，见[任务队列](docs/task-queue.md) |
 | `/new [名称]` | 新建会话，保留当前文件和沙箱副本 |
 | `/switch 序号或名称` | 保存当前会话，恢复指定会话的上下文和用量 |
@@ -110,16 +113,16 @@ Docker 失败不会自动切换为 local。每次工具调用使用独立容器�
 
 local 的 Git 工具仍会启动 Git 子进程；发现外部 clean/process 过滤器配置时拒绝查询，需使用 native/Docker。子模块查询及并发配置限制见 [Git 执行边界](docs/tools.md#git-工具的执行边界)。
 
-`get_execution_environment` 在各模式均可用，local 不启动环境探测子进程。可选 `web_search` / `web_fetch` 由主进程联网，独立于上表的命令、Python 和语言服务器权限。
+`get_execution_environment` 在各模式均可用，local 不启动环境探测子进程。可选 `web_search` / `web_fetch` 由主进程联网，独立于上表的命令、Python 和语言服务器权限。启用网页读取时同时提供 `web_find`，仅在已有网页快照中定位关键词，不联网。
 
-当前支持文本和自定义函数工具；尚无多模态输入、跨会话知识记忆、多 Agent 协作、并行工具执行或整项任务的费用预算。保存会话用于延续对话，不会自动提炼长期知识。模型正常结束回答不等于验证通过，应结合实际测试和工具结果判断。
+当前支持文本和自定义函数工具；尚无多模态输入、跨会话知识记忆、多 Agent 协作或整项任务的费用预算。保存会话用于延续对话，不会自动提炼长期知识。模型正常结束回答不等于验证通过，应结合实际测试和工具结果判断。
 
 ## 文档导航
 
 完整目录见 [文档首页](docs/index.md)。常用入口：
 
 - 开始使用：[安装与升级](docs/installation.md)、[命令与快捷键](docs/usage.md)、[配置参考](docs/configuration.md)。
-- 管理对话：[会话恢复](docs/sessions.md)、[上下文压缩](docs/context-compaction.md)、[思考设置](docs/thinking.md)、[日志](docs/logging.md)。
+- 管理对话：[会话恢复](docs/sessions.md)、[任务队列](docs/task-queue.md)、[执行账本](docs/execution-ledger.md)、[上下文压缩](docs/context-compaction.md)、[思考设置](docs/thinking.md)、[日志](docs/logging.md)。
 - 执行任务：[原生沙箱](docs/native-sandbox.md)、[Docker 与回写](sandbox/README.md)、[GPU 开发](docs/gpu-operators.md)、[Skills](docs/skills.md)、[Web 搜索](docs/web-search.md)、[网页读取](docs/web-fetch.md)。
 - 参与开发：[项目架构](Project_Architecture.md)、[开发与验证](docs/development.md)、[工具开发](docs/tools.md)、[模型接口](docs/llm.md)、[模型目录](docs/model-catalog.md)、[构建与分发](docs/distribution.md)。
 

@@ -329,6 +329,28 @@ class WebBackend:
             future.cancel()
             raise
 
+    def find(self, arguments: dict) -> dict:
+        if self._closed or self.pages is None:
+            raise RuntimeError("Page cache is not enabled")
+        deadline = time.monotonic() + self.timeout_seconds
+        future = asyncio.run_coroutine_threadsafe(
+            cancellable(self._find(arguments, deadline), current_cancellation()), self._loop
+        )
+        try:
+            return future.result()
+        except BaseException:
+            future.cancel()
+            raise
+
+    async def _find(self, arguments, deadline):
+        try:
+            async with asyncio.timeout(max(0, deadline - time.monotonic())):
+                return await self.pages.find(
+                    arguments, budget=MAX_OUTPUT_CHARS - 1000, deadline=deadline
+                )
+        except TimeoutError:
+            raise WebError("TIMEOUT", "Cached page search timed out.", retryable=True) from None
+
     async def _fetch_batch(self, targets, deadline, budget):
         return await asyncio.gather(
             *(

@@ -101,7 +101,7 @@ repo-agent --configure-model
 | `AGENT_SYSTEM_PROMPT` | 空 | 空值使用内置提示词；非空的单行文本替换它 |
 | `AGENT_LOG_DIR` | 项目 `logs/` | 运行片段追踪日志；不改变连续会话日志或快照位置 |
 | `AGENT_WEB_SEARCH_PROVIDER` | `off` | `brave` 启用主进程 Web 搜索；命令沙箱继续断网，详见 [Web 搜索](web-search.md) |
-| `AGENT_WEB_FETCH_ENABLED` | `false` | `true` 独立启用公开网页读取及缓存分页，不需要搜索密钥；详见 [Web 页面读取](web-fetch.md) |
+| `AGENT_WEB_FETCH_ENABLED` | `false` | `true` 同时启用公开网页读取、缓存分页及 `web_find` 快照内查找，不需要搜索密钥；详见 [Web 页面读取](web-fetch.md) |
 | `BRAVE_SEARCH_API_KEY` | 空 | Brave Search API 密钥；配置查看时隐藏，使用 `config set BRAVE_SEARCH_API_KEY` 隐藏输入 |
 | `AGENT_NATIVE_SCANNER` | `python` | Linux 策略扫描、macOS 工作区检查及两平台 native 文件工具的目录访问/批量元数据：`python` 或 `rust`；选择 `rust` 需安装对应扩展，显式失败不降级；Seatbelt 规则、Windows local 和 Docker 不变 |
 | `AGENT_SCAN_WORKERS` | `2` | Rust 0.5+ 工作区预检和隔离策略扫描并发上限；1～8，1 串行，空值使用 2；不影响文件工具搜索/读取 |
@@ -109,6 +109,8 @@ repo-agent --configure-model
 | `AGENT_SANDBOX_WRITEBACK` | `manual` | 仅 Docker：`manual` 手动回写；`on-success` 按检查结果自动回写；local/native 忽略此配置 |
 | `AGENT_SANDBOX_VERIFY_COMMAND` | 空 | on-success 回写前的最终验证命令，使用 JSON 参数数组 |
 | `LLM_EXTRA_JSON` | `{}` | 高级厂商原生请求参数，须为 JSON 对象，不允许覆盖统一字段或与显式思考配置冲突 |
+
+工具级并发上限（默认 4）、整轮工具输出字符预算和只读文件预算目前只通过 Python 构造参数设置，没有同名 CLI 或环境变量选项；它们与 `AGENT_SCAN_WORKERS` / `AGENT_SCAN_BATCH_SIZE` 的 Rust 内部扫描设置相互独立。详见[并发调度与预算](tools.md#并发调度策略)。
 
 `AGENT_SYSTEM_PROMPT` 留空使用 [agent/prompt.py](../agent/prompt.py) 的通用提示词；非空只替换基础提示词，技能发现和按需加载仍可用。代码工作流程由内置 `coding` 技能提供，依赖加载及升级后的旧正文处理见 [Skills](skills.md#系统提示词与技能分工)。
 

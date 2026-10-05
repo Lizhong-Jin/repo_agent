@@ -4,6 +4,8 @@ import json
 from copy import deepcopy
 from dataclasses import replace
 
+from .result_refs import RESULT_REF
+
 MIN_CALL_CHARS = 1024
 DEFAULT_ROUND_CHARS = 128 * 1024
 
@@ -37,6 +39,10 @@ class ToolOutputBudget:
         if len(observation.content) <= quota:
             return observation
         payload = json.loads(observation.content)
+        if call.name == "read_tool_result":
+            projected = self._result_page(payload, quota)
+            if projected is not None:
+                return replace(observation, content=encode(projected))
         if call.name == "read_file":
             projected = self._read_page(payload, quota)
             if projected is not None:
@@ -53,6 +59,14 @@ class ToolOutputBudget:
             "read ranges or narrower searches. Do not repeat writes or commands "
             "just to recover output; inspect current state or the execution ledger.",
         }
+        if isinstance(payload.get("result_ref"), str) and RESULT_REF.fullmatch(
+            payload["result_ref"]
+        ):
+            summary["result_ref"] = payload["result_ref"]
+            summary["notice"] = (
+                "Read saved output with read_tool_result(result_ref); do not repeat the original "
+                "tool. Output discarded during original capture cannot be recovered."
+            )
         if not payload["success"]:
             error = payload.get("error", {})
             summary["error"] = {
@@ -74,6 +88,45 @@ class ToolOutputBudget:
             content = encode(summary)
         assert len(content) <= quota
         return replace(observation, content=content)
+
+    @staticmethod
+    def _result_page(payload, quota):
+        """Budget a saved-result page without losing its source or continuation."""
+        data = payload.get("data", {})
+        if not payload.get("success") or not isinstance(data.get("content"), str):
+            return None
+        page = deepcopy(payload)
+        data = page["data"]
+        content = data["content"]
+        offset = data.get("offset")
+        total = data.get("total_chars")
+        if (
+            type(offset) is not int
+            or type(total) is not int
+            or offset < 0
+            or total < offset + len(content)
+        ):
+            return None
+        page.update(output_truncated=True, truncation_reason="round_output_budget")
+
+        def prefix(length):
+            data["content"] = content[:length]
+            end = offset + length
+            data["next_offset"] = end if end < total else None
+
+        prefix(0)
+        if len(encode(page)) > quota:
+            return None
+        low, high = 0, len(content)
+        while low < high:
+            middle = (low + high + 1) // 2
+            prefix(middle)
+            if len(encode(page)) <= quota:
+                low = middle
+            else:
+                high = middle - 1
+        prefix(low)
+        return page
 
     @staticmethod
     def _read_page(payload, quota):

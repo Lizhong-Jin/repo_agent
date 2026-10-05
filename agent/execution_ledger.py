@@ -1,5 +1,6 @@
 """Durable execution evidence, independent of diagnostic logs and chat snapshots."""
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -10,6 +11,10 @@ from threading import RLock
 
 from host_support.execution_receipt import PersistenceError
 from host_support.filesystem import open_file, set_file_mode
+
+from .result_refs import ResultReadError, parse_reference
+
+MAX_RESULT_CHARS = 64 * 1024 * 1024
 
 
 def encoded(value):
@@ -84,7 +89,7 @@ class ExecutionLedger:
                 db.close()
 
     def _event(self, db, run, call, phase):
-        db.execute(
+        return db.execute(
             "INSERT INTO events(session,run,call_id,phase,created) VALUES(?,?,?,?,?)",
             (
                 self.store.id,
@@ -93,7 +98,7 @@ class ExecutionLedger:
                 phase,
                 datetime.now(UTC).isoformat(),
             ),
-        )
+        ).lastrowid
 
     def begin(self, run, identity):
         with self.connect(write=True) as db:
@@ -154,7 +159,50 @@ class ExecutionLedger:
             ).rowcount
             if changed != 1:
                 raise ValueError("工具结束状态冲突")
-            self._event(db, run, call, state)
+            seq = self._event(db, run, call, state)
+        # A reference is published only after the transaction commits.
+        return self.result_reference(seq)
+
+    def result_reference(self, seq):
+        scope = hashlib.sha256(f"{self.path}\0{self.store.id}".encode()).hexdigest()[:32]
+        return f"result_{scope}_{seq}"
+
+    def read_result(self, reference):
+        """Lookup by immutable finish event, never accepting a path or other session."""
+        _, seq = parse_reference(reference)
+        if reference != self.result_reference(seq):
+            return None
+        session = self.store.id
+        if not self.path.exists() and not self.required:
+            return None
+        with self.connect() as db:
+            row = db.execute(
+                """SELECT c.state,
+                    CASE WHEN length(c.observation)<=? THEN c.observation END observation
+                    FROM events e JOIN calls c ON c.run=e.run AND c.call_id=e.call_id
+                    JOIN runs r ON r.id=c.run
+                    WHERE e.seq=? AND e.session=? AND r.session=?
+                    AND e.phase IN ('returned','uncertain') AND c.state=e.phase
+                    AND c.observation IS NOT NULL""",
+                (MAX_RESULT_CHARS, seq, session, session),
+            ).fetchone()
+        if row is None:
+            return None
+        if row["observation"] is None:
+            raise ResultReadError(
+                "RESULT_TOO_LARGE", "Saved observation exceeds the 64 Mi-character read limit."
+            )
+        try:
+            observation = json.loads(row["observation"])
+            content = observation["content"]
+            payload = json.loads(content)
+            if not isinstance(content, str) or not isinstance(payload, dict):
+                raise ValueError("Invalid observation")
+            if type(payload.get("success")) is not bool:
+                raise ValueError("Invalid observation status")
+            return {"state": row["state"], "content": content, "payload": payload}
+        except (ValueError, TypeError, KeyError) as error:
+            raise PersistenceError("执行账本结果损坏；必须停止执行") from error
 
     def watermark(self):
         if not self.path.exists() and not self.required:
@@ -214,6 +262,8 @@ class ExecutionLedger:
                 outcome = " · 工具报告失败" if observation.get("is_error") else " · 工具报告成功"
             lines.append(
                 f"#{row['seq']} {row['name']} · {labels[row['state']]}{outcome}\n"
-                f"  run={row['run']} call={row['call_id']}\n  {details[:1200]}"
+                f"  run={row['run']} call={row['call_id']}\n"
+                + (f"  result_ref={self.result_reference(row['seq'])}\n" if observation else "")
+                + f"  {details[:1200]}"
             )
         return "\n".join(lines)

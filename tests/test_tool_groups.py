@@ -83,7 +83,7 @@ def test_local_loading_never_grants_execution(tmp_path):
     observation = runtime._execute(ToolCall("load", "load_tool_group", {"group": "coding"}))
     loaded = result(observation)
     assert loaded["success"]
-    assert set(loaded["data"]["tools"]) == {"git_status", "git_diff"}
+    assert set(loaded["data"]["tools"]) == {"git_status", "git_diff", "git_log", "git_show"}
     unavailable = {
         "run_command",
         "run_shell",
@@ -118,7 +118,12 @@ def test_loading_appends_definitions_without_reordering_existing_prefix(tmp_path
     assert runtime.tool_groups.load("coding").success
     coding_loaded = runtime._definitions
     assert coding_loaded[: len(initial)] == initial
-    assert {tool.name for tool in coding_loaded[len(initial) :]} == {"git_status", "git_diff"}
+    assert {tool.name for tool in coding_loaded[len(initial) :]} == {
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_show",
+    }
     assert runtime.tool_groups.load("file_editing").success
     assert runtime._definitions[: len(coding_loaded)] == coding_loaded
     assert runtime.loaded_tool_groups == ("coding", "file_editing")
@@ -232,7 +237,7 @@ def test_sessions_restore_revalidate_and_reset_groups(tmp_path):
         assert second.runtime.loaded_tool_groups == ("file_editing", "coding")
         assert "retired_group" in second.notice
         restored = names(second.runtime._request([Message("user", "task")]))
-        assert {"git_status", "git_diff"} <= restored
+        assert {"git_status", "git_diff", "git_log", "git_show"} <= restored
         assert {"run_command", "run_python", "get_symbols"}.isdisjoint(restored)
         second.new_session()
         assert second.runtime.loaded_tool_groups == ()

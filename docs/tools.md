@@ -7,7 +7,10 @@
 - [统一创建工具](#统一创建工具)
 - [并发调度策略](#并发调度策略)
 - [只读取消与统一预算](#只读取消与统一预算)
+- [读取已保存的工具结果](#读取已保存的工具结果)
 - [按需加载工具组](#按需加载工具组)
+- [Git 工具的执行边界](#git-工具的执行边界)
+- [Git 历史查询](#git-历史查询)
 - [工具错误码](#工具错误码)
 - [run_shell 工具与平台行为](#run_shell-工具与平台行为)
 - [get_execution_environment 工具](#get_execution_environment-工具)
@@ -32,11 +35,11 @@ tools/
 ├── filesystem.py
 ├── git_tools.py
 ├── semantic.py
-├── web_tools.py          # WebSearchTool、WebFetchTool、create_web_tools
+├── web_tools.py          # WebSearchTool、WebFetchTool、WebFindTool、create_web_tools
 └── _internal/            # 基础类型、错误、文件保护、进程管理、LSP、Web 后端与缓存
 ```
 
-原有 `from tools import ToolResult, ProcessRunner, ...` 公共导出保持可用。直接使用公共组件的仓库代码改为从 `tools._internal.<模块>` 导入；两个 Web 工具统一从 `tools.web_tools` 导入。
+原有 `from tools import ToolResult, ProcessRunner, ...` 公共导出保持可用。直接使用公共组件的仓库代码改为从 `tools._internal.<模块>` 导入；Web 工具统一从 `tools.web_tools` 导入。
 
 `tools/factory.py` 的 `create_default_tools(workspace_root)` 集中创建指定工作区的工具；CLI 的 local 模式直接使用，Docker 通过代理在容器内执行。native 将内置文件工具交给轻量文件服务，命令、Git、Python、环境探测及 LSP 继续通过操作系统隔离执行，见[原生沙箱说明](native-sandbox.md)：
 
@@ -60,7 +63,7 @@ runtime = AgentRuntime(
 
 | 规则 | 当前工具 | 执行位置 |
 | --- | --- | --- |
-| `HOST_CONTROL` | 技能加载、工具组加载、历史搜索/读取 | 主进程内的受控状态/元数据操作 |
+| `HOST_CONTROL` | 技能加载、工具组加载、历史搜索/读取、执行结果读取、`web_find` 缓存搜索 | 主进程内的受控状态/元数据操作 |
 | `TRUSTED_FILE` | 11 个文件工具 | native 轻量文件服务；Docker 工作副本中的隔离工具；local 文件实现 |
 | `TRUSTED_NETWORK` | `web_search`、`web_fetch` | 主进程中的受控网络后端 |
 | `SANDBOXED_PROCESS` | 命令、Python、Git、LSP、执行环境查询 | native/Docker 代理；已建立隔离的 worker 内才执行原始实现 |
@@ -115,15 +118,15 @@ class ProjectIndexTool:
 | --- | --- |
 | `read_file`、`list_files`、`find_files`、`search_files`、`get_path_info` | local/native 允许并发 |
 | `web_search`、`web_fetch` | 允许并发；Web 后端仍共享最多 3 个请求的限制 |
-| `history_search`、`history_read`、`load_skill` | 允许并发；技能加载只返回冻结的技能内容 |
+| `history_search`、`history_read`、`read_tool_result`、`web_find`、`load_skill` | 允许并发；技能加载只返回冻结的技能内容 |
 | 文件写入/编辑/补丁/创建目录/删除/移动 | 串行屏障 |
 | 命令、Python、Shell、Git、LSP、执行环境查询 | 串行屏障；查询类进程工具也可能启动进程或更新缓存 |
 | `load_tool_group`、未声明策略的扩展工具 | 串行屏障 |
 | Docker 代理工具 | 后端进一步收紧，统一串行 |
 
-`AgentRuntime(..., max_tool_workers=4)` 默认最多并发 4 个工具调用，允许范围为 1–32；设为 1 可退回串行。调度器将**同一次模型回复中相邻的可并发调用**组成一个区段，最多派发 `max_tool_workers` 个在途调用；任意调用完成后立即补位，不等其他慢调用结束，也不提前把整个区段排进线程池。整个区段完成并收尾后才越过串行屏障，不会跨越屏障重排或推测参数依赖。若调用依赖前一调用的输出，应由模型在下一轮构造参数。同一 Runtime 拒绝同时运行两个任务，CLI 的 TaskQueue 仍是单消费者。
+`AgentRuntime(..., max_tool_workers=4)` 默认最多并发 4 个工具调用，允许范围为 1–32；设为 1 可退回串行。调度器将**同一次模型回复中相邻的可并发调用**组成一个区段，最多派发 `max_tool_workers` 个在途调用；协调线程收取已完成调用后补位，不等其他慢调用结束，也不提前把整个区段排进线程池。整个区段完成并收尾后才越过串行屏障，不会跨越屏障重排或推测参数依赖。若调用依赖前一调用的输出，应由模型在下一轮构造参数。同一 Runtime 拒绝同时运行两个任务，CLI 的 TaskQueue 仍是单消费者。
 
-区段全部收尾后，生成器才按模型调用顺序产出结果；即使消费者提前关闭迭代器，也没有遗留工作线程或 ContextVar 作用域。工具结果按模型调用顺序加入历史；事件按实际完成顺序处理，事件回调仍运行在协调线程。事件消费者应使用 `stats.current_tool` 获取当前事件对应的工具，不能假设 `stats.tool_calls[-1]` 刚刚完成。后者保留启动顺序。工具结果在工作线程中完成调用级账本回执，慢调用不会拖延其他已完成调用落盘。
+区段全部收尾后，生成器才按模型调用顺序产出结果；即使消费者提前关闭迭代器，也没有遗留工作线程或 ContextVar 作用域。工具结果按模型调用顺序加入历史；完成事件在协调线程收取结果时触发，同时就绪的调用不保证严格的完成先后排序，事件回调仍运行在协调线程。事件消费者应使用 `stats.current_tool` 获取当前事件对应的工具，不能假设 `stats.tool_calls[-1]` 刚刚完成。后者保留启动顺序。工具结果在工作线程中完成调用级账本回执，慢调用不会拖延其他已完成调用落盘。
 
 取消或账本保存失败后，停止继续派发，通知在途调用协作取消，并等待所有在途调用完成清理与回执后才向上传播错误。每个工作线程复制独立 Context，保留共享取消信号，并建立独立回执作用域。工作区只读工具不再延迟取消；文件修改仍保留原有延迟取消和先保存回执的顺序。已完成文件操作不会回滚；不支持协作取消的扩展工具会延长等待时间，因此应设置自身超时并在合适位置检查取消。
 
@@ -170,9 +173,32 @@ runtime = AgentRuntime(
 
 整轮输出额度在派发前按调用顺序均分，余数字符依次分配；线程完成顺序不影响额度，也不会抢占其他调用预留的份额。每个调用至少预留 1024 字符，超过可容纳的调用数量时整轮不执行，保留可继续的历史并提示分批调用。限制对象是结果消息的 `content`，不包含模型生成的调用参数、厂商消息包装，也不是精确 token 上限。
 
-裁剪仅作用于模型历史，账本保存完整执行回执。`read_file` 按完整编号行裁剪，保留哈希、正确的 `end_line`、`next_start_line` 和截断标志；一行都放不下时返回空内容及原起始行，需缩小批量请求或提高宿主输出预算。其他超大结果整体省略正文，保留执行成功/失败状态及可容纳的清理、退出状态，并提示缩小查询或检查账本，避免破坏任意 JSON 的计数和提交语义。不得为恢复省略正文而自动重放写入或命令。
+裁剪仅作用于模型历史，账本保存完整执行回执。`read_file` 按完整编号行裁剪，保留哈希、正确的 `end_line`、`next_start_line` 和截断标志；一行都放不下时返回空内容及原起始行，需缩小批量请求或提高宿主输出预算。其他超大结果整体省略正文，保留执行成功/失败状态及可容纳的清理、退出状态，提供已保存结果的 `result_ref`，可用 `read_tool_result` 继续读取，避免破坏任意 JSON 的计数和提交语义。未绑定账本的独立 Runtime 不提供引用，仍须缩小查询。不得为恢复省略正文而自动重放写入或命令。
 
 `search_files(case_sensitive=false)` 使用 Unicode casefold 匹配，但返回片段的位置映射回原文的字符范围；`ß → ss`、连字、组合点等长度变化不会再使长行片段偏离实际匹配。匹配仍是字面子串，不额外执行 Unicode 规范化或正则表达式匹配。
+
+## 读取已保存的工具结果
+
+`read_tool_result` 是宿主只读工具，实现位于 `agent/tool_results.py`，通过注入的查询接口读取 `ExecutionLedger`，不访问工作区路径、不执行原工具，也不进入 sandbox worker。`SavedConversation` 绑定账本时自动注册；默认作为通用工具初始可见。直接使用 Runtime 的调用方通过 `runtime.execution_ledger = ExecutionLedger(store)` 接入；未绑定账本时不会注册该工具或生成不可读取的引用。账本只能在任务之间切换。
+
+每次结果回执提交成功后，模型消息顶层获得 `result_ref`。原始账本记录不受输出预算裁剪影响；`/ledger` 也展示可读取的引用。引用绑定当前账本位置、会话和完成事件，不接受文件路径、其他项目或其他会话。相同项目和会话恢复后引用仍有效；清空上下文不会删除账本，已有引用仍可使用，启动新会话则无法读取旧会话引用。无需修改现有账本数据库版本。
+
+```json
+{
+  "result_ref": "result_<32位作用域标识>_<事件序号>",
+  "field": "stdout",
+  "offset": 0,
+  "limit": 4000
+}
+```
+
+- `field` 默认为 `result`，返回保存时完整结果 JSON 的文本切片；需按顺序拼接各页后再解析 JSON。`stdout` / `stderr` 返回原结果 `data` 中对应字符串，没有该字段时明确报错。
+- `offset` 从 0 开始，`limit` 默认为 4000、最大为 8000，均按 Unicode 字符而非 UTF-8 字节计算。返回 `content`、`total_chars`、`offset` 和 `next_offset`；后者为 null 表示已读到保存内容末尾。偏移超过末尾报错，恰好位于末尾返回空内容。
+- `success` 表示本次读取是否成功，`source_success` 和 `source_state` 表示原调用的结果与账本确定性。读取原失败或 `uncertain` 回执仍可成功，不代表原操作成功或清理问题已解决。
+- `capture` 保留原结果提供的 `stdout_truncated`、`stderr_truncated`、`output_complete`、`truncated` 布尔标记，缺失不代表完整。只能恢复被模型输出预算省略的已保存内容，不能恢复原工具采集阶段已经丢弃的输出。
+- 分页结果仍受整轮输出预算约束；裁剪时保留来源引用，并按实际返回字符数更新 `next_offset`，不会把整页省略后要求重跑原命令。分页结果 `data.result_ref` 指向原始结果，顶层引用则指向本次读取回执。
+
+工具采用 `HOST_CONTROL` / `INDEPENDENT`，可以并发查询不可变结果；数据库访问复用账本锁，JSON 解码在锁外进行。单条保存的序列化 observation 最多读取 64 × 1024 × 1024 个字符，超过时返回 `RESULT_TOO_LARGE`，单页限制并不意味着底层流式解析；读取前后检查协作取消。必需账本缺失、数据库错误或结果损坏仍触发持久化错误并停止运行，不伪装成“结果不存在”。返回内容是历史数据，不是当前文件状态或新授权。
 
 ## 按需加载工具组
 
@@ -183,11 +209,11 @@ CLI 默认开启按需加载。工厂和 sandbox worker 仍提供当前执行环
 | 类别 | 工具 | 启用时机 |
 | --- | --- | --- |
 | 通用工作区工具 | `get_execution_environment`、`read_file`、`list_files`、`find_files`、`search_files`、`get_path_info` | 初始可见 |
-| 通用辅助能力 | `load_tool_group`、已注册的技能加载、历史搜索/读取、Web 搜索/读取 | 初始可见；Web 仍取决于配置 |
+| 通用辅助能力 | `load_tool_group`、已注册的技能加载、历史搜索/读取、`read_tool_result`、Web 搜索/读取/缓存定位 | 初始可见；Web 仍取决于配置 |
 | `file_editing` | `write_file`、`edit_file`、`apply_patch`、`make_directory`、`delete_file`、`move_file` | 按需加载；也适用于非代码文件修改 |
-| `coding` | `git_status`、`git_diff`、`run_command`、`run_shell`、`run_python`、`get_symbols`、`go_to_definition`、`find_references`、`get_diagnostics`、`get_hover`、`search_workspace_symbols` | 按需加载；local 只提供其中的 Git 工具 |
+| `coding` | `git_status`、`git_diff`、`git_log`、`git_show`、`run_command`、`run_shell`、`run_python`、`get_symbols`、`go_to_definition`、`find_references`、`get_diagnostics`、`get_hover`、`search_workspace_symbols` | 按需加载；local 只提供其中的 Git 工具 |
 
-标准 CLI 初始发送 10 个工具定义，配置 Web 后至多 12 个。`load_tool_group` 的描述包含组目录、用途和当前环境可用的工具名称，不预先塞入专用工具的完整参数定义。
+标准 CLI 初始发送 11 个工具定义，配置 Web 后至多 14 个。`load_tool_group` 的描述包含组目录、用途和当前环境可用的工具名称，不预先塞入专用工具的完整参数定义。
 
 模型调用示例：
 
@@ -229,6 +255,34 @@ runtime = AgentRuntime(client, tools=registered_tools, tool_groups=groups)
 `GitDiffTool` / `GitStatusTool` 的 `execution_allowed` 仅由受信任代码构造时设置，工厂将其连接到 `isolated_execution`。native/Docker worker 已建立隔离，允许过滤器继承沙箱权限；local 默认关闭。模型参数不能开启此权限，也不会自动切换执行模式。Git 工具固定忽略子模块工作树脏状态，diff 使用短格式展示子模块提交变化，避免递归调用未检查的子仓库过滤器；需要子模块内部差异时，使用 `cwd` 明确选择该仓库并重新检查。
 
 这是配置前置拒绝机制，不是 local 模式的 OS 沙箱。diff 的路径枚举和内容生成前分别重新检查，但检查与执行之间仍存在宿主并发修改配置的窗口；需要对抗不可信并发修改时使用 native/Docker。隔离模式仍使用现有工作区可写策略，并非专用只读 Git 沙箱。
+
+### Git 历史查询
+
+`git_log` 和 `git_show` 位于 `coding` 按需组，先调用 `load_tool_group({"group": "coding"})` 加载。两者沿用 Git 工具的 `SANDBOXED_PROCESS` 执行类型和串行调度策略，在 local 使用受限内置实现，在 native/Docker 通过隔离 worker 执行。Docker 只能查询容器工作副本自身的历史，无法读取宿主仓库的完整历史。
+
+| 工具 | 参数与行为 |
+| --- | --- |
+| `git_log` | `revision` 默认 `HEAD`；`limit` 默认 20、范围 1–50；`offset` 默认 0、范围 0–10000；可用 `paths` 限定历史。返回提交哈希、父提交、作者、作者时间和主题，按拓扑顺序排列。 |
+| `git_show` | 默认返回一个提交的完整消息和补丁；`paths` 限定补丁文件；`context_lines` 默认 3、范围 0–20。合并提交与第一个父提交比较，根提交与空树比较。 |
+| `git_show` 文件模式 | 指定 `path` 读取该提交中的普通文件，支持已删除文件；不能同时传 `paths` 或 `context_lines`。拒绝历史符号链接、子模块、目录和含 NUL 字节的文件；文本按 UTF-8 解码，无效字节替换。 |
+
+两个工具均支持 `cwd` 选择工作区内的仓库；`path` / `paths` 始终相对工作区根目录，按字面路径匹配，不支持 glob 或自动跟随重命名。`paths` 最多 64 项。`revision` 只接受单个提交选择器，例如分支、标签、哈希、`HEAD~2`；不接受范围、选项或 `revision:path`。查询开始时解析为固定哈希，后续对象操作均使用该哈希。
+
+```json
+{"revision": "HEAD", "paths": ["tools"], "limit": 10}
+```
+
+以上为 `git_log` 参数。分页时将返回的 `resolved_revision` 作为下一次的 `revision`，配合 `next_offset`，避免新增提交造成页间漂移；无下一页时 `next_offset` 为 null。达到 offset 上限仍有记录时，返回 `pagination_limit_reached=true`。
+
+```json
+{"revision": "HEAD~1", "path": "tools/git_tools.py"}
+```
+
+以上为 `git_show` 的历史文件读取参数。不传 `path` 即查看提交补丁。敏感路径检查同时覆盖显式文件参数和补丁中的每一个变更路径，包括删除文件；重命名检测关闭，避免跨路径复制敏感内容。提交消息是未经信任的历史数据，不应作为指令执行。
+
+历史查询共享 `tools/_internal/git_history.py` 的参数校验、对象解析和有界进程执行。每次查询的所有子命令共享默认 30 秒期限，每条命令输出默认上限 64 KiB，均可在构造工具时配置。补丁超过上限时返回截断标记；结构化元数据、路径清单或历史文件超过上限时返回 `OUTPUT_TOO_LARGE`，不解析不完整记录。`read_tool_result` 只能读取已经保存的输出，不能恢复底层未保留的字节。
+
+工具禁用外部 diff、textconv、签名显示、pager、fsmonitor 和 replace objects，禁止自动拉取对象。为兼容不识别 `GIT_NO_LAZY_FETCH` 的旧 Git，发现 partial-clone 或 promisor 配置项就返回 `GIT_PARTIAL_CLONE_UNSUPPORTED`。local 同样保守拒绝非空 clean/process 过滤器配置。错误消息不回显仓库配置命令或原始 stderr；未解析到提交返回 `INVALID_REVISION`，超时和清理失败分别返回 `GIT_TIMEOUT`、`GIT_CLEANUP_FAILED`，保留进程清理诊断供上层处理。
 
 ### 文件工具公共组件
 

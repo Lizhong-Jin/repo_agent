@@ -30,7 +30,7 @@ class WritebackGuard:
     def record(self, name, arguments, result):
         # Named checks allow corrected validation code; other operations remain exact.
         normalized = {k: v for k, v in arguments.items() if k != "timeout_seconds"}
-        if name in (PROCESS_EXECUTION_TOOLS | {"git_diff", "git_status"}):
+        if name in (PROCESS_EXECUTION_TOOLS | {"git_diff", "git_status", "git_log", "git_show"}):
             normalized.setdefault("cwd", ".")
         if name in PROCESS_EXECUTION_TOOLS and arguments.get("check_id"):
             normalized = {"check_id": arguments["check_id"], "cwd": arguments.get("cwd", ".")}

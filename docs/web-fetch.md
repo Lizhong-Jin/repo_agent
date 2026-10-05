@@ -53,6 +53,36 @@ repo-agent --sandbox native
 
 行号基于首次提取后固定的正文，不是原始 HTML 行号。超长行会稳定分段，代码块标记会保留，但分段后的正文不能当作原始源码逐字复制。缓存读取不会访问网络或重新提取内容。
 
+## 在快照中定位：web_find
+
+启用 `AGENT_WEB_FETCH_ENABLED=true` 时同时注册 `web_find`，不需要搜索供应商或密钥。它只查询 `web_fetch` 返回的 `ref_id`，不接受 URL、不联网、不执行正则表达式；未知或失效引用不会触发重新抓取。
+
+```json
+{
+  "ref_id": "doc_0123456789abcdef0123456789abcdef",
+  "query": "timeout",
+  "case_sensitive": false,
+  "start_line": 1,
+  "context_lines": 2,
+  "max_results": 20
+}
+```
+
+`query` 为 1–400 个字符的非空白字面量，不允许控制字符和跨行匹配，保留查询两端的有效空格。默认忽略大小写，使用 Unicode casefold；不做 Unicode 规范化。`context_lines` 为匹配行前后各返回的行数，范围 0–5，默认 2；`max_results` 范围 1–50，默认 20。
+
+成功结果直接位于 `data`，不是 fetch 的 `results` 批次数组：
+
+- `matches` 每个匹配行最多一项，只定位该行的首次出现，按行号升序返回。
+- `line`、`column` 均从 1 开始，`end_column` 为不包含的结束位置；列号按原文 Unicode 字符计算，`ß → ss` 等 casefold 扩展不会使位置偏移。
+- 每项的 `start_line`、`end_line` 和 `content` 是完整上下文行，可直接通过 `web_fetch` 校验或扩展。不同匹配项的上下文可以重叠。
+- `returned_matches` 只表示本页返回的匹配行数，不是整个文档的出现次数。无匹配时成功返回空数组。
+- `truncated=true` 时，`truncation_reason` 为 `max_results` 或 `output_budget`，`next_start_line` 指向下一条尚未返回的匹配行。保留同一引用、查询及选项继续调用，直到该字段为 null；已在上下文出现的行仍可能是下一页的匹配项。
+- 返回 `ref_id`、`final_url`、`title`、`fetched_at`、`total_lines` 和 `long_lines_wrapped`，行号沿用快照提取与长行分段后的编号，无法跨分段边界匹配。
+
+查找与读取共享快照有效期、淘汰和隔离规则，读取不延长有效期；本次已取得的不可变快照在查找过程中保持一致，后续调用仍重新检查引用。达到输出上限时保留完整匹配项，不截断上下文中的单行；单条上下文也放不下时返回 `OUTPUT_TOO_LARGE`，可减小 `context_lines`。整轮模型输出预算仍可能进一步省略正文，此时可用 `read_tool_result` 读取已保存结果。
+
+这是 `HOST_CONTROL` / `INDEPENDENT` 工具，缓存访问和扫描都运行在 Web 后端事件循环中，不从工作线程直接改动缓存，也不占用网络请求槽。扫描定期让出事件循环、检查协作取消与后端总期限（默认 20 秒），超时返回 `TIMEOUT`，不将未完成搜索报告为无匹配。缓存和参数错误直接作为失败 ToolResult 返回，后端关闭或未启用时返回 `FIND_UNAVAILABLE`。结果保留 `untrusted=true` 和不可信资料说明。
+
 ## 缓存与错误
 
 每次显式读取 URL 都重新抓取并生成新的 `ref_id`，即使 URL 相同。旧引用永远保留旧内容，直到失效。
@@ -85,7 +115,7 @@ HTML 优先提取明确的 `main`、`role=main` 或 `article` 内容；候选正
 ## 验证
 
 ```bash
-python -m pytest tests/test_web_fetch.py tests/test_web_fetch_cli.py tests/test_web_search.py tests/test_web_search_cli.py -q
+python -m pytest tests/test_web_find.py tests/test_web_fetch.py tests/test_web_fetch_cli.py tests/test_web_search.py tests/test_web_search_cli.py -q
 ```
 
-测试替换 DNS 和 TCP 流，保留真实 HTTP 解析及目标校验逻辑；覆盖 DNS 重绑定、实际对端检查、IPv6、逐跳校验、TLS 主机名、无凭证请求、总超时、解压上限、内容结构、缓存隔离与分页、输出预算，以及 local/native 主进程调用链。这些测试不证明目标网站当前可访问。真实网络验收需在启用网页读取的会话中，分别检查公开 HTML/JSON 的首次读取、返回引用的缓存分页和错误处理，并记录实际环境与日期。
+测试替换 DNS 和 TCP 流，保留真实 HTTP 解析及目标校验逻辑；覆盖 DNS 重绑定、实际对端检查、IPv6、逐跳校验、TLS 主机名、无凭证请求、总超时、解压上限、内容结构、缓存隔离与分页、输出预算，以及 local/native 主进程调用链。`test_web_find.py` 另覆盖字面匹配、Unicode 列号、逐行分页、完整上下文预算、引用失效、并发查找、扫描中取消和超时。这些测试不证明目标网站当前可访问。真实网络验收需在启用网页读取的会话中，分别检查公开 HTML/JSON 的首次读取、返回引用的缓存分页和错误处理，并记录实际环境与日期。

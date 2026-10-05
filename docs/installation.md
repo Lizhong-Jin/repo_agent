@@ -38,7 +38,7 @@ cd repo-agent-0.1.4-macos-arm64
 | 模型和 API Key 配置 | `${XDG_CONFIG_HOME:-~/.config}/repo-agent/.env`，支持原有 `AGENT_CONFIG_DIR` 覆盖 |
 | 安装记录、恢复信息及下载日志 | `${XDG_STATE_HOME:-~/.local/state}/repo-agent/` |
 
-`--data-dir` 自定义整个 `repo-agent` 数据目录；`--bin-dir`、`--no-path`、`--mode`、`--languages`、`--with-toolchains`、`--skip-toolchains`、`--skip-sandbox` 与源码安装语义相同。安装不询问模型或 Key，只创建缺失的用户配置。命令保留调用时的工作目录。
+`--data-dir` 自定义整个 `repo-agent` 数据目录；`--bin-dir`、`--no-path`、`--mode`、`--languages`、`--with-toolchains`、`--skip-toolchains`、`--skip-sandbox` 与源码安装语义相同。安装不询问模型或 Key；首次创建用户配置，重装按当前模板合并仍有效的旧设置并备份原文件，详见[配置合并规则](configuration.md#用户配置)。命令保留调用时的工作目录。
 
 安装完成后可删除下载目录及原源码。发行版以普通 wheel 安装，默认配置模板、内置 Skills、语言服务锁文件和 Docker 构建上下文均包含在发行包内。
 
@@ -109,11 +109,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --
 ./install.sh --check
 ```
 
-源码安装创建专用 `.venv`，自动安装开发依赖 pytest、Ruff 和构建工具，将模板复制到用户配置，并把 `repo-agent`、`repo-agent-build-sandbox` 安装到 `~/.local/bin`。默认补充 Bash / Zsh 的 PATH；打开新终端或执行安装结尾打印的命令。其他 shell 自行配置 PATH。源码和安装目录需要保留，命令依赖其中的虚拟环境。
+源码安装创建专用 `.venv`，自动安装开发依赖 pytest、Ruff 和构建工具，首次将模板复制到用户配置（重装按模板合并旧值），并把 `repo-agent`、`repo-agent-build-sandbox` 安装到 `~/.local/bin`。默认补充 Bash / Zsh 的 PATH；打开新终端或执行安装结尾打印的命令。其他 shell 自行配置 PATH。源码和安装目录需要保留，命令依赖其中的虚拟环境。
 
 Linux/macOS 源码安装在核心安装成功后自动尝试编译并安装 Rust 策略扫描扩展。需要已有 Rust >= 1.85（cargo/rustc）和 C 链接器，安装器不会自动安装编译器；maturin 构建依赖在隔离环境中准备，Cargo 中间产物写入项目外的临时目录，最终 wheel 保留到源码根目录 `rust_wheels/<版本>/`。手工编译和打包入口见 [Rust 构建说明](../rust/README.md)。缺少工具、下载或编译失败、取消该可选步骤均只提示，不撤销核心安装。离线编译需要本地 maturin wheel 和已缓存的 Cargo 依赖，准备不足时跳过扩展。
 
-附带预编译扩展的发行包会直接安装并验证包内 Rust wheel，安装机不需要 Rust 编译器，也不联网编译。Windows 当前不支持此扩展。安装扩展不会修改扫描器配置，默认仍为 `AGENT_NATIVE_SCANNER=python`；Linux/macOS 用户可改为 `rust` 启用，两平台 native 文件工具的 Rust 后端均需要 兼容 FILESYSTEM_API_VERSION=2 的扩展（当前版本 0.6.0）。若旧配置显式选择了 `rust` 而本次扩展安装失败，应改回 `python` 或补装扩展后再运行。详情见 [Rust 扫描器说明](../rust/docs/policy-scan.md)。
+附带预编译扩展的发行包会直接安装并验证包内 Rust wheel，安装机不需要 Rust 编译器，也不联网编译。Windows 当前不支持此扩展。安装扩展不会修改扫描器配置，默认仍为 `AGENT_NATIVE_SCANNER=python`；Linux/macOS 用户可改为 `rust` 启用，两平台 native 文件工具的 Rust 后端均需要兼容 FILESYSTEM_API_VERSION=2 的扩展（当前版本 0.6.0）。若旧配置显式选择了 `rust` 而本次扩展安装失败，应改回 `python` 或补装扩展后再运行。详情见 [Rust 扫描器说明](../rust/docs/policy-scan.md)。
 
 首次在目标项目运行 `repo-agent` 时，若缺少模型或 Key，交互终端会引导设置；也可先运行 `repo-agent config model`。安装本身无需模型信息。已有用户配置会按新模板重建，保留仍有效的旧值（含显式空值），补充新增项，丢弃模板已移除的项；替换前自动备份。新模板与内置默认值的区别见[配置参考](configuration.md#模板与内置默认值)。
 

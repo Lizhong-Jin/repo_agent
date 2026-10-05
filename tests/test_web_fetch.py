@@ -593,7 +593,7 @@ def test_fetch_registration_is_independent_of_search_and_absent_from_workers(tmp
     backend = WebBackend.from_environment({"AGENT_WEB_FETCH_ENABLED": "true"})
     try:
         assert backend.adapter is None
-        assert [t.definition.name for t in create_web_tools(backend)] == ["web_fetch"]
+        assert [t.definition.name for t in create_web_tools(backend)] == ["web_fetch", "web_find"]
     finally:
         backend.close()
     for isolated in (False, True):

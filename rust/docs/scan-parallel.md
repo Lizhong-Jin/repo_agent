@@ -2,7 +2,9 @@
 
 rust-backend 0.5.0 增加 `SCAN_PARALLEL_VERSION=1`，0.6.0 增加目录任务批处理和
 `SCAN_BATCH_VERSION=1`，保持策略 API 1、文件系统 API 2。
-仅在选择 Rust 后端时生效；Python 后端以及文件工具的 find/search/read 顺序不变。
+仅在选择 Rust 后端时生效；Python 后端和单次文件工具内部的 find/search/read 遍历顺序不变。
+多个工具调用可由 Runtime 独立并发调度，参见[工具并发](../../docs/tools.md#并发调度策略)；
+`AGENT_SCAN_WORKERS` 不控制 Runtime 的工具线程数。
 
 ## 配置
 

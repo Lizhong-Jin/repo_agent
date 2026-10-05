@@ -86,7 +86,7 @@ CLI 使用 `create_native_backend()`。旧 `NativeBackend` 构造入口及 `seat
 python -m pytest -q tests/test_host_file_contracts.py tests/test_windows_files.py
 ```
 
-`.github/workflows/host-files.yml` 配置了 Windows/macOS/Linux × Python 3.11/3.13 的六组契约测试，运行 `test_architecture_boundaries.py`、`test_host_file_contracts.py`、`test_windows_files.py`、`test_windows_release.py`、`test_cancellation.py` 五份模块。另有 Windows Python 3.13 作业构建 ZIP、设置归档变量后执行真实安装生命周期，并上传测试产物。Windows 文件测试包含 junction 场景、只读文件原子替换和全部 local 文件工具；非 Windows 环境跳过 Windows 内核用例。
+`.github/workflows/host-files.yml` 配置了 Windows/macOS/Linux × Python 3.11/3.13 的六组契约测试，运行 `test_architecture_boundaries.py`、`test_host_file_contracts.py`、`test_windows_files.py`、`test_windows_release.py`、`test_cancellation.py`、`test_task_queue.py`、`test_continue.py`、`test_execution_ledger.py` 八份模块。另有 Windows Python 3.13 作业构建 ZIP、设置归档变量后执行真实安装生命周期，并上传测试产物。Windows 文件测试包含 junction 场景、只读文件原子替换和全部 local 文件工具；非 Windows 环境跳过 Windows 内核用例。
 
 工作流还配置了 Linux/macOS × Python 3.11/3.13 的四组默认全量回归，准备仓库 `.venv` 和安装入口后运行整个 `tests/` 目录。默认全量仍按平台、依赖和开关跳过真实环境用例；Windows 仍限定为上述契约及发行安装测试。另有独立 Ruff 检查与格式检查作业；lint 和默认回归安装锁定的开发依赖。CI 未配置真实 Docker Desktop 回写测试，Windows Docker 回写需下面的独立开关与镜像。
 

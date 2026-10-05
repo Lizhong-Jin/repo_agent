@@ -38,7 +38,7 @@ def test_cli_fetch_and_cached_read_without_search_key(tmp_path, monkeypatch, mod
         body = json.loads(request.content)
         rounds.append(body)
         names = {item["function"]["name"] for item in body["tools"]}
-        assert "web_fetch" in names and "web_search" not in names
+        assert {"web_fetch", "web_find"} <= names and "web_search" not in names
         if len(rounds) == 1:
             arguments = {"targets": [{"url": "https://docs.example.org", "line_count": 1}]}
         elif len(rounds) == 2:
