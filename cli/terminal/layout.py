@@ -64,54 +64,57 @@ def build_layout(ui, *, terminal_input=None, terminal_output=None):
         ),
     )
 
+    conversation_body = HSplit(
+        [
+            Window(
+                FormattedTextControl(ui.header_text),
+                height=1,
+                style="class:header",
+            ),
+            ui.chat,
+            ConditionalContainer(
+                DynamicContainer(lambda: ui.model_picker.window if ui.model_picker else Window()),
+                filter=Condition(
+                    lambda: ui.model_wizard is not None and ui.model_wizard.stage == "model"
+                ),
+            ),
+            Window(
+                FormattedTextControl(ui.phase_text),
+                height=1,
+                style="class:status",
+            ),
+            Frame(
+                ui.editor,
+                title=lambda: (
+                    "模型设置 · Enter 确认 · Ctrl+C 取消"
+                    if ui.model_wizard
+                    else f"{shortcut_label('Enter')} 发送 · "
+                    f"{shortcut_label('Alt+Enter')} 换行 · Tab 补全"
+                ),
+            ),
+            Window(
+                FormattedTextControl(lambda: ui.footer_text),
+                height=ui.footer_height,
+                wrap_lines=True,
+                style="class:footer",
+            ),
+            Window(
+                FormattedTextControl(
+                    f" {shortcut_label('F2')} 改名 · {shortcut_label('F3')} 报告 · "
+                    "Shift+Tab 强度 · "
+                    "Ctrl+T 思考显示 · Ctrl+C 停止 · "
+                    f"滚轮/{shortcut_label('PgUp')}/{shortcut_label('PgDn')} 历史"
+                ),
+                height=1,
+                style="class:hint",
+            ),
+        ]
+    )
+
     ui.app = Application(
         layout=Layout(
-            HSplit(
-                [
-                    Window(
-                        FormattedTextControl(ui.header_text),
-                        height=1,
-                        style="class:header",
-                    ),
-                    ui.chat,
-                    ConditionalContainer(
-                        DynamicContainer(
-                            lambda: ui.model_picker.window if ui.model_picker else Window()
-                        ),
-                        filter=Condition(
-                            lambda: ui.model_wizard is not None and ui.model_wizard.stage == "model"
-                        ),
-                    ),
-                    Window(
-                        FormattedTextControl(ui.phase_text),
-                        height=1,
-                        style="class:status",
-                    ),
-                    Frame(
-                        ui.editor,
-                        title=lambda: (
-                            "模型设置 · Enter 确认 · Ctrl+C 取消"
-                            if ui.model_wizard
-                            else f"{shortcut_label('Enter')} 发送 · "
-                            f"{shortcut_label('Alt+Enter')} 换行 · Tab 补全"
-                        ),
-                    ),
-                    Window(
-                        FormattedTextControl(lambda: ui.footer_text),
-                        height=ui.footer_height,
-                        wrap_lines=True,
-                        style="class:footer",
-                    ),
-                    Window(
-                        FormattedTextControl(
-                            f" {shortcut_label('F2')} 改名 · Shift+Tab 强度 · "
-                            "Ctrl+T 思考显示 · Ctrl+C 停止 · "
-                            f"滚轮/{shortcut_label('PgUp')}/{shortcut_label('PgDn')} 历史"
-                        ),
-                        height=1,
-                        style="class:hint",
-                    ),
-                ]
+            DynamicContainer(
+                lambda: ui.report_page.container if ui.report_page else conversation_body
             ),
             focused_element=ui.editor,
         ),

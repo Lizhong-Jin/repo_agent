@@ -54,7 +54,7 @@ def attach_reviews(store, report, items, digest):
         item["review_history"] = [r for r in reviews if r["check_id"] == item["id"]]
 
 
-def record_review(store, selector, check_id, state, note):
+def record_review(store, selector, check_id, state, note, *, expected_digest=None):
     # Imported here to keep the report projection independent of mutation entrypoints.
     from .task_reports import ReportStore
     from .verification import verification_items
@@ -67,6 +67,8 @@ def record_review(store, selector, check_id, state, note):
         raise ValueError("验收状态必须是 accepted/rejected/pending，并提供 1–2000 字符备注")
     with store.catalog.locked():
         report = ReportStore(store).get(selector)
+        if expected_digest is not None and report_digest(report) != expected_digest:
+            raise ValueError("报告内容已变化，请刷新后重新验收")
         if report["state"] == "incomplete":
             raise ValueError("任务报告尚未完整保存，不能提交验收结论")
         if check_id not in {item["id"] for item in verification_items(report)}:

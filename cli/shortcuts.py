@@ -7,6 +7,7 @@ _MAC_LABELS = {
     # Escape followed by Return works without configuring Option as Meta.
     "Alt+Enter": "Esc → Return",
     "F2": "fn+F2",
+    "F3": "fn+F3",
     "PgUp": "fn+↑",
     "PgDn": "fn+↓",
     "Ctrl+End": "Esc → g",
@@ -23,6 +24,7 @@ def shortcut_help() -> str:
     text = (
         f"{shortcut_label('Alt+Enter')} 换行；"
         f"{shortcut_label('F2')} 改名；"
+        f"{shortcut_label('F3')} 报告页；"
         f"滚轮或 {shortcut_label('PgUp')}/{shortcut_label('PgDn')} 浏览历史；"
         f"{shortcut_label('Ctrl+End')} 恢复跟随。"
     )

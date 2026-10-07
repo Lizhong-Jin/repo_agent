@@ -1,6 +1,7 @@
 """Full-screen interaction orchestration; screen state belongs to the UI loop."""
 
 import asyncio
+import shlex
 from queue import Empty, SimpleQueue
 from time import perf_counter
 from uuid import uuid4
@@ -18,12 +19,13 @@ from ..model_picker import ModelPicker
 from ..output import LiveOutput
 from ..runtime_events import RuntimeEventBridge
 from ..session_switch import SessionSwitch, prepare_switch
-from ..sessions_command import new_name, ui_command
+from ..sessions_command import CommandParser, new_name, ui_command
 from ..shortcuts import shortcut_help, shortcut_label
 from ..task_controller import TaskController
 from ..task_execution import TaskRunner
 from ..thinking_display import ThinkingDisplay
 from .layout import build_layout
+from .report_page import ReportPage
 
 
 class ConversationUI:
@@ -51,6 +53,7 @@ class ConversationUI:
         self.conversation = conversation
         self.session_title = conversation.label if conversation else "会话"
         self.title_checked = perf_counter()
+        self.report_page = None
         self.renaming = False
         self.blocks = conversation.transcript if conversation else Transcript()
         self.thinking_lines = set()
@@ -253,6 +256,19 @@ class ConversationUI:
         except (ValueError, OSError, LLMError) as error:
             self.append(f"\n设置未变更：{error}\n")
 
+    def open_report(self, selector="latest", *, section=0):
+        if not self.conversation:
+            self.phase = "当前会话没有持久化报告"
+            return
+        if self.model_wizard or self.renaming:
+            self.phase = "请先完成或取消当前设置"
+            return
+        if self.report_page is None:
+            self.report_page = ReportPage(self)
+        self.report_page.load(selector, section=section)
+        self.app.layout.focus(self.report_page.menu)
+        self.app.invalidate()
+
     def submit(self):
         self._submit()
         if self.conversation and not self.busy:
@@ -261,6 +277,8 @@ class ConversationUI:
             )
 
     def _submit(self):
+        if self.report_page is not None:
+            return
         if self.renaming:
             try:
                 notice = self.conversation.rename(self.editor.text)
@@ -279,6 +297,21 @@ class ConversationUI:
         task = self.editor.text.strip()
         if not task:
             return
+        if task.split()[0] == "/report":
+            try:
+                words = shlex.split(task)[1:]
+                # Keep the existing explicit acceptance command available.
+                if "--accept" not in words:
+                    parser = CommandParser(add_help=False, allow_abbrev=False)
+                    parser.add_argument("task", nargs="?", default="latest")
+                    parser.add_argument("--diff", action="store_true")
+                    args = parser.parse_args(words)
+                    self.open_report(args.task, section=1 if args.diff else 0)
+                    self.editor.text = ""
+                    return
+            except ValueError as error:
+                self.phase = str(error)
+                return
         if task.split()[:2] == ["/thinking", "display"]:
             self.editor.text = ""
             self.display_command(task)

@@ -441,6 +441,7 @@ def load_report(store, ledger, selector="latest"):
         report["unverified"].append("结束快照未保存；任务仍在执行或曾异常中断，不能确认最终差异。")
     items = verification_items(report)
     attach_reviews(store, report, items, digest)
+    report["revision"] = digest
     report["verification_items"] = items
     return report
 

@@ -6,10 +6,12 @@ from prompt_toolkit.key_binding import KeyBindings
 from llm import LLMError
 
 from ..shortcuts import shortcut_label
+from .report_page import report_bindings
 
 
 def create_bindings(ui):
     keys = KeyBindings()
+    chatting = Condition(lambda: ui.report_page is None)
     choosing_model = Condition(
         lambda: ui.model_wizard is not None and ui.model_wizard.stage == "model"
     )
@@ -28,15 +30,15 @@ def create_bindings(ui):
     def model_down(event):
         ui.model_picker.move(1)
 
-    @keys.add("enter")
+    @keys.add("enter", filter=chatting)
     def submit(event):
         ui.submit()
 
-    @keys.add("escape", "enter")
+    @keys.add("escape", "enter", filter=chatting)
     def newline(event):
         ui.editor.buffer.insert_text("\n")
 
-    @keys.add("s-tab")
+    @keys.add("s-tab", filter=chatting)
     def thinking(event):
         if ui.model_wizard:
             return
@@ -50,7 +52,14 @@ def create_bindings(ui):
             except (ValueError, OSError, LLMError) as error:
                 ui.append(f"\n设置未变更：{error}\n")
 
-    @keys.add("f2")
+    @keys.add("f3")
+    def report(event):
+        if ui.report_page:
+            ui.report_page.close()
+        else:
+            ui.open_report()
+
+    @keys.add("f2", filter=chatting)
     def rename_session(event):
         if ui.conversation and not ui.busy and not ui.model_wizard and not ui.renaming:
             ui.rename_draft = ui.editor.text
@@ -59,7 +68,7 @@ def create_bindings(ui):
             ui.editor.buffer.cursor_position = len(ui.editor.text)
             ui.phase = f"会话改名 · {shortcut_label('Enter')} 保存 · Ctrl+C 取消"
 
-    @keys.add("c-t")
+    @keys.add("c-t", filter=chatting)
     def toggle_thinking(event):
         if ui.model_wizard:
             return
@@ -73,6 +82,12 @@ def create_bindings(ui):
 
     @keys.add("c-c")
     def interrupt(event):
+        if ui.report_page and ui.report_page.reviewing:
+            ui.report_page.cancel_review()
+            return
+        if ui.report_page and not ui.busy:
+            ui.report_page.close()
+            return
         if ui.renaming:
             ui.renaming = False
             ui.editor.text = ui.rename_draft
@@ -90,6 +105,9 @@ def create_bindings(ui):
 
     @keys.add("c-d")
     def exit_app(event):
+        if ui.report_page:
+            ui.report_page.close()
+            return
         if ui.renaming:
             interrupt(event)
             return
@@ -102,23 +120,24 @@ def create_bindings(ui):
         elif not ui.editor.text:
             ui.app.exit()
 
-    @keys.add("pageup")
+    @keys.add("pageup", filter=chatting)
     def up(event):
         if choosing_model():
             ui.model_picker.move(-ui.model_picker.page_size)
         else:
             ui.scroll_history(-ui.history_page_size())
 
-    @keys.add("pagedown")
+    @keys.add("pagedown", filter=chatting)
     def down(event):
         if choosing_model():
             ui.model_picker.move(ui.model_picker.page_size)
         else:
             ui.scroll_history(ui.history_page_size())
 
-    @keys.add("c-end")
-    @keys.add("escape", "g")
+    @keys.add("c-end", filter=chatting)
+    @keys.add("escape", "g", filter=chatting)
     def end(event):
         ui.follow_latest()
 
+    report_bindings(ui, keys)
     return keys

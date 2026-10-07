@@ -112,6 +112,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !cli/terminal/application.py
 !cli/terminal/bindings.py
 !cli/terminal/layout.py
+!cli/terminal/report_page.py
 !cli/terminal/widgets.py
 !cli/thinking_control.py
 !cli/thinking_display.py

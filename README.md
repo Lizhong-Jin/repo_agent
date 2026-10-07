@@ -48,7 +48,7 @@ Docker 会话可使用 `/diff` 查看副本变更、`/apply` 回写原项目；l
 | 模型接入 | 9 个厂商预设，支持 Chat Completions、OpenAI Responses、Anthropic Messages、Gemini generateContent；[供应商列表](docs/llm.md#接入模型) |
 | 对话界面 | 流式回复、可滚动历史、思考内容显示、模型切换、累计用量与上下文占比 |
 | 会话管理 | 按项目保存，默认恢复最后一次会话；支持命名、改名、列表、指定恢复、会话切换和日志跟随 |
-| 任务与执行证据 | 持久化串行队列、取消与暂停、`/continue` 续接；执行账本保存回执，支持按引用回读结果，见[执行账本](docs/execution-ledger.md)；任务结束展示[交付报告](docs/task-reports.md) |
+| 任务与执行证据 | 持久化串行队列、取消与暂停、`/continue` 续接；执行账本保存回执，支持按引用回读结果，见[执行账本](docs/execution-ledger.md)；任务结束展示[交付报告](docs/task-reports.md)，TUI 用 F3 或 `/report` 打开独立报告页，查看差异、验证与人工验收 |
 | 工具并发 | 相邻且允许并发的调用滚动调度，默认最多 4 个；写入、进程和 Docker 代理保持串行，见[调度策略](docs/tools.md#并发调度策略) |
 | 上下文管理 | `/compact` 手动/自动压缩、独立思考策略、有限精简与格式修复、失败诊断、原始消息归档及只读历史回查；[使用说明](docs/context-compaction.md) |
 | 文件与检索 | 文件读写、局部编辑、多文件严格补丁、目录操作、文件查找、内容搜索、Git 状态、差异与提交历史 |
