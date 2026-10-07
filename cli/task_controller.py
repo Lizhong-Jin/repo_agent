@@ -5,7 +5,9 @@ from threading import RLock
 
 from agent.conversation import model_identity
 from agent.task_queue import TaskQueue
-from host_support.cancellation import CancellationContext
+from agent.task_reports import ReportCapture, render_report
+from agent.transcript import display_text
+from host_support.cancellation import CancellationContext, cancellation_scope
 
 from .cancellation import cancellation_notice
 from .task_execution import TaskOutcome, TaskRunner
@@ -37,6 +39,8 @@ class TaskController:
         self.persistence_blocked = False
         self.cleanup_blocked = False
         self.closing = False
+        self.report_capture = None
+        self.report_error = None
 
     @property
     def queue(self):
@@ -171,8 +175,23 @@ class TaskController:
             return deepcopy(task)
 
     def execute(self, task):
+        with cancellation_scope(self.cancellation, handle_sigint=True):
+            return self._execute(task)
+
+    def _execute(self, task):
         if not self.active or self.active["id"] != task["id"]:
             raise ValueError("任务不是当前执行项")
+        self.report_capture = None
+        self.report_error = None
+        if self.conversation:
+            try:
+                self.report_capture = ReportCapture(
+                    self.conversation, task, self.sandbox, self.writeback
+                )
+            except (OSError, ValueError) as error:
+                self.report_error = f"报告基线保存失败：{error}"
+                self.write(self.report_error)
+        self.runtime.task_reporter = self.report_capture
         return TaskRunner(
             self.runtime,
             self.cancellation.check,
@@ -248,9 +267,23 @@ class TaskController:
                 summary["notice"] = "\n".join(
                     filter(None, (summary["notice"], "进程清理未确认；队列已暂停"))
                 )
+            report_notice = None
+            self.runtime.task_reporter = None
+            if self.report_capture is not None:
+                try:
+                    path = self.report_capture.finish(state, summary)
+                    summary["report"] = str(path)
+                    report_notice = display_text(render_report(self.report_capture.report))
+                except (OSError, ValueError) as error:
+                    self.report_error = f"任务报告未完整保存：{error}；/report 可查看已保存证据"
+            if self.report_error:
+                summary["report_error"] = self.report_error
+                self.write(self.report_error)
             self.queue.finish(self.active, state, summary)
             self.active = None
             self._save()  # History, pending marker and queue result share one snapshot.
+            if report_notice:
+                self.write(report_notice)
             return state
 
     def command(self, text):

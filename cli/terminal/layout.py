@@ -52,6 +52,7 @@ def build_layout(ui, *, terminal_input=None, terminal_output=None):
                 "/sessions",
                 "/switch",
                 "/logs",
+                "/report",
                 "/exit",
                 "/model",
                 "/thinking",

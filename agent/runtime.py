@@ -28,6 +28,7 @@ from .tool_output import (
 from .tool_results import ReadToolResultTool
 from .tool_scheduler import ToolScheduler
 from .Tracing import RunStats, RunTrace
+from .verification import PlanVerificationTool, plans_from_rows
 
 DEFAULT_SYSTEM_PROMPT = make_default_system_prompt()
 
@@ -161,12 +162,13 @@ class AgentRuntime:
             if ledger is not None and not callable(getattr(ledger, "read_result", None)):
                 raise TypeError("Execution ledger must support read_result")
             if ledger is not None and self._result_reader is None:
-                tool = ReadToolResultTool(self._lookup_tool_result)
-                definition = deepcopy(tool.definition)
-                self.dispatcher.register(tool)
-                self._result_reader = tool
-                self._all_definitions += (definition,)
-                self._definition_by_name[definition.name] = definition
+                reader = ReadToolResultTool(self._lookup_tool_result)
+                for tool in (PlanVerificationTool(self._existing_verifications), reader):
+                    definition = deepcopy(tool.definition)
+                    self.dispatcher.register(tool)
+                    self._all_definitions += (definition,)
+                    self._definition_by_name[definition.name] = definition
+                self._result_reader = reader
                 self.tool_groups.available = frozenset(self._tools)
                 if self.tool_groups.groups:
                     # Custom catalogs may put the reader in a specialized group.
@@ -180,6 +182,20 @@ class AgentRuntime:
             self._execution_ledger = ledger
         finally:
             self._run_lock.release()
+
+    def _existing_verifications(self):
+        identity = getattr(self, "execution_identity", {}) or {}
+        run = identity.get("attempt_id")
+        if self.execution_ledger is None or not run or not self._run_lock.locked():
+            raise ValueError("Verification plans require an active persisted task")
+        rows, before = [], None
+        while True:
+            batch = self.execution_ledger.evidence(run=run, limit=500, before=before)
+            rows.extend(batch)
+            if len(batch) < 500:
+                break
+            before = batch[-1]["seq"]
+        return plans_from_rows(rows)
 
     def _lookup_tool_result(self, reference):
         if self.execution_ledger is None:
@@ -504,6 +520,9 @@ class AgentRuntime:
         if ledger is None:
             return self._execute(call, exposed_names=exposed_names)
         ledger.start(run_id, call.id)
+        reporter = getattr(self, "task_reporter", None)
+        if reporter is not None:
+            reporter.before_call(call)
         recorded = False
         result_ref = None
 
@@ -511,6 +530,9 @@ class AgentRuntime:
             nonlocal recorded, result_ref
             result_ref = ledger.finish(run_id, call.id, result.to_message(call), effects)
             recorded = True
+            # Keep the required execution receipt ahead of optional directory scans.
+            if reporter is not None:
+                reporter.after_call(call, effects)
             if result.data.get("cleanup_status") == "unknown" or result.data.get("cleanup_error"):
                 context = current_cancellation()
                 if context is not None:

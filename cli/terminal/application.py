@@ -338,7 +338,10 @@ class ConversationUI:
             except (ValueError, OSError, LLMError) as error:
                 self.append(f"无法读取模型配置：{error}\n")
             return
-        if task.split()[0] in {"/rename", "/sessions", "/logs", "/ledger"} and self.conversation:
+        if (
+            task.split()[0] in {"/rename", "/sessions", "/logs", "/ledger", "/report"}
+            and self.conversation
+        ):
             try:
                 self.append(ui_command(self.conversation, task) + "\n")
                 self.refresh_footer()
@@ -447,6 +450,7 @@ class ConversationUI:
             outcome = await asyncio.to_thread(self.work, ticket["text"])
             self.flush_text()
             state = self.controller.finish(ticket, outcome, transcript=self.blocks)
+            self.flush_text()  # Publish the delivery report before claiming the next task.
             self.history = self.controller.history
             if state != "completed":
                 self.append("\n" + self.controller.queue.data["reason"] + "\n")

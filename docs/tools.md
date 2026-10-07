@@ -638,3 +638,7 @@ pylsp），使用逐文件符号查询回退，对符号名称进行不区分大
 或扫描结果经过过滤、去重后的数量，不是全仓库符号总数；`truncated` 表示候选结果未
 全部返回，与扫描范围的 `coverage.scan_truncated` 分开。仅必要元数据也无法容纳时
 返回 `OUTPUT_TOO_LARGE`。结果跨独立会话不保证排序稳定，因此不提供跨调用分页。
+
+### plan_verification（任务验证计划）
+
+绑定持久化执行账本的 Runtime 自动提供宿主工具 `plan_verification`。`items` 为 1–20 项列表，每项包含 `id`、`title`、`kind`（`command`/`manual`）、`expectation`；命令类型还需 `command` argv 数组，可选 `cwd`。结果只登记计划，不执行命令、不设置通过状态，也不提供人工验收接口。匹配规则、示例和用户验收见[任务交付报告](task-reports.md)。

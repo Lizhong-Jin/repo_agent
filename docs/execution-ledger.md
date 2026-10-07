@@ -80,3 +80,7 @@ SQLite 使用事务和 `synchronous=FULL`；同一账本实例用可重入锁串
 `agent/execution_ledger.py` 管理事务与查询，`host_support/execution_receipt.py` 提供结果回执作用域及致命持久化异常。Runtime 负责批次意图和调用身份，分派器在返回后的取消检查之前同步发送回执。工具实现和 TUI 不直接操作 SQLite。
 
 `tests/test_execution_ledger.py` 覆盖事务回滚、各写入点故障、取消时结果先落盘、未知工具异常、缺失账本，并在独立子进程中于意图、开始、外部效果及结果提交阶段强制退出。另有会话、索引和指针发布中途退出后的修复测试。它们已纳入跨平台契约 CI。结果回读由 `tests/test_read_tool_result.py` 覆盖会话隔离、重启引用、分页、输出预算和损坏账本；并发回执与取消还由 `tests/test_parallel_runtime.py`、`tests/test_tool_scheduler.py` 验证，属于默认全量回归范围。
+
+## 任务交付报告
+
+每项任务结束后展示[任务交付报告](task-reports.md)。`/report [任务编号] --diff` 将任务期间观察到的差异和受控文件工具记录的操作差异分开展示，并引用本账本中的调用与 `result_ref`。命令前后出现文件变化不构成 Agent 归属证明；`effects=reported` 也不等于全部变化已被覆盖。报告是证据视图，不替代执行账本。

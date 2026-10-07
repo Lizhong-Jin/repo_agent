@@ -48,7 +48,7 @@ Docker 会话可使用 `/diff` 查看副本变更、`/apply` 回写原项目；l
 | 模型接入 | 9 个厂商预设，支持 Chat Completions、OpenAI Responses、Anthropic Messages、Gemini generateContent；[供应商列表](docs/llm.md#接入模型) |
 | 对话界面 | 流式回复、可滚动历史、思考内容显示、模型切换、累计用量与上下文占比 |
 | 会话管理 | 按项目保存，默认恢复最后一次会话；支持命名、改名、列表、指定恢复、会话切换和日志跟随 |
-| 任务与执行证据 | 持久化串行队列、取消与暂停、`/continue` 续接；执行账本保存回执，支持按引用回读结果，见[执行账本](docs/execution-ledger.md) |
+| 任务与执行证据 | 持久化串行队列、取消与暂停、`/continue` 续接；执行账本保存回执，支持按引用回读结果，见[执行账本](docs/execution-ledger.md)；任务结束展示[交付报告](docs/task-reports.md) |
 | 工具并发 | 相邻且允许并发的调用滚动调度，默认最多 4 个；写入、进程和 Docker 代理保持串行，见[调度策略](docs/tools.md#并发调度策略) |
 | 上下文管理 | `/compact` 手动/自动压缩、独立思考策略、有限精简与格式修复、失败诊断、原始消息归档及只读历史回查；[使用说明](docs/context-compaction.md) |
 | 文件与检索 | 文件读写、局部编辑、多文件严格补丁、目录操作、文件查找、内容搜索、Git 状态、差异与提交历史 |
@@ -86,6 +86,7 @@ repo-agent doctor                               # 按安装模式诊断依赖和
 | `/help` | 查看命令 |
 | `/continue` | 达到调用上限后继续任务，再获得当前 `max_steps` 轮预算 |
 | `/ledger` | 查看近期工具执行证据及已保存结果引用 |
+| `/report [任务编号] [--diff]` | 查看任务交付报告：文件变化、工具操作差异、验证清单与实际执行证据 |
 | `/queue` | 查看和管理持久化串行队列，见[任务队列](docs/task-queue.md) |
 | `/new [名称]` | 新建会话，保留当前文件和沙箱副本 |
 | `/switch 序号或名称` | 保存当前会话，恢复指定会话的上下文和用量 |
@@ -122,7 +123,7 @@ local 的 Git 工具仍会启动 Git 子进程；发现外部 clean/process 过�
 完整目录见 [文档首页](docs/index.md)。常用入口：
 
 - 开始使用：[安装与升级](docs/installation.md)、[命令与快捷键](docs/usage.md)、[配置参考](docs/configuration.md)。
-- 管理对话：[会话恢复](docs/sessions.md)、[任务队列](docs/task-queue.md)、[执行账本](docs/execution-ledger.md)、[上下文压缩](docs/context-compaction.md)、[思考设置](docs/thinking.md)、[日志](docs/logging.md)。
+- 管理对话：[会话恢复](docs/sessions.md)、[任务队列](docs/task-queue.md)、[执行账本](docs/execution-ledger.md)、[任务交付报告](docs/task-reports.md)、[上下文压缩](docs/context-compaction.md)、[思考设置](docs/thinking.md)、[日志](docs/logging.md)。
 - 执行任务：[原生沙箱](docs/native-sandbox.md)、[Docker 与回写](sandbox/README.md)、[GPU 开发](docs/gpu-operators.md)、[Skills](docs/skills.md)、[Web 搜索](docs/web-search.md)、[网页读取](docs/web-fetch.md)。
 - 参与开发：[项目架构](Project_Architecture.md)、[开发与验证](docs/development.md)、[工具开发](docs/tools.md)、[模型接口](docs/llm.md)、[模型目录](docs/model-catalog.md)、[构建与分发](docs/distribution.md)。
 

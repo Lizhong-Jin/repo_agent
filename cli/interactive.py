@@ -143,7 +143,10 @@ def run_interactive(
                 print("/diff 查看副本变更；/apply 显式回写。退出后副本会保留。")
             print(HELP)
             continue
-        if task.split()[0] in {"/rename", "/sessions", "/logs", "/ledger"} and conversation:
+        if (
+            task.split()[0] in {"/rename", "/sessions", "/logs", "/ledger", "/report"}
+            and conversation
+        ):
             try:
                 print(ui_command(conversation, task))
             except (OSError, ValueError) as error:

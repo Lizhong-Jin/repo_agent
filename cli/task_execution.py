@@ -38,6 +38,8 @@ class TaskRunner:
 
     def run(self, task, *, history=()):
         with cancellation_scope(self.cancellation, handle_sigint=True):
+            if self.sandbox is not None:
+                self.sandbox.last_verification = None
             outcome = self._run(task, history=history)
             if not isinstance(outcome, TaskOutcome):
                 outcome = TaskOutcome(*outcome)

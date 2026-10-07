@@ -176,7 +176,8 @@ def test_partial_commit_is_structured_and_remaining_files_preserved(tmp_path, mo
         "FILE_CHANGED" if failure == "concurrent_edit" else "MULTI_FILE_COMMIT_FAILED"
     )
     assert result.effects.status == "reported"
-    assert result.effects.details == result.data
+    assert {k: v for k, v in result.effects.details.items() if k != "file_changes"} == result.data
+    assert [c["path"] for c in result.effects.details["file_changes"]] == ["a.txt"]
     assert result.data["committed"] == ["a.txt"]
     assert result.data["not_committed"] == ["b.txt"]
     assert result.data["changes"][0]["new_sha256"] == digest(a.read_bytes())
@@ -419,7 +420,10 @@ def test_worker_preserves_structured_partial_commit(tmp_path, monkeypatch, capsy
     )
     payload = json.loads(capsys.readouterr().out)
     assert payload["effects"]["status"] == "reported"
-    assert payload["effects"]["details"] == payload["data"]
+    assert {
+        k: v for k, v in payload["effects"]["details"].items() if k != "file_changes"
+    } == payload["data"]
+    assert len(payload["effects"]["details"]["file_changes"]) == 1
     assert payload["error_code"] == "MULTI_FILE_COMMIT_FAILED"
     assert payload["data"]["committed"] == ["a.txt"]
     assert payload["data"]["not_committed"] == ["b.txt"]

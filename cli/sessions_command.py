@@ -129,6 +129,26 @@ def ui_command(conversation, task):
     """Shared, bounded command output. Does not add log views to the chat journal."""
     parts = task.split(maxsplit=1)
     command, argument = parts[0], parts[1] if len(parts) > 1 else ""
+    if command == "/report":
+        from agent.task_reports import load_report, render_report
+
+        parser = CommandParser(add_help=False, allow_abbrev=False)
+        parser.add_argument("task", nargs="?", default="latest")
+        parser.add_argument("--diff", action="store_true")
+        parser.add_argument("--accept", nargs=2, metavar=("CHECK_ID", "STATE"))
+        parser.add_argument("--note")
+        args = parser.parse_args(shlex.split(argument))
+        if args.accept:
+            from agent.report_reviews import record_review
+
+            record_review(conversation.store, args.task, *args.accept, args.note)
+        elif args.note is not None:
+            raise ValueError("--note 需与 --accept 一起使用")
+        report = load_report(conversation.store, conversation.ledger, args.task)
+        text = display_text(render_report(report, detail=True, diff=args.diff))
+        return text[:100000] + (
+            "\n[显示已截断；使用 sessions report --json 导出完整报告]" if len(text) > 100000 else ""
+        )
     if command == "/ledger":
         if argument.strip():
             raise ValueError("用法：/ledger；完整记录可用 sessions ledger <序号> --json")
@@ -180,6 +200,13 @@ def main(argv=None):
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("list", help="列出会话")
+    report = commands.add_parser("report", help="查看任务交付报告")
+    report.add_argument("session", nargs="?", default="latest")
+    report.add_argument("--task", default="latest", help="任务编号，默认最近一次")
+    report.add_argument("--diff", action="store_true")
+    report.add_argument("--json", action="store_true")
+    report.add_argument("--accept", nargs=2, metavar=("CHECK_ID", "STATE"))
+    report.add_argument("--note")
     ledger = commands.add_parser("ledger", help="查看持久化工具执行证据")
     ledger.add_argument("session", nargs="?", default="latest")
     ledger.add_argument("--limit", type=int, default=100)
@@ -202,6 +229,26 @@ def main(argv=None):
             row = catalog.resolve(args.session)
             name = catalog.rename(row["session_id"], args.name)
             print(f"会话名称已更新：{name} · #{row['sequence']}")
+        elif args.command == "report":
+            import json
+
+            from agent.execution_ledger import ExecutionLedger
+            from agent.task_reports import load_report, render_report
+
+            store = SessionStore(Path(root_args.root))
+            store.id = catalog.resolve(args.session)["session_id"]
+            if args.accept:
+                from agent.report_reviews import record_review
+
+                record_review(store, args.task, *args.accept, args.note)
+            elif args.note is not None:
+                raise ValueError("--note 需与 --accept 一起使用")
+            report = load_report(store, ExecutionLedger(store), args.task)
+            print(
+                json.dumps(report, ensure_ascii=False, indent=2)
+                if args.json
+                else display_text(render_report(report, detail=True, diff=args.diff))
+            )
         elif args.command == "ledger":
             import json
 

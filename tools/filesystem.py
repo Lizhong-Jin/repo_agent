@@ -32,6 +32,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Literal
 
 from host_support.cancellation import checkpoint
+from host_support.change_evidence import content_record, file_change
 from host_support.read_budget import (
     ReadBudgetExceeded,
     ReadLimits,
@@ -111,6 +112,20 @@ class FileTool(WorkspaceTool):
                 )
 
         cls.execute = execute
+
+    def _report_before(self, target):
+        try:
+            info = snapshot_stat(target)
+            if not S_ISREG(info.st_mode) or info.st_nlink != 1:
+                return {"exists": True, "unknown": "not an independent regular file"}
+            loaded = read_snapshot(target, target, info, 64 * 1024, verify_identity=True)
+            if isinstance(loaded, FileSnapshot):
+                return content_record(loaded.raw)
+        except FileNotFoundError:
+            return {"exists": False}
+        except (OSError, ValueError, RuntimeError):
+            pass
+        return {"exists": True, "unknown": "before image unavailable"}
 
     @staticmethod
     def _mkdir(path, **options):
@@ -489,6 +504,7 @@ class WriteFileTool(FileTool):
                     return tool_error(ToolErrorCode.FILE_EXISTS)
                 old_mode = info.st_mode
 
+            report_before = self._report_before(target)
             with StagedWrites(temp_factory=NamedTemporaryFile, logger=logger) as staged:
                 staged.replace(target, encoded, old_mode if existed else None)
 
@@ -508,7 +524,15 @@ class WriteFileTool(FileTool):
                 "overwritten": existed,
                 "sha256": hashlib.sha256(encoded).hexdigest(),
             },
-        ).with_effects()
+        ).with_file_changes(
+            [
+                file_change(
+                    target.relative_to(self.workspace_root).as_posix(),
+                    report_before,
+                    content_record(encoded),
+                )
+            ]
+        )
 
     @staticmethod
     def _count_lines(text: str) -> int:
@@ -844,7 +868,15 @@ class EditFileTool(FileTool):
                 "old_sha256": old_hash,
                 "new_sha256": new_hash,
             },
-        ).with_effects()
+        ).with_file_changes(
+            [
+                file_change(
+                    target.relative_to(self.workspace_root).as_posix(),
+                    content_record(raw),
+                    content_record(encoded),
+                )
+            ]
+        )
 
     @staticmethod
     def _get_original_text_offset(
@@ -1165,7 +1197,14 @@ class ApplyPatchTool(FileTool):
                 "lines_removed": sum(item.lines_removed for item in prepared_files),
                 "changes": changes,
             },
-        ).with_effects()
+        ).with_file_changes([self._report_change(p) for p in prepared_files])
+
+    def _report_change(self, prepared):
+        return file_change(
+            prepared.loaded.target.relative_to(self.workspace_root).as_posix(),
+            content_record(prepared.loaded.raw),
+            content_record(prepared.encoded),
+        )
 
     def _change_summary(self, prepared: _PreparedFile) -> dict[str, Any]:
         loaded = prepared.loaded
@@ -1208,7 +1247,7 @@ class ApplyPatchTool(FileTool):
             },
             error_code=str(code),
             error=message,
-        ).with_effects()
+        ).with_file_changes([self._report_change(p) for p in committed])
 
     def _check_unchanged(self, loaded: _LoadedFile) -> ToolResult | None:
         current = self._read_snapshot(loaded.requested_path)
@@ -2492,6 +2531,7 @@ class DeleteFileTool(FileTool):
                 return tool_error(ToolErrorCode.NOT_A_FILE)
             relative_path = target.relative_to(self.workspace_root).as_posix()
             bytes_deleted = info.st_size
+            report_before = self._report_before(target)
             access = current_file_access()
             access.unlink(target) if access else target.unlink()
         except FileNotFoundError:
@@ -2512,7 +2552,7 @@ class DeleteFileTool(FileTool):
                 "deleted": True,
                 "bytes_deleted": bytes_deleted,
             },
-        ).with_effects()
+        ).with_file_changes([file_change(relative_path, report_before, {"exists": False})])
 
 
 # MoveFileTool
@@ -2641,6 +2681,8 @@ class MoveFileTool(FileTool):
             source_relative = source_target.relative_to(self.workspace_root).as_posix()
             destination_relative = destination_target.relative_to(self.workspace_root).as_posix()
             bytes_moved = source_info.st_size
+            report_source = self._report_before(source_target)
+            report_destination = self._report_before(destination_target)
             access = current_file_access()
             if access:
                 access.rename(source_target, destination_target)
@@ -2679,7 +2721,16 @@ class MoveFileTool(FileTool):
                 "moved": True,
                 "bytes_moved": bytes_moved,
             },
-        ).with_effects()
+        ).with_file_changes(
+            [
+                file_change(source_relative, report_source, {"exists": False}),
+                file_change(
+                    destination_relative,
+                    report_destination,
+                    {"exists": True, "unknown": "rename has no byte-write receipt"},
+                ),
+            ]
+        )
 
 
 # GetPathInfoTool

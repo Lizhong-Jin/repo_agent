@@ -212,7 +212,7 @@ class ExecutionLedger:
                 "SELECT COALESCE(MAX(seq),0) FROM events WHERE session=?", (self.store.id,)
             ).fetchone()[0]
 
-    def evidence(self, *, after=0, limit=100, before=None):
+    def evidence(self, *, after=0, limit=100, before=None, run=None):
         if not self.path.exists() and not self.required:
             return []
         with self.connect() as db:
@@ -221,10 +221,18 @@ class ExecutionLedger:
                 SELECT c.*, r.identity, MAX(e.seq) AS seq FROM calls c
                 JOIN runs r ON r.id=c.run
                 JOIN events e ON e.run=c.run AND e.call_id=c.call_id
-                WHERE r.session=? GROUP BY c.run,c.call_id HAVING MAX(e.seq)>? AND MAX(e.seq)<?
+                WHERE r.session=? AND (? IS NULL OR r.id=?)
+                GROUP BY c.run,c.call_id HAVING MAX(e.seq)>? AND MAX(e.seq)<?
                 ORDER BY seq DESC LIMIT ?
             """,
-                (self.store.id, after, before if before is not None else 2**63 - 1, limit),
+                (
+                    self.store.id,
+                    run,
+                    run,
+                    after,
+                    before if before is not None else 2**63 - 1,
+                    limit,
+                ),
             ).fetchall()
             return [
                 {

@@ -111,6 +111,10 @@ class ToolResult:
         """Explicitly opt result data (or selected details) into the receipt."""
         return replace(self, effects=ToolEffects(status, self.data if details is None else details))
 
+    def with_file_changes(self, changes):
+        """Keep existing effects fields while adding internal operation evidence."""
+        return self.with_effects(details={**self.data, "file_changes": changes})
+
     def to_message(self, call: ToolCall) -> Message:
         output = {"success": self.success, "data": self.data}
         if not self.success:
