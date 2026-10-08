@@ -12,7 +12,7 @@ import stat
 import tempfile
 from pathlib import Path
 
-from host_support.git_worktree import Git
+from host_support.git_worktree import Git, check_git_directory
 from host_support.storage import atomic_write, sync_directory
 from tools._internal.file_policy import (
     PROTECTED_NAMES,
@@ -216,6 +216,7 @@ class Workspace:
         save_json(self.path, self.data)
 
     def create(self):
+        check_git_directory(self.root)
         git = Git(self.project)
         common = git.check_repository()
         git.require_clean()
@@ -234,6 +235,7 @@ class Workspace:
         self._create()
 
     def _create(self):
+        check_git_directory(self.root)
         if self.root.exists():
             self.validate()
             destination = Git(self.root)

@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -11,9 +12,24 @@ from .git_filters import ExternalGitFilter, check_external_filters
 from .paths import find_windows_executable
 
 
+def check_git_directory(root):
+    """Reject Windows working directories that CreateProcessW cannot start in.
+
+    core.longpaths covers file access, not the process's current directory.
+    Windows needs room for a trailing backslash and NUL in its 260-unit buffer.
+    Count UTF-16 units, including surrogate pairs, rather than Python characters.
+    """
+    if sys.platform == "win32" and len(str(root).encode("utf-16-le")) // 2 > 258:
+        raise ValueError(
+            "Windows 无法从过长的目录启动 Git（根目录最多 258 个 UTF-16 单位）；"
+            "请缩短项目路径，或通过 XDG_STATE_HOME 使用更短的会话状态目录"
+        )
+
+
 class Git:
     def __init__(self, root):
         self.root = Path(root).resolve(strict=True)
+        check_git_directory(self.root)
         executable = (
             find_windows_executable("git", exclude=(self.root,))
             if os.name == "nt"

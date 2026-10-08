@@ -726,19 +726,34 @@ def test_merge_checks_new_paths_against_destination_attributes(
         store.close()
 
 
-def test_long_workspace_paths_support_checkout_queries_and_merge(repository, tmp_path):
+@pytest.mark.parametrize("root_length", [240, 250])
+def test_long_workspace_paths_support_checkout_queries_and_merge(
+    repository, tmp_path_factory, root_length
+):
     from tools.git_tools import GitDiffTool, GitLogTool, GitShowTool, GitStatusTool
 
     git = Git(repository)
+    filename = "source_file_with_a_long_name.py"
+    (repository / filename).write_text("before\n")
+    git.run("add", "--", filename)
+    git.run("commit", "-m", "long path fixture")
     git.run("config", "--local", "core.longpaths", "false")
     config = (repository / ".git/config").read_bytes()
-    state = tmp_path / ("state-" + "x" * 60) / ("nested-" + "y" * 60) / "sessions"
+    parent = tmp_path_factory.mktemp("long")
+    # File paths may exceed MAX_PATH, but CreateProcessW still needs a cwd
+    # of at most 258 UTF-16 units. Keep that independent OS limit explicit.
+    prototype = parent / "workspaces" / ("0" * 64) / ("0" * 32)
+    padding = root_length - len(str(prototype).encode("utf-16-le")) // 2 - 1
+    assert padding > 0, "pytest temporary root is too long for the Windows boundary fixture"
+    state = parent / ("s" * padding) / "sessions"
     store = SessionStore(repository, directory=state).open()
     try:
         workspace = prepare_workspace(store, "worktree")
-        assert len(str(workspace.root)) > 260
-        assert (workspace.root / "a.py").read_text() == "before\n"
-        (workspace.root / "a.py").write_text("after\n")
+        assert len(str(workspace.root).encode("utf-16-le")) // 2 == root_length
+        target = workspace.root / filename
+        assert len(str(target).encode("utf-16-le")) // 2 > 260
+        assert target.read_text() == "before\n"
+        target.write_text("after\n")
         for tool_type in (GitDiffTool, GitStatusTool, GitLogTool, GitShowTool):
             tool = tool_type(workspace.root)
             # Verify the effective subprocess setting on every host; the same
@@ -749,10 +764,96 @@ def test_long_workspace_paths_support_checkout_queries_and_merge(repository, tmp
             assert result.exit_code == 0 and result.stdout.strip() == "true"
             result = tool.execute({})
             assert result.success, result
+            if tool_type in (GitDiffTool, GitStatusTool):
+                assert filename in str(result.data)
         review = workspace.review()
         assert "+after" in review["diff"]
         workspace.merge(review["token"])
-        assert (repository / "a.py").read_text() == "after\n"
+        assert (repository / filename).read_text() == "after\n"
         assert (repository / ".git/config").read_bytes() == config
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("operation", ["create", "recover_creation"])
+def test_windows_overlong_workspace_rejected_before_git_changes(
+    repository, tmp_path, monkeypatch, operation
+):
+    from host_support import git_worktree
+
+    state = tmp_path / ("state-" + "x" * 60) / ("nested-" + "y" * 60) / "sessions"
+    store = SessionStore(repository, directory=state).open()
+    try:
+        workspace = Workspace(store)
+        assert len(str(workspace.root).encode("utf-16-le")) // 2 > 258
+        git = Git(repository)
+        if operation == "recover_creation":
+            # Reproduce the previous release's interrupted no-checkout worktree.
+            workspace.data = {
+                **workspace.identity(),
+                "state": "creating",
+                "base": git.head(),
+                "target": git.branch(),
+                "common": str(git.check_repository()),
+            }
+            workspace.save()
+            workspace.root.parent.mkdir(parents=True, exist_ok=True)
+            git.run(
+                "worktree",
+                "add",
+                "--no-checkout",
+                "-b",
+                workspace.branch.removeprefix("refs/heads/"),
+                workspace.root,
+                git.head(),
+            )
+            (workspace.root / "keep.txt").write_text("user data")
+            saved = workspace.path.read_bytes()
+            pointer = (workspace.root / ".git").read_bytes()
+        before = git.run("show-ref"), git.run("worktree", "list", "--porcelain")
+        monkeypatch.setattr(git_worktree, "sys", SimpleNamespace(platform="win32"))
+        with pytest.raises(ValueError, match="XDG_STATE_HOME"):
+            if operation == "create":
+                prepare_workspace(store, "worktree")
+            else:
+                Workspace(store).recover()
+        if operation == "create":
+            assert not workspace.root.exists()
+            assert not workspace.path.exists()
+        else:
+            assert workspace.path.read_bytes() == saved
+            assert (workspace.root / ".git").read_bytes() == pointer
+            assert (workspace.root / "keep.txt").read_text() == "user data"
+        assert before == (git.run("show-ref"), git.run("worktree", "list", "--porcelain"))
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_git_directory_limit_counts_utf16_units(monkeypatch, platform):
+    from host_support import git_worktree
+
+    monkeypatch.setattr(git_worktree, "sys", SimpleNamespace(platform=platform))
+    boundary = "C:\\" + "x" * 253 + "😀"
+    git_worktree.check_git_directory(boundary)
+    if platform == "win32":
+        with pytest.raises(ValueError, match="258"):
+            git_worktree.check_git_directory(boundary + "x")
+    else:
+        git_worktree.check_git_directory(boundary + "x" * 100)
+
+
+def test_windows_overlong_git_root_rejected_before_executable_lookup(tmp_path, monkeypatch):
+    from host_support import git_worktree
+
+    root = tmp_path / ("x" * 100) / ("y" * 100)
+    root.mkdir(parents=True)
+    monkeypatch.setattr(git_worktree, "sys", SimpleNamespace(platform="win32"))
+
+    def unexpected_lookup(*args, **kwargs):
+        pytest.fail("overlong cwd must be rejected before preparing a Git process")
+
+    monkeypatch.setattr(git_worktree, "find_windows_executable", unexpected_lookup)
+    monkeypatch.setattr(git_worktree.shutil, "which", unexpected_lookup)
+    with pytest.raises(ValueError, match="258"):
+        Git(root)
