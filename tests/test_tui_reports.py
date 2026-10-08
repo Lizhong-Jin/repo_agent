@@ -169,7 +169,10 @@ def test_incomplete_report_can_be_opened_while_busy_but_not_accepted(open_conver
     asyncio.run(run())
 
 
-def test_review_form_saves_without_overwriting_failed_command(open_conversation):
+@pytest.mark.parametrize("defer_render", [False, True])
+def test_review_form_saves_without_overwriting_failed_command(
+    open_conversation, monkeypatch, defer_render
+):
     c = open_conversation()
     saved_report(c)
 
@@ -178,11 +181,20 @@ def test_review_form_saves_without_overwriting_failed_command(open_conversation)
             ui.open_report(section=3)
             page = ui.report_page
             await until(lambda: page.report is not None)
+            await until(lambda: "检查失败" in rendered(ui))
+            # Keyboard input can arrive before the newly opened form is rendered.
+            # Tab must work even when the renderer still shows the report browser.
+            if defer_render:
+                monkeypatch.setattr(ui.app.renderer, "render", lambda *args, **kwargs: None)
             page.begin_review("accepted")
             page.save_review()
             assert "请填写" in page.message
             pipe.send_text("人工复查通过")
             await until(lambda: page.note.text == "人工复查通过")
+            pipe.send_text("\x1b[Z")  # Shift+Tab wraps to cancel, even before rendering.
+            await until(lambda: ui.app.layout.has_focus(page.cancel_button))
+            pipe.send_text("\t")
+            await until(lambda: ui.app.layout.has_focus(page.note))
             pipe.send_text("\t\r")  # Tab to save; Enter must activate the button, not submit chat.
             await until(
                 lambda: (

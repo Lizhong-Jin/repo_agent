@@ -2,6 +2,7 @@
 
 import json
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,6 +25,8 @@ from cli.task_execution import TaskOutcome
 from host_support.change_evidence import DIFF_LIMIT, content_record, difference
 from llm import Message, ToolCall
 from tools import ToolResult
+from tools._internal._file_io import StagedWrites
+from tools._internal.file_access import FileAccess
 from tools.filesystem import (
     ApplyPatchTool,
     DeleteFileTool,
@@ -168,27 +171,41 @@ def test_interrupted_report_uses_ledger_without_rescanning(open_conversation, mo
     assert "final" not in report and "changes" not in report
 
 
-def test_partial_patch_failure_lists_only_committed_operations(open_conversation, monkeypatch):
+@pytest.mark.parametrize("descriptor_access", [False, True])
+def test_partial_patch_failure_lists_only_committed_operations(
+    open_conversation, monkeypatch, descriptor_access
+):
     c = open_conversation()
     root = c.store.project
     for name in ("a", "b"):
         (root / name).write_text("old\n")
     capture = begin(c)
-    replace = Path.replace
+    stage = StagedWrites.stage
 
-    def fail(source, target):
-        if target.name == "b":
-            raise PermissionError("injected")
-        return replace(source, target)
+    def fail(target):
+        raise PermissionError("injected")
 
-    monkeypatch.setattr(Path, "replace", fail)
+    def stage_with_failed_commit(self, target, content, mode=None):
+        staged = stage(self, target, content, mode)
+        # Inject at the shared commit boundary: Windows/descriptor access does
+        # not use Path.replace. Keep real staging and cleanup for both files.
+        return SimpleNamespace(replace=fail) if target.name == "b" else staged
+
+    monkeypatch.setattr(StagedWrites, "stage", stage_with_failed_commit)
     patch = (
         "*** Begin Patch\n*** Update File: a\n@@\n-old\n+new\n"
         "*** Update File: b\n@@\n-old\n+new\n*** End Patch"
     )
     call = ToolCall("patch", "apply_patch", {"patch": patch})
-    result = record(c, capture, call, lambda: ApplyPatchTool(root).execute(call.arguments))
+    with FileAccess(root).activate() if descriptor_access else nullcontext():
+        result = record(c, capture, call, lambda: ApplyPatchTool(root).execute(call.arguments))
     assert not result.success
+    assert result.error_code == "MULTI_FILE_COMMIT_FAILED"
+    assert result.data["committed"] == ["a"]
+    assert result.data["not_committed"] == ["b"]
+    assert (root / "a").read_text() == "new\n"
+    assert (root / "b").read_text() == "old\n"
+    assert {p.name for p in root.iterdir()} == {"a", "b"}
     report = finish(capture, "failed")
     assert [op["path"] for op in report["operations"]] == ["a"]
     assert report["failures"][0]["tool"] == "apply_patch"

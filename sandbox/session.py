@@ -310,9 +310,13 @@ class SandboxSession:
                 },
             )
             self.last_verification = {
-                "command": self.verify_command, "success": result.success,
-                "data": result.data, "error_code": result.error_code, "error": result.error,
-                "source": "host_final_verification", "freshness": "unknown",
+                "command": self.verify_command,
+                "success": result.success,
+                "data": result.data,
+                "error_code": result.error_code,
+                "error": result.error,
+                "source": "host_final_verification",
+                "freshness": "unknown",
             }
             atomic_json(
                 self.directory / "verification.json",

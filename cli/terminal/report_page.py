@@ -80,6 +80,8 @@ class ReportPage:
         self.jobs = set()
         self.detail = TextArea(read_only=True, scrollbar=True, wrap_lines=True, lexer=ReportLexer())
         self.note = TextArea(height=3, multiline=True, prompt="验收备注> ")
+        self.save_button = Button("保存意见", self.save_review)
+        self.cancel_button = Button("取消", self.cancel_review)
         self.menu = Window(
             FormattedTextControl(
                 self.fragments,
@@ -143,12 +145,7 @@ class ReportPage:
                     HSplit(
                         [
                             self.note,
-                            VSplit(
-                                [
-                                    Button("保存意见", self.save_review),
-                                    Button("取消", self.cancel_review),
-                                ]
-                            ),
+                            VSplit([self.save_button, self.cancel_button]),
                         ]
                     ),
                     filter=Condition(lambda: self.reviewing is not None),
@@ -431,6 +428,15 @@ class ReportPage:
         labels = {"accepted": "通过", "rejected": "未通过", "pending": "待验收"}
         self.message = f"人工验收：{labels[state]}。请填写备注，然后选择“保存意见”。"
         self.ui.app.layout.focus(self.note)
+        self.ui.app.invalidate()
+
+    def focus_review(self, direction):
+        # Generic focus traversal uses the last rendered visible windows. The
+        # form may have just opened, so navigate its controls without that cache.
+        controls = (self.note, self.save_button, self.cancel_button)
+        layout = self.ui.app.layout
+        index = next((i for i, control in enumerate(controls) if layout.has_focus(control)), 0)
+        layout.focus(controls[(index + direction) % len(controls)])
 
     def cancel_review(self):
         if self.saving:
@@ -440,6 +446,7 @@ class ReportPage:
         self.note.text = ""
         self.message = "验收意见未提交"
         self.ui.app.layout.focus(self.menu)
+        self.ui.app.invalidate()
 
     def save_review(self):
         if not self.reviewing or self.saving:
@@ -496,9 +503,12 @@ class ReportPage:
 
 def report_bindings(ui, keys):
     active = Condition(lambda: ui.report_page is not None)
-    keys.add("tab", filter=active)(focus_next)
-    keys.add("s-tab", filter=active)(focus_previous)
     keys.add("escape", filter=active)(lambda _: ui.report_page.close())
     browsing = active & Condition(lambda: not ui.report_page.reviewing)
+    reviewing = active & Condition(lambda: ui.report_page.reviewing is not None)
+    keys.add("tab", filter=browsing)(focus_next)
+    keys.add("s-tab", filter=browsing)(focus_previous)
+    keys.add("tab", filter=reviewing)(lambda _: ui.report_page.focus_review(1))
+    keys.add("s-tab", filter=reviewing)(lambda _: ui.report_page.focus_review(-1))
     keys.add("pageup", filter=browsing)(lambda _: ui.report_page.page_detail(-1))
     keys.add("pagedown", filter=browsing)(lambda _: ui.report_page.page_detail(1))
