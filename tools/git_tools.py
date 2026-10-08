@@ -102,9 +102,11 @@ class GitDiffTool(_GitFilterPolicy):
         self.git_env = self._git_environment()
         self.git_env.update(
             {
-                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_COUNT": "2",
                 "GIT_CONFIG_KEY_0": "safe.directory",
                 "GIT_CONFIG_VALUE_0": str(self.workspace_root),
+                "GIT_CONFIG_KEY_1": "core.longpaths",
+                "GIT_CONFIG_VALUE_1": "true",
             }
         )
         self.runner = ProcessRunner(max_output_bytes=max_output_bytes, base_env=self.git_env)
@@ -473,9 +475,11 @@ class GitStatusTool(_GitFilterPolicy):
         self.git_env = self._git_environment()
         self.git_env.update(
             {
-                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_COUNT": "2",
                 "GIT_CONFIG_KEY_0": "safe.directory",
                 "GIT_CONFIG_VALUE_0": str(self.workspace_root),
+                "GIT_CONFIG_KEY_1": "core.longpaths",
+                "GIT_CONFIG_VALUE_1": "true",
             }
         )
         self.runner = ProcessRunner(max_output_bytes=max_output_bytes, base_env=self.git_env)

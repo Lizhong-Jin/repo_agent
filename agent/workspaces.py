@@ -164,7 +164,7 @@ def initialize_project(root, state_directory, *, confirm=False):
         save_json(journal, intent)
         git.run("update-ref", "refs/heads/main", commit, "0" * len(commit))
     # Populate the index without changing any project file.
-    git.run("reset", "--mixed", intent["commit"])
+    git.run("reset", "--mixed", intent["commit"], "--")
     intent["state"] = "completed"
     save_json(journal, intent)
     return intent
@@ -245,7 +245,7 @@ class Workspace:
             if not index.exists() and {p.name for p in self.root.iterdir()} == {".git"}:
                 # Resume a no-checkout worktree only while it is still empty.
                 destination.check_filters(self.data["base"])
-                destination.run("reset", "--hard", self.data["base"])
+                destination.run("reset", "--hard", self.data["base"], "--")
             destination.require_clean()
         else:
             git = Git(self.project)
@@ -274,7 +274,7 @@ class Workspace:
                 )
             destination = Git(self.root)
             destination.check_filters(self.data["base"])
-            destination.run("reset", "--hard", self.data["base"])
+            destination.run("reset", "--hard", self.data["base"], "--")
             self.validate()
         self.data["state"] = "ready"
         self.save()
@@ -394,7 +394,7 @@ class Workspace:
         self.data.update(state="merging", merge_commit=commit)
         self.save()
         git.run("update-ref", self.branch, commit, review["head"])
-        git.run("reset", "--mixed", commit)
+        git.run("reset", "--mixed", commit, "--")
         source.require_clean()
         if source.branch() != self.data["target"] or source.head() != self.data["base"]:
             raise ValueError("目标分支在合并前发生变化；工作区已保留，请 recover 后重新核实")

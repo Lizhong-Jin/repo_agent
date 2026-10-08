@@ -724,3 +724,35 @@ def test_merge_checks_new_paths_against_destination_attributes(
         assert workspace.data["state"] == "ready"
     finally:
         store.close()
+
+
+def test_long_workspace_paths_support_checkout_queries_and_merge(repository, tmp_path):
+    from tools.git_tools import GitDiffTool, GitLogTool, GitShowTool, GitStatusTool
+
+    git = Git(repository)
+    git.run("config", "--local", "core.longpaths", "false")
+    config = (repository / ".git/config").read_bytes()
+    state = tmp_path / ("state-" + "x" * 60) / ("nested-" + "y" * 60) / "sessions"
+    store = SessionStore(repository, directory=state).open()
+    try:
+        workspace = prepare_workspace(store, "worktree")
+        assert len(str(workspace.root)) > 260
+        assert (workspace.root / "a.py").read_text() == "before\n"
+        (workspace.root / "a.py").write_text("after\n")
+        for tool_type in (GitDiffTool, GitStatusTool, GitLogTool, GitShowTool):
+            tool = tool_type(workspace.root)
+            # Verify the effective subprocess setting on every host; the same
+            # lifecycle test exercises real MAX_PATH handling in Windows CI.
+            result = tool.runner.run(
+                ["git", "config", "--get", "core.longpaths"], cwd=workspace.root
+            )
+            assert result.exit_code == 0 and result.stdout.strip() == "true"
+            result = tool.execute({})
+            assert result.success, result
+        review = workspace.review()
+        assert "+after" in review["diff"]
+        workspace.merge(review["token"])
+        assert (repository / "a.py").read_text() == "after\n"
+        assert (repository / ".git/config").read_bytes() == config
+    finally:
+        store.close()

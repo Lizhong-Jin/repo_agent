@@ -50,6 +50,10 @@ class Git:
             "-c",
             "core.untrackedCache=false",
             "-c",
+            # Session-owned worktrees can exceed Windows' legacy MAX_PATH.
+            # Scope this to our subprocesses; never change user Git settings.
+            "core.longpaths=true",
+            "-c",
             "gc.auto=0",
             "-c",
             "maintenance.auto=false",

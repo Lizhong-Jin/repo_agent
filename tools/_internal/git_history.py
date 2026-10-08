@@ -103,9 +103,11 @@ class GitHistoryBase:
         self.max_output_bytes = max_output_bytes
         env = dict(base_env)
         env.update(
-            GIT_CONFIG_COUNT="1",
+            GIT_CONFIG_COUNT="2",
             GIT_CONFIG_KEY_0="safe.directory",
             GIT_CONFIG_VALUE_0=str(self.workspace_root),
+            GIT_CONFIG_KEY_1="core.longpaths",
+            GIT_CONFIG_VALUE_1="true",
             GIT_NO_LAZY_FETCH="1",
             GIT_NO_REPLACE_OBJECTS="1",
             GIT_OPTIONAL_LOCKS="0",
