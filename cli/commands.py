@@ -5,6 +5,16 @@ from sandbox import SandboxSession
 
 
 def dispatch_command(argv):
+    if argv[:1] == ["workspaces"]:
+        from .workspaces_command import main as workspaces_main
+
+        workspaces_main(argv[1:])
+        return True
+    if argv[:1] == ["--root"] and argv[2:3] == ["workspaces"]:
+        from .workspaces_command import main as workspaces_main
+
+        workspaces_main(["--root", argv[1], *argv[3:]])
+        return True
     if argv[:1] in (["version"], ["--version"]):
         import json
 

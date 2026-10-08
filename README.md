@@ -40,7 +40,7 @@ repo-agent-build-sandbox                         # Docker 模式首次使用前�
 repo-agent --sandbox docker --sandbox-writeback manual
 ```
 
-Docker 会话可使用 `/diff` 查看副本变更、`/apply` 回写原项目；local/native 的修改立即生效。旧配置的自动回写设置只作用于 Docker。原生后端权限及限制见 [macOS / Linux 原生沙箱](docs/native-sandbox.md)，安装与升级见[安装说明](docs/installation.md)。
+Docker 会话可使用 `/diff` 查看副本变更、`/apply` 回写原项目；local/native 默认直接修改原目录，也可通过 `--workspace worktree` 使用[独立 Git 工作区](docs/workspaces.md)，审查后再显式快进合并。非 Git 项目可先用 `workspaces init` 预览并初始化。旧配置的自动回写设置只作用于 Docker。原生后端权限及限制见 [macOS / Linux 原生沙箱](docs/native-sandbox.md)，安装与升级见[安装说明](docs/installation.md)。
 
 ## 当前功能
 

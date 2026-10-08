@@ -41,11 +41,14 @@ class SavedConversation:
         execution_mode=None,
         execution_backend=None,
         compaction_settings=None,
+        workspace=None,
     ):
         self.store, self.runtime, self.config, self.status = store, runtime, config, status
         self.tracer = tracer
         self.log_error = None
         self.sandbox = sandbox
+        self.workspace = workspace
+        self.execution_root = workspace.root if workspace is not None else store.project
         self.mode = execution_mode or ("docker" if sandbox is not None else "local")
         self.execution_backend = execution_backend
         self.history = ()
@@ -169,6 +172,7 @@ class SavedConversation:
             "status": self.status.session_state(),
             "task_number": self.runtime._task_number,
             "mode": self.mode,
+            "workspace_id": self.workspace.id if self.workspace is not None else None,
             "sandbox": str(self.sandbox.directory) if self.sandbox is not None else None,
             "pending_task": self.pending_task,
             "ledger_cursor": self.ledger_cursor,
@@ -314,6 +318,10 @@ class SavedConversation:
         self.checkpoint(transcript=transcript, emit=emit)
 
     def new_session(self, *, name=None, transcript=None, emit=print):
+        if self.workspace is not None:
+            raise ValueError(
+                "独立工作区与当前会话绑定；请退出后用 --new-session --workspace worktree 创建"
+            )
         if name is not None:
             name = validate_name(name)
         self.checkpoint(transcript=transcript, strict=True)

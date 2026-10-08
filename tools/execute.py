@@ -59,6 +59,7 @@ class GetExecutionEnvironmentTool:
         *,
         execution_allowed: bool = False,
         execution_context: Mapping[str, Any] | None = None,
+        workspace_kind: str = "direct",
         command_timeout_seconds: int = 120,
         python_timeout_seconds: int = 30,
         probe_timeout_seconds: int = 45,
@@ -81,6 +82,9 @@ class GetExecutionEnvironmentTool:
                 raise ValueError(f"{name} must be a positive integer")
         self.execution_allowed = execution_allowed
         self.execution_context = deepcopy(dict(execution_context or {}))
+        if workspace_kind not in {"direct", "worktree"}:
+            raise ValueError("workspace_kind must be direct or worktree")
+        self.workspace_kind = workspace_kind
         self.command_timeout_seconds = command_timeout_seconds
         self.python_timeout_seconds = python_timeout_seconds
         self.probe_timeout_seconds = probe_timeout_seconds
@@ -165,7 +169,12 @@ class GetExecutionEnvironmentTool:
             "network": "unknown" if allowed else "not_exposed_by_execution_tools",
             "writable_paths": None if allowed else [str(self.workspace_root)],
             "file_tools_access_policy": "workspace_only_excluding_protected_paths",
-            "changes_apply_to": "unknown" if allowed else "original_project",
+            "changes_apply_to": "independent_workspace"
+            if self.workspace_kind == "worktree"
+            else "unknown"
+            if allowed
+            else "original_project",
+            "workspace_kind": self.workspace_kind,
             "writeback_mode": "unknown" if allowed else "direct",
             "resources": None,
             "persistence": None,

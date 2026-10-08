@@ -129,6 +129,12 @@ def ui_command(conversation, task):
     """Shared, bounded command output. Does not add log views to the chat journal."""
     parts = task.split(maxsplit=1)
     command, argument = parts[0], parts[1] if len(parts) > 1 else ""
+    if command == "/workspace":
+        from .workspaces_command import describe
+
+        if argument.strip():
+            raise ValueError("用法：/workspace；退出后使用 workspaces 命令审查、合并或归档")
+        return display_text(describe(getattr(conversation, "workspace", None)))
     if command == "/report":
         from agent.task_reports import load_report, render_report
 

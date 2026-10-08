@@ -34,6 +34,12 @@ def create_parser():
     )
     parser.add_argument("--name", help="新会话名称；省略时使用项目内递增序号")
     parser.add_argument("--root", default=".", help="项目根目录，默认当前目录")
+    parser.add_argument(
+        "--workspace",
+        choices=["direct", "worktree"],
+        default=None,
+        help="local/native 工作区：direct 原目录；worktree 独立 Git 工作区；省略时恢复会话选择",
+    )
     parser.add_argument("--provider", default=os.getenv("LLM_PROVIDER") or "deepseek")
     parser.add_argument("--model", default=os.getenv("LLM_MODEL"))
     parser.add_argument(
@@ -97,6 +103,8 @@ def parse_arguments(argv=None):
 
 
 def validate_execution_options(parser, args):
+    if getattr(args, "workspace", None) == "worktree" and args.sandbox == "docker":
+        parser.error("第一版 --workspace worktree 仅用于 local/native；Docker 已有独立副本")
     if args.apply:
         parser.error("--apply 必须与 --sandbox-review 一起使用")
     if args.restore_backup:

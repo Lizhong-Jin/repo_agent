@@ -358,7 +358,11 @@ class ReportCapture:
         self.scan_metrics = []
         self.store = ReportStore(conversation.store)
         self.ledger = conversation.ledger
-        self.root = Path(sandbox.workspace if sandbox else conversation.store.project)
+        self.root = Path(
+            sandbox.workspace
+            if sandbox
+            else getattr(conversation, "execution_root", conversation.store.project)
+        )
         self.exclude = (conversation.store.directory,)
         self.checks = {}
         self.completed_checks = {}
@@ -376,6 +380,7 @@ class ReportCapture:
             "mode": conversation.mode,
             "writeback_mode": writeback,
             "workspace": str(self.root),
+            "workspace_id": getattr(getattr(conversation, "workspace", None), "id", None),
             "project": str(conversation.store.project),
             "baseline": self._snapshot(),
             "unverified": ["需求覆盖与人工验收未自动判定；命令成功不代表全部测试通过。"],

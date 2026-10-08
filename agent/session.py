@@ -142,6 +142,8 @@ def validate_record(data, project, sid):
         ):
             raise ValueError
         validate_queue(data.get("task_queue"))
+        if data.get("workspace_id") is not None and data["workspace_id"] != sid:
+            raise ValueError("会话与工作区 ID 不匹配")
         if type(data.get("ledger_cursor", 0)) is not int or data.get("ledger_cursor", 0) < 0:
             raise ValueError("无效的执行账本序号")
         validate_history(data["history"])
@@ -223,6 +225,16 @@ class SessionStore:
         if not isinstance(selector, str) or not selector.strip():
             raise ValueError("请指定会话序号、完整 ID、名称或 latest")
         sid = self.catalog.resolve(selector.strip())["session_id"]
+        if (
+            not (self.directory / f"{sid}.json").exists()
+            and (self.directory / "workspaces" / f"{sid}.json").exists()
+        ):
+            # Workspace preparation can succeed before model/environment startup.
+            # An explicitly selected provisional session may adopt that same tree.
+            from .workspaces import Workspace
+
+            Workspace(self, sid).require_ready()
+            return sid, None
         try:
             data = _read(self.directory / f"{sid}.json")
             validate_record(data, self.project, sid)
@@ -488,6 +500,7 @@ class SessionCatalog:
                 dict(row, session_id=sid, active=sid == active, latest=sid == latest)
                 for sid, row in index["sessions"].items()
                 if (self.directory / f"{sid}.json").exists()
+                or (self.directory / "workspaces" / f"{sid}.json").exists()
             ]
         return sorted(rows, key=lambda row: row["sequence"], reverse=True)
 

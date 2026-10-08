@@ -72,6 +72,7 @@ def create_default_tools(
     command_timeout_seconds: int = 120,
     python_timeout_seconds: int = 30,
     execution_context: Mapping[str, Any] | None = None,
+    workspace_kind: str = "direct",
     read_limits: ReadLimits | None = None,
 ) -> list[Tool]:
     """Commands are exposed only by callers providing an isolated environment.
@@ -87,6 +88,7 @@ def create_default_tools(
                 workspace_root,
                 execution_allowed=isolated_execution,
                 execution_context=execution_context,
+                workspace_kind=workspace_kind,
                 command_timeout_seconds=command_timeout_seconds,
                 python_timeout_seconds=python_timeout_seconds,
             ),

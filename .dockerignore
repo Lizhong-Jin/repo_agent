@@ -80,6 +80,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !agent/tool_scheduler.py
 !agent/transcript.py
 !agent/verification.py
+!agent/workspaces.py
 !build_manifest.py
 !build_support.py
 !cli/__init__.py
@@ -118,6 +119,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !cli/thinking_control.py
 !cli/thinking_display.py
 !cli/thinking_store.py
+!cli/workspaces_command.py
 !cli/writeback.py
 !configuration/__init__.py
 !configuration/environment.py
@@ -135,6 +137,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !host_support/execution_receipt.py
 !host_support/file_scan.py
 !host_support/filesystem.py
+!host_support/git_worktree.py
 !host_support/integration.py
 !host_support/languages.py
 !host_support/locking.py

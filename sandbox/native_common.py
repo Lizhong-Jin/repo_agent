@@ -95,7 +95,9 @@ class NativeBackendBase:
     def _preflight(self):
         raise NotImplementedError("A native platform backend is required")
 
-    def __init__(self, workspace, *, profile="auto", gpus=None, project_python=None):
+    def __init__(
+        self, workspace, *, profile="auto", gpus=None, project_python=None, isolated_workspace=False
+    ):
         initialization_started = perf_counter()
         self.startup_metrics = {}
         self._performance_runs = []
@@ -111,6 +113,12 @@ class NativeBackendBase:
         self.requested_gpus = gpus
         self._platform_setup()
         self.workspace = Path(workspace).resolve(strict=True)
+        self.isolated_workspace = isolated_workspace
+        if isolated_workspace and project_python:
+            candidate = Path(project_python).expanduser()
+            candidate = candidate if candidate.is_absolute() else self.workspace / candidate
+            if not Path(os.path.abspath(candidate)).is_relative_to(self.workspace):
+                raise ValueError("独立工作区的 --project-python 必须位于该工作区内")
         if not self.workspace.is_dir():
             raise ValueError("Native 工作区必须是目录")
         self.healthy = True
@@ -146,7 +154,12 @@ class NativeBackendBase:
                 project_python,
                 agent_python=self.python,
                 trusted_paths=self.read_paths,
+                environment={"PATH": os.devnull} if isolated_workspace else None,
             )
+            if isolated_workspace and self.project_python.source != "agent fallback":
+                parent = self.project_python.executable.parent
+                if parent.resolve() != parent.absolute():
+                    raise ValueError("独立工作区不能通过目录符号链接复用外部 Python 环境")
             self.project_python_info = self._probe_project_python()
             if hasattr(self, "preflight_metrics"):
                 self.startup_metrics["checks"] = self.preflight_metrics
@@ -191,7 +204,12 @@ class NativeBackendBase:
             "platform": self.platform_name,
             "isolation": self.isolation,
             "network": "disabled",
-            "changes_apply_to": "original_project",
+            "changes_apply_to": "independent_workspace"
+            if getattr(self, "isolated_workspace", False)
+            else "original_project",
+            "workspace_kind": "worktree"
+            if getattr(self, "isolated_workspace", False)
+            else "direct",
             "writeback_mode": "direct",
             "file_tools": "trusted_host_file_service",
             "process_tools": "os_sandbox",

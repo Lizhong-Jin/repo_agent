@@ -1,6 +1,7 @@
 """Prepare local/native/Docker tools and register cleanup at resource acquisition."""
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from sandbox import SandboxPolicy, SandboxSession
 from sandbox.environment import DEFAULT_IMAGE, check_image_profile, detect_environment
@@ -13,6 +14,7 @@ class ExecutionEnvironment:
     tools: list
     sandbox: object = None
     native: object = None
+    workspace: object = None
 
 
 def describe_retained_sandbox(session):
@@ -25,6 +27,9 @@ def describe_retained_sandbox(session):
 
 def open_execution_environment(args, workspace_root, store, capabilities, cleanup):
     session = native = None
+    independent = Path(workspace_root) != getattr(store, "project", Path(workspace_root))
+    if independent:
+        print(f"[独立 Git 工作区] {workspace_root}\n原项目：{store.project}；修改需审查后接收")
     if args.sandbox == "docker":
         environment = detect_environment(
             profile=args.sandbox_profile, image=args.sandbox_image or DEFAULT_IMAGE
@@ -63,11 +68,13 @@ def open_execution_environment(args, workspace_root, store, capabilities, cleanu
             and store.data.get("sandbox_healthy") is False
         ):
             raise ValueError("上次原生进程清理未确认；请检查遗留进程后用 --new-session 启动")
+        options = {"isolated_workspace": True} if independent else {}
         native = NativeBackend(
             workspace_root,
             profile=args.sandbox_profile,
             gpus=args.sandbox_gpus,
             project_python=args.project_python,
+            **options,
         )
         cleanup.callback(native.close)
         tools = native.tools()
@@ -76,7 +83,8 @@ def open_execution_environment(args, workspace_root, store, capabilities, cleanu
             print(f"项目 Python：{chosen['project']}（{chosen['source']}）")
         platform_label = capabilities.label
         print(
-            f"[执行环境：{platform_label} native] 工具断网；直接修改原项目，无副本回写",
+            f"[执行环境：{platform_label} native] 工具断网；"
+            + ("修改独立工作区" if independent else "直接修改原项目，无副本回写"),
             flush=True,
         )
         if capabilities.gpu:
@@ -95,6 +103,22 @@ def open_execution_environment(args, workspace_root, store, capabilities, cleanu
                 )
                 print(f"[原生环境：standard] {reason}", flush=True)
     else:
-        tools = create_default_tools(workspace_root)
-        print("[执行环境：local] 直接修改原项目；不执行命令、Python 或语言服务器", flush=True)
+        tools = create_default_tools(
+            workspace_root, workspace_kind="worktree" if independent else "direct"
+        )
+        print(
+            "[执行环境：local] "
+            + ("修改独立工作区" if independent else "直接修改原项目")
+            + "；不执行命令、Python 或语言服务器",
+            flush=True,
+        )
+    if independent and native is not None:
+        # Linked Git metadata lives outside the native mount. Keep the existing
+        # audited host read-only Git tools; do not grant sandbox access to .git.
+        readers = {
+            t.definition.name: t
+            for t in create_default_tools(workspace_root)
+            if t.definition.name in {"git_status", "git_diff", "git_log", "git_show"}
+        }
+        tools = [readers.get(t.definition.name, t) for t in tools]
     return ExecutionEnvironment(tools, session, native)

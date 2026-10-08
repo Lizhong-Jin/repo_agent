@@ -372,7 +372,7 @@ class ConversationUI:
                 self.append(f"无法读取模型配置：{error}\n")
             return
         if (
-            task.split()[0] in {"/rename", "/sessions", "/logs", "/ledger", "/report"}
+            task.split()[0] in {"/rename", "/sessions", "/logs", "/ledger", "/report", "/workspace"}
             and self.conversation
         ):
             try:

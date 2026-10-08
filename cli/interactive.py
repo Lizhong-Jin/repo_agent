@@ -144,7 +144,7 @@ def run_interactive(
             print(HELP)
             continue
         if (
-            task.split()[0] in {"/rename", "/sessions", "/logs", "/ledger", "/report"}
+            task.split()[0] in {"/rename", "/sessions", "/logs", "/ledger", "/report", "/workspace"}
             and conversation
         ):
             try:

@@ -37,6 +37,7 @@ def continuation_args(args, session):
     result.provider, result.model = config.provider, config.model
     result.api_key, result.base_url = config.api_key, config.base_url
     result.new_session, result.name = False, None
+    result.workspace = None  # Restore the target session's own workspace binding.
     thinking = session.thinking
     result.thinking = thinking.current["mode"]
     result.reasoning_effort = thinking.current["effort"]

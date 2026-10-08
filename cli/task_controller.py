@@ -27,6 +27,7 @@ class TaskController:
     ):
         self.runtime = runtime
         self.conversation = conversation
+        self.workspace = getattr(conversation, "workspace", None)
         self.sandbox = sandbox
         self.writeback = writeback
         self.write, self.write_model = write, write_model
@@ -164,6 +165,8 @@ class TaskController:
                     self.conversation.start_task(task["text"])
                 else:
                     self._save()
+                if self.workspace is not None:
+                    self.workspace.begin_run(task["id"])
             except (OSError, ValueError):
                 # No executor has been called. Keep the request available, but
                 # require an explicit save/resume before trying to start again.
@@ -282,6 +285,15 @@ class TaskController:
             self.queue.finish(self.active, state, summary)
             self.active = None
             self._save()  # History, pending marker and queue result share one snapshot.
+            if self.workspace is not None:
+                try:
+                    self.workspace.finish_run(
+                        "unknown" if self.cleanup_blocked else outcome.cleanup_status
+                    )
+                except (OSError, ValueError):
+                    self.persistence_blocked = True
+                    self.queue.pause("工作区收尾状态保存失败；请退出后核实")
+                    raise
             if report_notice:
                 self.write(report_notice)
             return state

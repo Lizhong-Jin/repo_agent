@@ -5,6 +5,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from agent.session import SessionStore
+from agent.workspaces import prepare_workspace
 from llm import LLMError
 from tools._internal.web_backend import WebBackend
 
@@ -68,10 +69,15 @@ def run_application(args, capabilities):
                     store.select(selector)
                 # Old models, callbacks and native tools are closed before switching IDs.
                 with ExitStack() as session_resources:
+                    workspace = prepare_workspace(store, getattr(args, "workspace", None))
+                    if workspace is not None and args.sandbox == "docker":
+                        raise ValueError("独立工作区会话不能切换到 Docker；请使用 --new-session")
+                    execution_root = workspace.root if workspace is not None else workspace_root
                     environment = open_execution_environment(
-                        args, workspace_root, store, capabilities, session_resources
+                        args, execution_root, store, capabilities, session_resources
                     )
-                    with open_runtime(args, workspace_root, store, environment, web) as session:
+                    environment.workspace = workspace
+                    with open_runtime(args, execution_root, store, environment, web) as session:
                         # Do not checkpoint a target that failed restoration or validation.
                         session.conversation.checkpoint(strict=True)
                         fallback_id = None
