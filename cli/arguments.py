@@ -35,6 +35,12 @@ def create_parser():
     parser.add_argument("--name", help="新会话名称；省略时使用项目内递增序号")
     parser.add_argument("--root", default=".", help="项目根目录，默认当前目录")
     parser.add_argument(
+        "--mode",
+        choices=["develop", "review"],
+        default=None,
+        help="权限模式：develop 开发；review 只读审查；省略时恢复会话权限",
+    )
+    parser.add_argument(
         "--workspace",
         choices=["direct", "worktree"],
         default=None,
@@ -103,6 +109,13 @@ def parse_arguments(argv=None):
 
 
 def validate_execution_options(parser, args):
+    if getattr(args, "mode", None) == "review":
+        if args.workspace == "worktree":
+            parser.error("审查模式不创建 worktree；请用 --root 指向已有工作区")
+        if args.sandbox_review or args.apply or args.restore_backup:
+            parser.error("审查模式不能执行沙箱回写或恢复备份")
+        if args.sandbox_writeback == "on-success":
+            parser.error("审查模式不能自动回写")
     if getattr(args, "workspace", None) == "worktree" and args.sandbox == "docker":
         parser.error("第一版 --workspace worktree 仅用于 local/native；Docker 已有独立副本")
     if args.apply:

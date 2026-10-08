@@ -27,6 +27,9 @@ def describe_retained_sandbox(session):
 
 def open_execution_environment(args, workspace_root, store, capabilities, cleanup):
     session = native = None
+    if getattr(args, "mode", None) == "review":
+        print(f"[只读审查] {workspace_root}；仅受控读取和 Git 查询，不启动命令后端")
+        return ExecutionEnvironment(create_default_tools(workspace_root, read_only=True))
     independent = Path(workspace_root) != getattr(store, "project", Path(workspace_root))
     if independent:
         print(f"[独立 Git 工作区] {workspace_root}\n原项目：{store.project}；修改需审查后接收")

@@ -134,6 +134,11 @@ def ui_command(conversation, task):
 
         if argument.strip():
             raise ValueError("用法：/workspace；退出后使用 workspaces 命令审查、合并或归档")
+        if getattr(conversation, "access_mode", "develop") == "review":
+            return display_text(
+                f"只读审查 · {conversation.execution_root}\n"
+                "仅受控读取和 Git 查询；修复请新建 --mode develop 会话。"
+            )
         return display_text(describe(getattr(conversation, "workspace", None)))
     if command == "/report":
         from agent.task_reports import load_report, render_report

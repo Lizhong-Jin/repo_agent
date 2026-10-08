@@ -12,6 +12,7 @@ from host_support.execution_receipt import ExecutionUncertainError, PersistenceE
 from llm import LLM, InvalidResponseError, LLMError, LLMRequest, LLMResponse, Message, ToolCall
 from llm.token_estimation import estimate_context_tokens
 from tools import Tool, ToolResult
+from tools.access_policy import AccessPolicy
 from tools.dispatch import ToolDispatcher
 from tools.scheduling import SERIAL
 from tools.tool_groups import LoadToolGroupTool, ToolGroup, ToolGroupRegistry
@@ -92,6 +93,7 @@ class AgentRuntime:
         tool_groups: Sequence[ToolGroup] = (),
         max_tool_workers: int = 4,
         max_tool_output_chars: int = DEFAULT_ROUND_CHARS,
+        access_policy: AccessPolicy | None = None,
     ) -> None:
         if type(max_steps) is not int or max_steps < 0:
             raise ValueError("max_steps must be a non-negative integer (0 means unlimited)")
@@ -130,10 +132,29 @@ class AgentRuntime:
         self._result_reader = None
         self.scheduler = ToolScheduler(max_tool_workers)
         self.max_tool_output_chars = validate_output_limit(max_tool_output_chars)
-        self.dispatcher = ToolDispatcher()
+        self.access_policy = access_policy or AccessPolicy()
+        if self.access_policy.read_only:
+            from .history import HistoryTool
+
+            self.access_policy = replace(
+                self.access_policy,
+                trusted_readers=(
+                    HistoryTool,
+                    LoadSkillTool,
+                    ReadToolResultTool,
+                    PlanVerificationTool,
+                ),
+            )
+            self.system_prompt += (
+                "\n当前为只读审查模式：仅使用受控读取和 Git 查询，不修改项目，"
+                "不执行命令、Python、测试或语言服务器。提供发现、证据和修改建议；"
+                "静态判断不能表述为测试通过。需要修复时提示用户新建开发会话。"
+            )
+        self.dispatcher = ToolDispatcher(access_policy=self.access_policy)
         self._tools = self.dispatcher.tools
         definitions = []
         registered_tools = [*tools, *([LoadSkillTool(skills)] if skills is not None else [])]
+        registered_tools = [t for t in registered_tools if self.access_policy.allows(t)]
         self.tool_groups = ToolGroupRegistry(
             tool_groups,
             (tool.definition.name for tool in registered_tools),

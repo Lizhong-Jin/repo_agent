@@ -44,10 +44,10 @@ from .semantic import (
 
 
 def create_file_tools(
-    workspace_root: str | Path, *, read_limits: ReadLimits | None = None
+    workspace_root: str | Path, *, read_limits: ReadLimits | None = None, read_only=False
 ) -> list[Tool]:
     """Only audited, built-in file implementations may run in the lightweight layer."""
-    return validate_tools(
+    tools = validate_tools(
         [
             ReadFileTool(workspace_root, read_limits=read_limits),
             WriteFileTool(workspace_root),
@@ -62,6 +62,13 @@ def create_file_tools(
             GetPathInfoTool(workspace_root, read_limits=read_limits),
         ]
     )
+    if read_only:
+        from .access_policy import AccessPolicy
+
+        tools = [tool for tool in tools if AccessPolicy("review").allows(tool)]
+        for tool in tools:
+            tool.read_only = True
+    return tools
 
 
 def create_default_tools(
@@ -74,6 +81,7 @@ def create_default_tools(
     execution_context: Mapping[str, Any] | None = None,
     workspace_kind: str = "direct",
     read_limits: ReadLimits | None = None,
+    read_only: bool = False,
 ) -> list[Tool]:
     """Commands are exposed only by callers providing an isolated environment.
 
@@ -82,7 +90,9 @@ def create_default_tools(
     """
     if type(isolated_execution) is not bool:
         raise ValueError("isolated_execution must be a boolean")
-    return validate_tools(
+    if read_only and isolated_execution:
+        raise ValueError("Review mode does not allow process execution")
+    tools = validate_tools(
         [
             GetExecutionEnvironmentTool(
                 workspace_root,
@@ -91,8 +101,9 @@ def create_default_tools(
                 workspace_kind=workspace_kind,
                 command_timeout_seconds=command_timeout_seconds,
                 python_timeout_seconds=python_timeout_seconds,
+                read_only=read_only,
             ),
-            *create_file_tools(workspace_root, read_limits=read_limits),
+            *create_file_tools(workspace_root, read_limits=read_limits, read_only=read_only),
             # command and code_intelligence tools
             *(
                 [
@@ -167,3 +178,10 @@ def create_default_tools(
             GitStatusTool(workspace_root, execution_allowed=isolated_execution),
         ]
     )
+    if read_only:
+        from ._internal.review_git import ReviewGitRunner
+
+        for tool in tools:
+            if type(tool) in {GitDiffTool, GitLogTool, GitShowTool, GitStatusTool}:
+                tool.runner = ReviewGitRunner(tool.runner, workspace_root)
+    return tools

@@ -126,6 +126,7 @@ def validate_record(data, project, sid):
             or not isinstance(data["status"], dict)
             or not isinstance(data["transcript"], list)
             or data["mode"] not in {"local", "native", "docker"}
+            or data.get("access_mode", "develop") not in {"develop", "review"}
             or type(data.get("sandbox_healthy")) is not bool
             or (
                 data["mode"] == "docker"

@@ -60,6 +60,7 @@ class GetExecutionEnvironmentTool:
         execution_allowed: bool = False,
         execution_context: Mapping[str, Any] | None = None,
         workspace_kind: str = "direct",
+        read_only: bool = False,
         command_timeout_seconds: int = 120,
         python_timeout_seconds: int = 30,
         probe_timeout_seconds: int = 45,
@@ -81,6 +82,9 @@ class GetExecutionEnvironmentTool:
             if type(value) is not int or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
         self.execution_allowed = execution_allowed
+        if type(read_only) is not bool or (read_only and execution_allowed):
+            raise ValueError("Read-only review cannot enable process execution")
+        self.read_only = read_only
         self.execution_context = deepcopy(dict(execution_context or {}))
         if workspace_kind not in {"direct", "worktree"}:
             raise ValueError("workspace_kind must be direct or worktree")
@@ -180,6 +184,9 @@ class GetExecutionEnvironmentTool:
             "persistence": None,
         }
         report.update(deepcopy(self.execution_context))
+        report["access_mode"] = "review" if self.read_only else "develop"
+        if self.read_only:
+            report.update(writable_paths=[], changes_apply_to="none", writeback_mode="disabled")
         report.update(
             {
                 "workspace_root": str(self.workspace_root),

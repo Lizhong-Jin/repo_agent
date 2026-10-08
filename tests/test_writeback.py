@@ -308,6 +308,7 @@ def test_single_task_cli_applies_after_run_and_signals_failure(
         "cli.runtime_setup.AgentRuntime",
         lambda *a, **kw: SimpleNamespace(
             run=run,
+            access_policy=kw["access_policy"],
             llm=a[0],
             _task_number=0,
             estimate_context_tokens=lambda history=(): 0,

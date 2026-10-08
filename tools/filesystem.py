@@ -63,6 +63,7 @@ class FileTool(WorkspaceTool):
     def __init__(self, workspace_root, *, read_limits=None, **limits):
         super().__init__(workspace_root, **limits)
         self.read_limits = read_limits if read_limits is not None else ReadLimits()
+        self.read_only = False
         if not isinstance(self.read_limits, ReadLimits):
             raise ValueError("read_limits must be ReadLimits")
 
@@ -73,6 +74,14 @@ class FileTool(WorkspaceTool):
             return
 
         def platform_execute(self, arguments):
+            if self.read_only:
+                try:
+                    with FileAccess(
+                        self.workspace_root, read_only_paths=(self.workspace_root,)
+                    ).activate():
+                        return method(self, arguments)
+                except PermissionError:
+                    return tool_error(ToolErrorCode.PERMISSION_DENIED)
             if os.name != "nt" or current_file_access() is not None:
                 return method(self, arguments)
             try:

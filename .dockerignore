@@ -100,6 +100,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !cli/model_picker.py
 !cli/models.py
 !cli/output.py
+!cli/review_mode.py
 !cli/runtime_events.py
 !cli/runtime_setup.py
 !cli/session_status.py
@@ -266,6 +267,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !tools/_internal/lsp_config.py
 !tools/_internal/process_runner.py
 !tools/_internal/process_supervisor.py
+!tools/_internal/review_git.py
 !tools/_internal/selection.py
 !tools/_internal/text_search.py
 !tools/_internal/web_backend.py
@@ -273,6 +275,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !tools/_internal/web_errors.py
 !tools/_internal/web_http.py
 !tools/_internal/web_pages.py
+!tools/access_policy.py
 !tools/dispatch.py
 !tools/execute.py
 !tools/factory.py

@@ -8,20 +8,24 @@ from host_support.cancellation import checkpoint, current_cancellation, defer_ca
 from host_support.execution_receipt import record_result
 
 from ._internal.base import ExecutionKind, ToolResult, execution_kind_of
+from .access_policy import AccessPolicy
 from .scheduling import SERIAL, WorkspaceAccess, scheduling_policy_of
 
 
 class ToolDispatcher:
-    def __init__(self, *, inside_sandbox=False):
+    def __init__(self, *, inside_sandbox=False, access_policy=None):
         if type(inside_sandbox) is not bool:
             raise ValueError("inside_sandbox must be a boolean")
         # Only the worker, after OS isolation has been established, enables this.
         self.inside_sandbox = inside_sandbox
+        self.access_policy = access_policy or AccessPolicy()
         self.tools = {}
         self._kinds = {}
         self._scheduling = {}
 
     def register(self, tool):
+        if not self.access_policy.allows(tool):
+            raise ValueError("Review mode refuses this tool implementation")
         kind = execution_kind_of(tool)
         policy = scheduling_policy_of(tool)
         name = tool.definition.name
@@ -44,6 +48,12 @@ class ToolDispatcher:
         tool = self.tools.get(name)
         if tool is None:
             return ToolResult(False, error_code="UNKNOWN_TOOL", error=f"Unknown tool: {name}")
+        if not self.access_policy.allows(tool):
+            return ToolResult(
+                False,
+                error_code="REVIEW_MODE_DENIED",
+                error="Review mode forbids this operation; start a new development session.",
+            ).with_effects("none", details={})
         kind = execution_kind_of(tool)
         if kind is not self._kinds.get(name):
             raise ValueError(f"Tool {name} execution_kind changed after registration")
@@ -61,7 +71,13 @@ class ToolDispatcher:
             record["call_id"] = call_id
         if context is not None:
             context.start_tool(record)
-        result = handlers[kind](tool, arguments)
+        if self.access_policy.read_only and kind is ExecutionKind.TRUSTED_FILE:
+            from ._internal.file_access import FileAccess
+
+            with FileAccess(tool.workspace_root, read_only_paths=(tool.workspace_root,)).activate():
+                result = handlers[kind](tool, arguments)
+        else:
+            result = handlers[kind](tool, arguments)
         completed = {"status": "completed" if result.success else "failed"}
         completed.update(result.effects.to_record())
         if context is not None:

@@ -12,8 +12,10 @@ from tools._internal.web_backend import WebBackend
 from .execution_environment import open_execution_environment
 from .interactive import run_interactive
 from .models import ModelControl
+from .review_mode import guard_state_location, resolve_mode
 from .runtime_setup import open_runtime
 from .session_switch import SessionSwitch, continuation_args
+from .startup import configuration_hint, prepare_model
 from .task_controller import TaskController
 
 
@@ -48,19 +50,19 @@ def run_single_task(args, session, sandbox):
     return state == "completed"
 
 
-def run_application(args, capabilities):
+def run_application(args, capabilities, *, prepare_configuration=False):
     """Keep the project lock while replacing a session's complete runtime and environment."""
     workspace_root = Path(args.root).resolve(strict=True)
     with ExitStack() as resources:
-        web = WebBackend.from_environment()
-        if web is not None:
-            resources.callback(web.close)
+        web = None
         store = SessionStore(
             workspace_root,
             new=args.new_session,
             name=args.name,
             session=getattr(args, "session", None),
-        ).open()
+        )
+        guard_state_location(store, getattr(args, "mode", None))
+        store.open()
         resources.callback(store.close)
         selector = fallback_id = None
         while True:
@@ -69,6 +71,27 @@ def run_application(args, capabilities):
                     store.select(selector)
                 # Old models, callbacks and native tools are closed before switching IDs.
                 with ExitStack() as session_resources:
+                    args.mode = resolve_mode(store, getattr(args, "mode", None))
+                    if args.mode != "review" and web is None:
+                        web = WebBackend.from_environment()
+                        if web is not None:
+                            resources.callback(web.close)
+                    if args.mode == "review":
+                        from host_support.paths import user_config_path
+
+                        if user_config_path().resolve().is_relative_to(workspace_root):
+                            raise ValueError("审查会话的用户配置目录必须位于项目外")
+                    if prepare_configuration:
+                        from .arguments import create_parser
+
+                        prepare_model(create_parser(), args, configuration_hint(args))
+                        prepare_configuration = False
+                    if args.mode == "review" and (
+                        getattr(args, "workspace", None) == "worktree"
+                        or (store.data or {}).get("workspace_id")
+                        or (store.directory / "workspaces" / (store.id + ".json")).exists()
+                    ):
+                        raise ValueError("审查已有 worktree 请以其目录作为 --root，新建审查会话")
                     workspace = prepare_workspace(store, getattr(args, "workspace", None))
                     if workspace is not None and args.sandbox == "docker":
                         raise ValueError("独立工作区会话不能切换到 Docker；请使用 --new-session")
@@ -120,4 +143,5 @@ def run_application(args, capabilities):
                 if fallback_id is None:
                     raise
                 print(f"会话切换失败：{error}；正在恢复原会话。")
+                args.mode = None
                 selector, fallback_id = fallback_id, None

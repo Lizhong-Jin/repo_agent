@@ -12,10 +12,12 @@ from agent.history import HistoryArchive, HistoryTool
 from agent.skills import SkillRegistry
 from agent.Tracing import Tracer
 from llm import LLMClient, LLMConfig
+from tools.access_policy import AccessPolicy
 from tools.tool_groups import DEFAULT_TOOL_GROUPS
 from tools.web_tools import create_web_tools
 
 from .output import LiveOutput
+from .review_mode import review_log_directory
 from .runtime_events import SessionEvents
 from .session_status import SessionStatus
 from .settings import request_options
@@ -45,13 +47,14 @@ def report_trace_error(tracer):
 @contextmanager
 def open_runtime(args, workspace_root, store, environment, web_backend):
     session, native = environment.sandbox, environment.native
+    policy = AccessPolicy(getattr(args, "mode", None) or "develop")
     tools = list(environment.tools)
     archive = HistoryArchive(store)
     tools += [HistoryTool(archive, "search"), HistoryTool(archive, "read")]
-    tools += create_web_tools(web_backend)
-    if web_backend is not None and web_backend.adapter is not None:
+    tools += create_web_tools(web_backend) if not policy.read_only else []
+    if not policy.read_only and web_backend is not None and web_backend.adapter is not None:
         print("[Web 搜索：Brave] 主进程联网搜索；查询会发送给搜索供应商", flush=True)
-    if web_backend is not None and web_backend.pages is not None:
+    if not policy.read_only and web_backend is not None and web_backend.pages is not None:
         print("[Web 读取] 主进程读取公开网页；不需要搜索密钥", flush=True)
     skills = SkillRegistry(session.workspace if session is not None else workspace_root)
     restore_thinking_args(args)
@@ -59,6 +62,8 @@ def open_runtime(args, workspace_root, store, environment, web_backend):
     config = model_config(args)
     runtime_options = {"system_prompt": args.system_prompt} if args.system_prompt else {}
     log_dir = os.getenv("AGENT_LOG_DIR") or workspace_root / "logs"
+    if policy.read_only:
+        log_dir = review_log_directory(store, workspace_root)
     tracer = Tracer(
         log_dir,
         provider=args.provider,
@@ -90,6 +95,7 @@ def open_runtime(args, workspace_root, store, environment, web_backend):
                 request_extra=extra,
                 on_event=on_event,
                 skills=skills,
+                access_policy=policy,
                 **runtime_options,
             )
             display = ThinkingDisplay(args.thinking_display)
@@ -103,7 +109,7 @@ def open_runtime(args, workspace_root, store, environment, web_backend):
                 sandbox=session,
                 restore_window=args.context_window is None,
                 tracer=tracer,
-                execution_mode=args.sandbox,
+                execution_mode="local" if policy.read_only else args.sandbox,
                 execution_backend=native,
                 compaction_settings=CompactionSettings(
                     auto=args.auto_compact,

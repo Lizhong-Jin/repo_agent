@@ -154,6 +154,7 @@ class TaskController:
                 "max_output_tokens": getattr(self.runtime, "max_output_tokens", None),
                 "thinking": deepcopy(getattr(self.runtime, "thinking_settings", {})),
                 "mode": getattr(self.conversation, "mode", "local"),
+                "access_mode": getattr(self.conversation, "access_mode", "develop"),
                 "writeback": self.writeback,
             }
             task = self.queue.claim(settings)

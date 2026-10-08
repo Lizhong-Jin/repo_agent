@@ -378,6 +378,7 @@ class ReportCapture:
             "started_at": now(),
             "state": "incomplete",
             "mode": conversation.mode,
+            "access_mode": getattr(conversation, "access_mode", "develop"),
             "writeback_mode": writeback,
             "workspace": str(self.root),
             "workspace_id": getattr(getattr(conversation, "workspace", None), "id", None),
@@ -472,6 +473,8 @@ def render_report(report, *, detail=False, diff=False):
         f"任务交付报告 #{report['task_number']} · {states.get(report['state'], report['state'])}",
         f"环境：{report['mode']} · {report['workspace']}",
     ]
+    if report.get("access_mode") == "review":
+        lines.append("权限：只读审查；未执行项目命令或测试，静态结论不等于验证通过。")
     observed, ops, checks = (
         report.get("changes", []),
         report.get("operations", []),

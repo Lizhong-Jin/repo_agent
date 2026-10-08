@@ -44,6 +44,9 @@ class SavedConversation:
         workspace=None,
     ):
         self.store, self.runtime, self.config, self.status = store, runtime, config, status
+        self.access_mode = runtime.access_policy.mode
+        if store.data and store.data.get("access_mode", "develop") != self.access_mode:
+            raise ValueError("会话权限模式不能改变；请使用 --new-session")
         self.tracer = tracer
         self.log_error = None
         self.sandbox = sandbox
@@ -136,6 +139,8 @@ class SavedConversation:
                 self.notice += "；发现新增执行证据，/ledger 查看，未自动重放"
                 self.ledger_cursor = self.ledger.watermark()
 
+        if self.access_mode == "review":
+            self.notice += "；只读审查：不修改项目、不执行命令或测试"
         if self.queue.pending:
             self.notice += f"；恢复 {len(self.queue.pending)} 项待执行任务，队列已暂停"
         if dropped_groups:
@@ -172,6 +177,7 @@ class SavedConversation:
             "status": self.status.session_state(),
             "task_number": self.runtime._task_number,
             "mode": self.mode,
+            "access_mode": self.access_mode,
             "workspace_id": self.workspace.id if self.workspace is not None else None,
             "sandbox": str(self.sandbox.directory) if self.sandbox is not None else None,
             "pending_task": self.pending_task,
