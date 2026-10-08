@@ -20,6 +20,28 @@ from host_support.git_worktree import Git
 from tools.filesystem import WriteFileTool
 
 
+@pytest.fixture(autouse=True)
+def isolated_git_config(tmp_path, monkeypatch):
+    # Git intentionally discards inherited GIT_* variables in production. Apply
+    # isolation to the test instances, after their environment is constructed.
+    original = Git.__init__
+    home = tmp_path / "git-home"
+    home.mkdir()
+
+    def initialize(self, root):
+        original(self, root)
+        self.env.update(
+            HOME=str(home),
+            USERPROFILE=str(home),
+            XDG_CONFIG_HOME=str(home / ".config"),
+            GIT_CONFIG_NOSYSTEM="1",
+            GIT_CONFIG_GLOBAL=os.devnull,
+            GIT_ATTR_NOSYSTEM="1",
+        )
+
+    monkeypatch.setattr(Git, "__init__", initialize)
+
+
 @pytest.fixture
 def repository(tmp_path):
     root = tmp_path / "project with spaces"
@@ -222,6 +244,7 @@ def test_merge_recovers_after_git_success_before_state_save(workspace, monkeypat
 def test_host_operations_refuse_external_filters(workspace):
     git = Git(workspace.project)
     git.run("config", "filter.custom.clean", "must-not-execute")
+    (workspace.root / ".gitattributes").write_text("a.py filter=custom\n")
     with pytest.raises(ValueError, match="过滤器"):
         workspace.review()
 
@@ -552,5 +575,152 @@ def test_protected_baseline_deletion_in_commit_cannot_bypass_review(
         with pytest.raises(ValueError, match="受保护"):
             workspace.review()
         assert (repository / ".env").read_text() == "protected baseline"
+    finally:
+        store.close()
+
+
+@pytest.fixture
+def global_git_config(tmp_path, monkeypatch):
+    config = tmp_path / "global.gitconfig"
+    config.write_text("")
+    initialize = Git.__init__
+
+    def use_test_global(self, root):
+        initialize(self, root)
+        self.env["GIT_CONFIG_GLOBAL"] = str(config)
+
+    monkeypatch.setattr(Git, "__init__", use_test_global)
+    return config
+
+
+@pytest.mark.parametrize("location", ["global", "local"])
+def test_unused_lfs_configuration_allows_full_workspace_lifecycle(
+    tmp_path, global_git_config, location
+):
+    root = tmp_path / "plain"
+    root.mkdir()
+    (root / "a.txt").write_text("before\n")
+    git = Git(root)
+    if location == "local":
+        initialize_project(root, tmp_path / "init-state", confirm=True)
+    options = ["--file", str(global_git_config)] if location == "global" else ["--local"]
+    for driver in ("clean", "smudge", "process"):
+        git.run("config", *options, f"filter.lfs.{driver}", "must-not-execute")
+    git.run("config", *options, "filter.lfs.required", "true")
+    if location == "global":
+        initialize_project(root, tmp_path / "init-state", confirm=True)
+    store = SessionStore(root, directory=tmp_path / "state").open()
+    try:
+        workspace = prepare_workspace(store, "worktree")
+        (workspace.root / "a.txt").write_text("after\n")
+        review = workspace.review()
+        assert "+after" in review["diff"]
+        workspace.merge(review["token"])
+        assert (root / "a.txt").read_text() == "after\n"
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("driver", ["clean", "smudge", "process"])
+@pytest.mark.parametrize("attributes", ["worktree", "cached", "nested", "info", "global", "macro"])
+def test_selected_filter_refused_without_execution(
+    repository, tmp_path, global_git_config, driver, attributes
+):
+    from test_git_execution_policy import filter_command
+
+    git = Git(repository)
+    marker = tmp_path / "filter-executed"
+    if attributes == "nested":
+        directory = repository / "nested"
+        directory.mkdir()
+        (directory / "file with spaces.txt").write_text("content")
+        (directory / ".gitattributes").write_text("*.txt filter=probe\n")
+    elif attributes == "info":
+        (repository / ".git/info").mkdir(exist_ok=True)
+        (repository / ".git/info/attributes").write_text("a.py filter=probe\n")
+    elif attributes == "global":
+        path = tmp_path / "attributes"
+        path.write_text("a.py filter=probe\n")
+        git.run("config", "--file", str(global_git_config), "core.attributesFile", str(path))
+    else:
+        path = repository / ".gitattributes"
+        path.write_text(
+            "[attr]custom filter=probe\na.py custom\n"
+            if attributes == "macro"
+            else "a.py filter=probe\n"
+        )
+        if attributes == "cached":
+            git.run("add", ".gitattributes")
+            path.write_text("")  # The working copy cannot hide index attributes.
+    git.run(
+        "config", "--file", str(global_git_config), f"filter.probe.{driver}", filter_command(marker)
+    )
+    with pytest.raises(ValueError, match="过滤器"):
+        git.check_filters()
+    assert not marker.exists()
+
+
+def test_destination_only_filter_blocks_checkout_and_can_recover(
+    repository, tmp_path, global_git_config
+):
+    from test_git_execution_policy import filter_command
+
+    git = Git(repository)
+    (repository / ".gitattributes").write_text("a.py filter=probe\n")
+    git.run("add", ".gitattributes")
+    git.run("commit", "-m", "attributes without a configured driver")
+    config = tmp_path / "worktree.gitconfig"
+    marker = tmp_path / "filter-executed"
+    git.run("config", "--file", str(config), "filter.probe.smudge", filter_command(marker))
+    git.run(
+        "config",
+        "--file",
+        str(global_git_config),
+        "includeIf.onbranch:repo-agent/**.path",
+        str(config),
+    )
+    store = SessionStore(repository, directory=tmp_path / "state").open()
+    try:
+        with pytest.raises(ValueError, match="过滤器"):
+            prepare_workspace(store, "worktree")
+        assert not marker.exists()
+        workspace = Workspace(store)
+        assert workspace.data["state"] == "creating"
+        assert not (workspace.root / "a.py").exists()
+        global_git_config.write_text("")
+        workspace.recover()
+        assert workspace.data["state"] == "ready"
+        assert (workspace.root / "a.py").read_text() == "before\n"
+    finally:
+        store.close()
+
+
+def test_merge_checks_new_paths_against_destination_attributes(
+    repository, tmp_path, global_git_config
+):
+    from test_git_execution_policy import filter_command
+
+    git = Git(repository)
+    attributes = tmp_path / "source.attributes"
+    attributes.write_text("new.txt filter=probe\n")
+    config = tmp_path / "source.gitconfig"
+    marker = tmp_path / "filter-executed"
+    git.run("config", "--file", str(config), "core.attributesFile", str(attributes))
+    git.run("config", "--file", str(config), "filter.probe.smudge", filter_command(marker))
+    git.run("config", "--file", str(global_git_config), "includeIf.onbranch:main.path", str(config))
+    store = SessionStore(repository, directory=tmp_path / "state").open()
+    try:
+        workspace = prepare_workspace(store, "worktree")
+        (workspace.root / "new.txt").write_text("new file")
+        review = workspace.review()
+        head = git.head()
+        index = (repository / ".git/index").read_bytes()
+        with pytest.raises(ValueError, match="过滤器"):
+            workspace.merge(review["token"])
+        assert not marker.exists()
+        assert not (repository / "new.txt").exists()
+        assert git.head() == head
+        assert (repository / ".git/index").read_bytes() == index
+        assert workspace.data["state"] == "ready"
     finally:
         store.close()

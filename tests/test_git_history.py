@@ -144,6 +144,7 @@ def test_log_argument_limits(repository, arguments):
 def test_local_external_filter_and_partial_clone_refused(repository):
     repo, git = repository
     git("config", "filter.test.clean", "touch SHOULD_NOT_RUN")
+    (repo / ".gitattributes").write_text("first filter=test\n")
     for cls in (GitLogTool, GitShowTool):
         assert cls(repo).execute({}).error_code == "GIT_EXTERNAL_FILTER_REQUIRES_SANDBOX"
         assert cls(repo, execution_allowed=True).execute({}).success
@@ -227,3 +228,10 @@ def test_dispatch_and_worker_registration(repository, capsys):
         assert dispatcher.execute(tool.definition.name, {}).success
     execute_request({"name": "git_log", "arguments": {"limit": 1}}, repo)
     assert json.loads(capsys.readouterr().out)["success"]
+
+
+@pytest.mark.parametrize("tool_type", [GitLogTool, GitShowTool])
+def test_unused_external_filter_allows_history(repository, tool_type):
+    repo, git = repository
+    git("config", "filter.unused.clean", "must-not-execute")
+    assert tool_type(repo).execute({}).success

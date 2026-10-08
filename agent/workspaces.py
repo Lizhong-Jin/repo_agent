@@ -236,9 +236,17 @@ class Workspace:
     def _create(self):
         if self.root.exists():
             self.validate()
-            Git(self.root).require_clean()
-            if Git(self.root).head() != self.data["base"]:
+            destination = Git(self.root)
+            if destination.head() != self.data["base"]:
                 raise ValueError("创建中的工作区已变化；请人工核实")
+            index = Path(
+                destination.text("rev-parse", "--path-format=absolute", "--git-path", "index")
+            )
+            if not index.exists() and {p.name for p in self.root.iterdir()} == {".git"}:
+                # Resume a no-checkout worktree only while it is still empty.
+                destination.check_filters(self.data["base"])
+                destination.run("reset", "--hard", self.data["base"])
+            destination.require_clean()
         else:
             git = Git(self.project)
             git.check_repository()
@@ -247,16 +255,26 @@ class Workspace:
                 raise ValueError("工作区分支已存在且基线不匹配")
             self.root.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             if existing:
-                git.run("worktree", "add", str(self.root), self.branch.removeprefix("refs/heads/"))
+                git.run(
+                    "worktree",
+                    "add",
+                    "--no-checkout",
+                    str(self.root),
+                    self.branch.removeprefix("refs/heads/"),
+                )
             else:
                 git.run(
                     "worktree",
                     "add",
+                    "--no-checkout",
                     "-b",
                     self.branch.removeprefix("refs/heads/"),
                     str(self.root),
                     self.data["base"],
                 )
+            destination = Git(self.root)
+            destination.check_filters(self.data["base"])
+            destination.run("reset", "--hard", self.data["base"])
             self.validate()
         self.data["state"] = "ready"
         self.save()
@@ -371,6 +389,7 @@ class Workspace:
         source.require_clean()
         if source.branch() != self.data["target"] or source.head() != self.data["base"]:
             raise ValueError("目标分支已切换或前进；第一版仅支持原基线上的快进合并")
+        source.check_filters(review["tree"])
         commit = git.commit(review["tree"], parent=review["head"])
         self.data.update(state="merging", merge_commit=commit)
         self.save()
@@ -379,6 +398,7 @@ class Workspace:
         source.require_clean()
         if source.branch() != self.data["target"] or source.head() != self.data["base"]:
             raise ValueError("目标分支在合并前发生变化；工作区已保留，请 recover 后重新核实")
+        source.check_filters(commit)
         source.run("merge", "--ff-only", "--no-edit", "--no-stat", "--no-overwrite-ignore", commit)
         if source.head() != commit:
             raise ValueError("合并结果未确认，请检查后 recover")

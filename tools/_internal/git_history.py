@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from host_support.cancellation import checkpoint
+from host_support.git_filters import ExternalGitFilter, GitFilterCheckError, check_external_filters
 
 from .base import ToolEffects, ToolResult
 from .file_policy import is_credential_path
@@ -192,29 +193,24 @@ class GitHistoryBase:
                 "History queries require locally available objects; partial clones are refused.",
             )
         if not self.execution_allowed:
-            filters = self.command(
-                [
-                    "config",
-                    "--includes",
-                    "--null",
-                    "--get-regexp",
-                    r"^filter\..*\.(clean|process)$",
-                ],
-                root,
-                deadline,
-                allowed=(0, 1),
-            )
-            if filters.exit_code == 0 or filters.stdout:
-                entries = filters.stdout.split("\0")
-                if entries[-1] != "" or any("\n" not in entry for entry in entries[:-1]):
-                    raise GitHistoryError(
-                        "GIT_CONFIG_CHECK_FAILED", "Cannot verify Git filter configuration."
-                    )
-                if any(entry.partition("\n")[2] for entry in entries[:-1]):
-                    raise GitHistoryError(
-                        "GIT_EXTERNAL_FILTER_REQUIRES_SANDBOX",
-                        "Repository clean/process filters require native or Docker isolation.",
-                    )
+
+            def filter_command(args, *, allowed=(0,)):
+                result = self.command(args, root, deadline, allowed=allowed)
+                if result.exit_code == 1 and result.stdout:
+                    raise GitFilterCheckError("Invalid Git filter configuration")
+                return result.stdout
+
+            try:
+                check_external_filters(filter_command)
+            except GitFilterCheckError as error:
+                raise GitHistoryError(
+                    "GIT_CONFIG_CHECK_FAILED", "Cannot verify Git filter selection."
+                ) from error
+            except ExternalGitFilter as error:
+                raise GitHistoryError(
+                    "GIT_EXTERNAL_FILTER_REQUIRES_SANDBOX",
+                    "Repository paths use external filters; use native or Docker isolation.",
+                ) from error
         return root
 
     def resolve_commit(self, revision, root, deadline):

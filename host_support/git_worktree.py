@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from .cancellation import current_cancellation
+from .git_filters import ExternalGitFilter, check_external_filters
 from .paths import find_windows_executable
 
 
@@ -91,17 +92,25 @@ class Git:
         self.check_filters()
         return Path(self.text("rev-parse", "--path-format=absolute", "--git-common-dir"))
 
-    def check_filters(self):
-        entries = self.run(
-            "config",
-            "--includes",
-            "--null",
-            "--get-regexp",
-            r"^filter\..*\.(clean|smudge|process)$",
-            ok=(0, 1),
-        )
-        if any(item.partition(b"\n")[2] for item in entries.split(b"\0") if item):
-            raise ValueError("工作区管理暂不支持外部 Git clean/smudge/process 过滤器（含 LFS）")
+    def check_filters(self, revision=None):
+        # A private index checks incoming paths/attributes using the destination's
+        # configuration before checkout/merge, without touching the user's index.
+        with tempfile.TemporaryDirectory(prefix="repo-agent-filter-index-") as temporary:
+            env = {}
+            if revision is not None:
+                env["GIT_INDEX_FILE"] = str(Path(temporary) / "index")
+                self.run("read-tree", revision, env=env)
+
+            def command(args, *, allowed=(0,)):
+                return self.run(*args, env=env, ok=allowed).decode("utf-8", "surrogateescape")
+
+            try:
+                check_external_filters(command, checkout=True)
+            except ExternalGitFilter as error:
+                raise ValueError(
+                    "项目文件使用了外部 Git clean/smudge/process 过滤器（含 LFS），"
+                    "工作区管理暂不支持"
+                ) from error
 
     def head(self):
         return self.text("rev-parse", "--verify", "HEAD^{commit}")

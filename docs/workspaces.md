@@ -79,6 +79,8 @@ repo-agent --root /path/to/project --session 1 --sandbox native
 
 native worktree 不继承启动终端的 venv、Conda、PATH Python 或 `AGENT_PROJECT_PYTHON`，优先发现执行工作区自己的 `.venv`，否则使用 Agent Python。显式 `--project-python` 必须是工作区内的环境入口。项目依赖需要在工作区准备；不要通过复用原项目的 editable 安装来验证另一份代码。日志和模型进程本身仍按现有宿主配置运行。
 
-第一版支持已有提交的普通 Git 仓库和显式初始化后的仓库，以及 local/native 两种执行方式。暂不支持 Docker worktree、非 Git 私有副本、子模块、已跟踪符号链接、外部 Git clean/smudge/process 过滤器（包括 LFS）、稀疏/跳过工作区索引标记、目标前进后的自动整合。Git 操作关闭 hooks、自动维护和外部 diff/textconv。
+第一版支持已有提交的普通 Git 仓库和显式初始化后的仓库，以及 local/native 两种执行方式。暂不支持 Docker worktree、非 Git 私有副本、子模块、已跟踪符号链接、文件实际使用的外部 Git clean/smudge/process 过滤器（包括 LFS）、稀疏/跳过工作区索引标记、目标前进后的自动整合。Git 操作关闭 hooks、自动维护和外部 diff/textconv。
 
 项目锁只协调本应用；其他编辑器或手动 Git 操作不受它约束。重要步骤会复核文件和分支，发现不一致则停止；无法把磁盘文件、Git 操作和状态文件变成一个全局事务。
+
+仅安装 Git LFS 或配置未被项目文件使用的过滤器，不影响工作区功能。初始化、审查、创建和合并会按工作目录及暂存区的有效属性检查实际使用情况；创建与合并还会按目标工作区的配置检查待检出的内容。全局属性、嵌套 `.gitattributes`、属性宏和 `.git/info/attributes` 均参与检查。核验失败时停止，保留用户配置和原有暂存区。

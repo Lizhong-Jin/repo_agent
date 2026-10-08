@@ -137,6 +137,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !host_support/execution_receipt.py
 !host_support/file_scan.py
 !host_support/filesystem.py
+!host_support/git_filters.py
 !host_support/git_worktree.py
 !host_support/integration.py
 !host_support/languages.py

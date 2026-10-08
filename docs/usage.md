@@ -27,7 +27,7 @@ Metal 使用系统默认设备，不接受 `--sandbox-gpus`；Intel Mac / x86_64
 
 Linux / WSL2 native 默认自动检测 NVIDIA CUDA GPU：发现后启用全部 GPU，没有则使用普通环境；发现设备但驱动或 CUDA 自检失败时明确报错。`--sandbox-profile standard` 强制关闭 GPU，`--sandbox-profile cuda` 强制要求 GPU。Linux 可通过 `--sandbox-gpus` 指定索引或完整 GPU UUID 选择单卡，WSL2 仅支持 `all`。需要宿主机预装 NVIDIA 驱动和计算依赖，启动会实际执行 CUDA kernel 自检；详见[原生 GPU 说明](native-sandbox.md#linux--wsl2-原生-gpu)。
 
-local 的 Git 状态、差异和历史查询工具会拒绝配置了外部 clean/process 过滤器的仓库，并返回 `GIT_EXTERNAL_FILTER_REQUIRES_SANDBOX`；这类仓库请使用 native 或 Docker。`git_status` / `git_diff` 只报告子模块提交变化，不递归检查子模块内未提交的修改；需要内部状态或差异时，通过 `cwd` 明确选择子模块。
+local 的 Git 状态、差异和历史查询工具会拒绝文件实际使用外部 clean/process 过滤器的仓库，并返回 `GIT_EXTERNAL_FILTER_REQUIRES_SANDBOX`；这类仓库请使用 native 或 Docker。`git_status` / `git_diff` 只报告子模块提交变化，不递归检查子模块内未提交的修改；需要内部状态或差异时，通过 `cwd` 明确选择子模块。
 
 `git_log` / `git_show` 读取提交历史、补丁和历史文件；Docker 查询的是工作副本自身的历史，不能当作宿主完整历史。参数、敏感路径限制及部分克隆仓库限制见[Git 历史查询](tools.md#git-历史查询)。
 

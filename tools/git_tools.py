@@ -7,6 +7,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
+from host_support.git_filters import ExternalGitFilter, GitFilterCheckError, check_external_filters
 from llm import ToolDefinition
 
 from ._internal.base import ExecutionKind, ToolEffects, ToolResult
@@ -21,53 +22,42 @@ class _GitFilterPolicy:
     """Shared gate for Git commands that can inspect worktree content."""
 
     def _check_external_filters(self, repo_root: Path) -> ToolResult | None:
-        """Fail closed before Git can normalize any worktree file.
-
-        Check the effective configuration, including include/includeIf and worktree
-        config. Refuse even currently unused drivers: attributes can select them
-        without changing config. This is a preflight check, not an OS sandbox or
-        an atomic guarantee against concurrent host edits to Git configuration.
-        """
+        """Check effective filters and their worktree/index attribute selection."""
         if self.execution_allowed:
             return None
-        result = self.runner.run(
-            [
-                "git",
-                "-c",
-                "core.fsmonitor=false",
-                "-c",
-                "core.hooksPath=/dev/null",
-                "config",
-                "--includes",
-                "--null",
-                "--get-regexp",
-                r"^filter\..*\.(clean|process)$",
-            ],
-            cwd=repo_root,
-            timeout_seconds=self.timeout_seconds,
-        )
-        if result.timed_out:
-            return tool_error("GIT_TIMEOUT", "Git filter configuration check timed out.")
-        if result.cleanup_error or result.stdout_truncated or result.stderr_truncated:
-            return tool_error(
-                "GIT_CONFIG_CHECK_FAILED", "Cannot fully verify Git filter configuration."
+
+        def command(args, *, allowed=(0,)):
+            result = self.runner.run(
+                ["git", "-c", "core.fsmonitor=false", "-c", f"core.hooksPath={os.devnull}", *args],
+                cwd=repo_root,
+                timeout_seconds=self.timeout_seconds,
             )
-        if result.exit_code == 1 and not result.stdout:
-            return None  # git config reports no matching keys with exit status 1.
-        if result.exit_code != 0:
-            return tool_error("GIT_CONFIG_CHECK_FAILED", "Cannot verify Git filter configuration.")
-        # --null encodes each entry as key LF value NUL; never expose commands.
-        entries = result.stdout.split("\0")
-        if not result.stdout.endswith("\0") or any("\n" not in item for item in entries[:-1]):
+            if result.timed_out:
+                raise TimeoutError
+            if (
+                result.cleanup_error
+                or result.cleanup_status == "unknown"
+                or result.stdout_truncated
+                or result.stderr_truncated
+                or result.exit_code not in allowed
+                or (result.exit_code == 1 and result.stdout)
+            ):
+                raise GitFilterCheckError("Cannot fully verify Git filter configuration")
+            return result.stdout
+
+        try:
+            check_external_filters(command)
+        except TimeoutError:
+            return tool_error("GIT_TIMEOUT", "Git filter check timed out.")
+        except GitFilterCheckError:
             return tool_error(
-                "GIT_CONFIG_CHECK_FAILED", "Invalid Git filter configuration response."
+                "GIT_CONFIG_CHECK_FAILED", "Cannot fully verify Git filter selection."
             )
-        # Do not strip: Unicode whitespace can still be a shell command name.
-        if any(item.partition("\n")[2] for item in entries[:-1]):
+        except ExternalGitFilter:
             return tool_error(
                 "GIT_EXTERNAL_FILTER_REQUIRES_SANDBOX",
-                "Repository clean/process filters may execute commands. "
-                "Local Git tools refuse this configuration; use native or Docker isolation.",
+                "Repository paths use external clean/process filters; "
+                "use native or Docker isolation.",
             )
         return None
 

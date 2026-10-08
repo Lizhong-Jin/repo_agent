@@ -84,11 +84,12 @@ def test_local_rejects_external_filters_before_any_diff_or_status(
 
 
 @pytest.mark.parametrize("tool_type,arguments", CALLS)
-def test_unused_filter_is_also_refused(repository, tmp_path, tool_type, arguments):
+def test_unused_filter_is_allowed(repository, tmp_path, tool_type, arguments):
     repo, git = repository
     git("config", "filter.unused.clean", filter_command(tmp_path / "marker"))
     result = tool_type(repo).execute(arguments)
-    assert result.error_code == "GIT_EXTERNAL_FILTER_REQUIRES_SANDBOX"
+    assert result.success, result
+    assert not (tmp_path / "marker").exists()
 
 
 @pytest.mark.parametrize("tool_type", [GitDiffTool, GitStatusTool])
@@ -97,6 +98,7 @@ def test_unused_filter_is_also_refused(repository, tmp_path, tool_type, argument
 def test_only_truly_empty_filter_commands_are_allowed(repository, tool_type, driver, command):
     repo, git = repository
     git("config", f"filter.probe.{driver}", command)
+    (repo / ".gitattributes").write_text("first filter=probe\n")
     result = tool_type(repo).execute({})
     if command:
         assert result.error_code == "GIT_EXTERNAL_FILTER_REQUIRES_SANDBOX"
@@ -133,6 +135,7 @@ def test_filter_added_between_diff_phases_is_refused(repository, tmp_path, monke
         result = original(command, **kwargs)
         if "--name-only" in command:
             git("config", "filter.new.clean", filter_command(marker))
+            (repo / ".gitattributes").write_text("first filter=new\n")
         return result
 
     monkeypatch.setattr(tool.runner, "run", run)
@@ -227,3 +230,71 @@ def test_native_filters_cannot_write_outside_workspace(
         assert backend.healthy, result
     finally:
         backend.close()
+
+
+@pytest.mark.parametrize("tool_type,arguments", CALLS)
+def test_index_attributes_cannot_be_hidden_by_worktree_edits(
+    repository, tmp_path, tool_type, arguments
+):
+    repo, git = repository
+    path = repo / ".gitattributes"
+    path.write_text("first filter=probe\n")
+    git("add", ".gitattributes")
+    path.write_text("")
+    marker = tmp_path / "marker"
+    git("config", "filter.probe.clean", filter_command(marker))
+    assert tool_type(repo).execute(arguments).error_code == "GIT_EXTERNAL_FILTER_REQUIRES_SANDBOX"
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("tool_type", [GitDiffTool, GitStatusTool])
+@pytest.mark.parametrize(
+    "response",
+    [
+        process_result(stdout="first\0filter\0"),
+        process_result(stdout="other\0filter\0unspecified\0"),
+        replace(process_result(stdout="first\0filter\0unspecified\0"), stdout_truncated=True),
+        replace(process_result(stdout="first\0filter\0unspecified\0"), cleanup_status="unknown"),
+        process_result(exit_code=128, stderr="private attribute details"),
+    ],
+)
+def test_attribute_check_fails_closed(repository, monkeypatch, tool_type, response):
+    repo, git = repository
+    git("config", "filter.unused.clean", "must-not-execute")
+    tool = tool_type(repo)
+    original = tool.runner.run
+
+    def run(command, **kwargs):
+        if "check-attr" in command:
+            return response
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(tool.runner, "run", run)
+    result = tool.execute({})
+    assert result.error_code == "GIT_CONFIG_CHECK_FAILED"
+    assert "private attribute details" not in str(result)
+
+
+@pytest.mark.parametrize("tool_type", [GitDiffTool, GitStatusTool])
+def test_lossy_path_metadata_fails_closed(repository, tmp_path, monkeypatch, tool_type):
+    repo, git = repository
+    marker = tmp_path / "marker"
+    git("config", "filter.probe.clean", filter_command(marker))
+    tool = tool_type(repo)
+    original = tool.runner.run
+    invoked = []
+
+    def run(command, **kwargs):
+        invoked.append(command)
+        result = original(command, **kwargs)
+        if "ls-files" in command:
+            # The process runner replaces undecodable bytes; such a name cannot
+            # be checked reliably by sending the replacement text back to Git.
+            return replace(result, stdout=result.stdout + "invalid-\ufffd.txt\0")
+        return result
+
+    monkeypatch.setattr(tool.runner, "run", run)
+    result = tool.execute({})
+    assert result.error_code == "GIT_CONFIG_CHECK_FAILED"
+    assert not any("diff" in command or "status" in command for command in invoked)
+    assert not marker.exists()

@@ -250,7 +250,7 @@ runtime = AgentRuntime(client, tools=registered_tools, tool_groups=groups)
 
 ### Git 工具的执行边界
 
-`git_diff` 和 `git_status` 读取工作树时都可能触发 Git 的内容过滤器。local 模式在实际 diff/status 前读取包含 `include`、`includeIf` 和 worktree 配置的过滤器设置；存在非空 `filter.*.clean` 或 `filter.*.process` 时返回 `GIT_EXTERNAL_FILTER_REQUIRES_SANDBOX`。即使驱动暂未被属性选中、请求只看 staged，也保守拒绝；不会静默跳过转换后返回可能失真的差异。配置读取失败、截断、格式异常或清理未确认时拒绝继续；超时单独返回 `GIT_TIMEOUT`，其他核验失败返回 `GIT_CONFIG_CHECK_FAILED`。错误不回显过滤器命令。
+`git_diff` 和 `git_status` 读取工作树时都可能触发 Git 的内容过滤器。local 模式在实际 diff/status 前读取包含 `include`、`includeIf` 和 worktree 配置的过滤器设置；由 Git 解析工作目录与暂存区的有效属性；文件实际选中了非空 `filter.*.clean` 或 `filter.*.process` 时返回 `GIT_EXTERNAL_FILTER_REQUIRES_SANDBOX`。未被文件选中的过滤器配置不会阻止查询；请求只看 staged 时也检查工作目录与暂存区属性。不会静默跳过转换后返回可能失真的差异。配置或属性读取失败、截断、格式异常或清理未确认时拒绝继续；超时单独返回 `GIT_TIMEOUT`，其他核验失败返回 `GIT_CONFIG_CHECK_FAILED`。错误不回显过滤器命令。
 
 `GitDiffTool` / `GitStatusTool` 的 `execution_allowed` 仅由受信任代码构造时设置，工厂将其连接到 `isolated_execution`。native/Docker worker 已建立隔离，允许过滤器继承沙箱权限；local 默认关闭。模型参数不能开启此权限，也不会自动切换执行模式。Git 工具固定忽略子模块工作树脏状态，diff 使用短格式展示子模块提交变化，避免递归调用未检查的子仓库过滤器；需要子模块内部差异时，使用 `cwd` 明确选择该仓库并重新检查。
 
