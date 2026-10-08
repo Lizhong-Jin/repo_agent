@@ -33,7 +33,8 @@ repo-agent
 
 ```bash
 repo-agent --sandbox native                      # macOS / Linux 原生沙箱
-repo-agent --sandbox native --sandbox-profile standard # 强制关闭 GPU；Linux / WSL2 默认自动检测
+repo-agent --sandbox native --sandbox-profile metal    # Apple Silicon：明确要求 Metal
+repo-agent --sandbox native --sandbox-profile standard # 强制关闭 GPU；Apple Silicon 默认启用 Metal
 repo-agent --sandbox local                       # 文件/Git 工具，不注册通用命令工具
 repo-agent-build-sandbox                         # Docker 模式首次使用前构建
 repo-agent --sandbox docker --sandbox-writeback manual

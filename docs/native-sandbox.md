@@ -77,7 +77,7 @@ pidfd 改善进程身份与信号发送的可靠性，不负责发现全部后�
 
 ## Linux / WSL2 原生 GPU
 
-无需 Docker、镜像或 NVIDIA Container Toolkit。Linux / WSL2 native 默认使用 `--sandbox-profile auto`：发现 NVIDIA CUDA 设备后自动开放全部 GPU，并在沙箱内验证 CUDA kernel；没有发现则使用不开放 GPU 的 standard 环境。macOS 保持普通 native，不探测 NVIDIA CUDA。
+无需 Docker、镜像或 NVIDIA Container Toolkit。Linux / WSL2 native 默认使用 `--sandbox-profile auto`：发现 NVIDIA CUDA 设备后自动开放全部 GPU，并在沙箱内验证 CUDA kernel；没有发现则使用不开放 GPU 的 standard 环境。macOS Apple Silicon 自动使用 Metal，见下文；不探测 NVIDIA CUDA。
 
 普通 Linux 以 `/dev/nvidiaN` 为候选标志；WSL2 需同时存在 `/dev/dxg` 和 Windows 提供的 CUDA 驱动库，避免将仅有非 NVIDIA 显卡的 WSL2 误判为 CUDA。已检测到设备但驱动、UVM、权限或 kernel 自检异常时明确报错，不静默降级；可显式选择 standard 关闭 GPU。`--sandbox-gpus` 或 cuda profile 则强制要求 GPU，设备不存在也会报错。
 
@@ -105,11 +105,18 @@ repo-agent --sandbox native --sandbox-profile cuda --sandbox-gpus all
 
 自动识别系统 `/usr/local/cuda` 或 `/opt/cuda`（解析后的目录须位于 `/usr` 或 `/opt`），只读映射工具链并设置 CUDA_HOME/PATH；发行版安装在 `/usr/bin` 的 nvcc 也可通过系统 PATH 使用。不会继承宿主机任意 CUDA_HOME、LD_LIBRARY_PATH 或 CUDA_VISIBLE_DEVICES。CUDA、Triton 和 PyTorch 扩展缓存放在本次调用的私有临时目录，调用结束删除，因此可能重复编译。GPU 模式命令和 Python 的最大超时都为 900 秒，默认仍分别为 60/10 秒，首次编译应显式设置 `timeout_seconds`。
 
-文件保护、禁止联网、独立进程 namespace 和 seccomp 保持生效。`get_execution_environment` 的 execution 部分报告 `gpu_access`（请求的 profile、实际 profile、授权设备、启动探测结果和无显存配额），gpu 部分仍报告框架依赖及实际可用性。GPU 驱动由宿主机共享，native 不提供显存/算力配额、独占访问或恶意 GPU 程序之间的强隔离；单卡设备映射与 CUDA_VISIBLE_DEVICES 不等价于多租户安全边界。MIG、NVSwitch/Fabric Manager、MPS、ROCm/AMD 及分布式网络通信不在当前支持范围；需要这些环境时保持失败并单独适配，不开放整个 `/dev`、`/sys` 或宿主机 socket。
+文件保护、禁止联网、独立进程 namespace 和 seccomp 保持生效。`get_execution_environment` 的 execution 部分报告 `gpu_access`（请求的 profile、实际 profile、授权设备、启动探测结果和无显存配额），gpu 部分仍报告框架依赖及实际可用性。GPU 驱动由宿主机共享，native 不提供显存/算力配额、独占访问或恶意 GPU 程序之间的强隔离；单卡设备映射与 CUDA_VISIBLE_DEVICES 不等价于多租户安全边界。MIG、NVSwitch/Fabric Manager、NVIDIA MPS、ROCm/AMD 及分布式网络通信不在当前支持范围；需要这些环境时保持失败并单独适配，不开放整个 `/dev`、`/sys` 或宿主机 socket。
 
 单元测试和普通 Linux namespace 回归不能替代真实 Linux/WSL2 驱动验证。真实硬件测试入口见本文末尾。
 
 ## macOS 实现与权限
+
+Apple Silicon 的 `auto` 默认启用 Metal，`--sandbox-profile metal` 明确要求 Metal，
+`standard` 关闭 GPU；Intel Mac / x86_64 Python 的 auto 保持 standard。Metal 使用系统默认设备，
+不支持 `--sandbox-gpus`。启动先验证隔离，再编译并执行真实 Metal kernel，失败明确报错。
+基础 GPU 自检仅依赖标准库和系统框架；项目 PyTorch MPS 状态在环境工具的 gpu 部分单独报告。
+Metal 命令/Python 超时上限均为 900 秒，默认仍为 60/10 秒，无 GPU 内存或算力配额。
+权限、实机测试及复现方式见 [Metal 支持与验证](metal-validation.md)。
 
 `sandbox/macos_native.py` 实现 Seatbelt 策略、读取范围和自检，继承 `sandbox/native_common.py` 的公共调用流程，并通过 `sandbox/native.py` 的工厂选择。工具调用接口与 Docker 共用约定，但直接访问原项目。每次隔离执行调用用 `/usr/bin/sandbox-exec` 加载宿主机生成的 Seatbelt 策略。命令和 Python 由外层主进程直接启动沙箱进程、监督子进程并收集输出；Git、环境探测和 LSP 工具通过独立 worker 执行；纯文件工具使用上面的轻量文件服务。模型、密钥、会话和日志由外部主进程管理。
 

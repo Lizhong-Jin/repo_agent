@@ -60,6 +60,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !agent/execution_ledger.py
 !agent/history.py
 !agent/prompt.py
+!agent/record_timing.py
 !agent/report_reviews.py
 !agent/result_refs.py
 !agent/runtime.py
@@ -228,6 +229,8 @@ agent/skills/builtin/gpu-kernel-development/**
 !sandbox/linux_preflight.py
 !sandbox/lsp_smoke.py
 !sandbox/macos_native.py
+!sandbox/metal_check.py
+!sandbox/metal_probe.py
 !sandbox/native.py
 !sandbox/native_common.py
 !sandbox/native_gpu_probe.py

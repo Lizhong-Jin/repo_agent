@@ -52,9 +52,12 @@ def create_parser():
     parser.add_argument("--sandbox-image", help=f"自定义沙箱镜像，默认 {DEFAULT_IMAGE}")
     parser.add_argument(
         "--sandbox-profile",
-        choices=["auto", "standard", "cuda"],
+        choices=["auto", "standard", "cuda", "metal"],
         default="auto",
-        help="默认 auto：Docker / Linux native 自动检测 NVIDIA GPU；standard 禁用，cuda 强制启用",
+        help=(
+            "默认 auto：Docker / Linux native 检测 NVIDIA GPU；Apple Silicon native 启用 Metal；"
+            "standard 禁用 GPU，cuda / metal 强制要求对应 GPU"
+        ),
     )
     parser.add_argument(
         "--sandbox-gpus",
@@ -115,9 +118,15 @@ def validate_execution_options(parser, args):
     ):
         parser.error("--project-python 仅用于 native 模式")
     capabilities = backend_capabilities(args.sandbox, platform=sys.platform)
-    gpu_requested = args.sandbox_profile == "cuda" or args.sandbox_gpus is not None
-    if gpu_requested and not capabilities.gpu:
-        parser.error("GPU profile 仅适用于 Docker 或 Linux / WSL2 native 模式")
+    if (
+        args.sandbox_profile in {"cuda", "metal"}
+        and args.sandbox_profile not in capabilities.gpu_profiles
+    ):
+        parser.error(
+            "cuda 仅适用于 Docker / Linux native；metal 仅适用于 Apple Silicon macOS native"
+        )
+    if args.sandbox_gpus is not None and "cuda" not in capabilities.gpu_profiles:
+        parser.error("--sandbox-gpus 仅适用于 NVIDIA CUDA；Metal 使用系统默认设备")
     if args.sandbox_profile == "standard" and args.sandbox_gpus is not None:
         parser.error("GPU selection requires the cuda profile")
     if args.sandbox_gpus is not None:

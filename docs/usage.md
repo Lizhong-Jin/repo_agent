@@ -19,6 +19,12 @@ repo-agent --max-steps 12 --max-output-tokens 8192 # 临时覆盖任务轮数和
 
 未登记安装模式时，macOS/Linux 默认 native，Windows 默认 local；已有安装沿用其记录，可用 `repo-agent --sandbox native` 显式选择，在 macOS / Linux 原生沙箱内运行本机工具并直接修改项目；见[原生沙箱说明](native-sandbox.md)。Linux 需要 bubblewrap、libseccomp 和可用的非特权 user namespace；Windows 若需 native，应通过 WSL2 运行 Linux 后端；原生 Windows 可使用 local 或 Docker Desktop 的 Linux 容器。`--sandbox local` 提供文件/Git 和不启动子进程的基础环境查询，不提供命令、Shell、Python 或语言服务器工具。可选 Web 工具在主进程独立注册。需要工作副本及受控回写时，显式使用 `repo-agent --sandbox docker`。Docker/native 失败均不会自动切换为未隔离执行。
 
+Apple Silicon macOS native 的 `auto` 默认启用 Metal，并在沙箱内编译、执行真实 GPU kernel。
+`--sandbox-profile metal` 明确要求 Metal，`--sandbox-profile standard` 关闭 GPU。
+Metal 使用系统默认设备，不接受 `--sandbox-gpus`；Intel Mac / x86_64 Python 的 auto 使用普通环境。
+已选择 Metal 但自检失败会报错，不静默回退 CPU。项目 PyTorch 可使用 `device="mps"`；
+依赖需提前安装，详见 [Metal 支持与验证](metal-validation.md)。
+
 Linux / WSL2 native 默认自动检测 NVIDIA CUDA GPU：发现后启用全部 GPU，没有则使用普通环境；发现设备但驱动或 CUDA 自检失败时明确报错。`--sandbox-profile standard` 强制关闭 GPU，`--sandbox-profile cuda` 强制要求 GPU。Linux 可通过 `--sandbox-gpus` 指定索引或完整 GPU UUID 选择单卡，WSL2 仅支持 `all`。需要宿主机预装 NVIDIA 驱动和计算依赖，启动会实际执行 CUDA kernel 自检；详见[原生 GPU 说明](native-sandbox.md#linux--wsl2-原生-gpu)。
 
 local 的 Git 状态、差异和历史查询工具会拒绝配置了外部 clean/process 过滤器的仓库，并返回 `GIT_EXTERNAL_FILTER_REQUIRES_SANDBOX`；这类仓库请使用 native 或 Docker。`git_status` / `git_diff` 只报告子模块提交变化，不递归检查子模块内未提交的修改；需要内部状态或差异时，通过 `cwd` 明确选择子模块。

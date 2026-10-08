@@ -1,6 +1,6 @@
 ---
 name: gpu-kernel-development
-description: 编写、调试或优化 CUDA C++、Triton 和 PyTorch 自定义算子，按当前 native / Docker 执行环境完成参考实现、正确性测试、编译与 GPU 性能测量。用于算子和 kernel 开发，不用于一般模型训练或普通 Python 修改。
+description: 编写、调试或优化 CUDA C++、Triton、Metal 和 PyTorch 自定义算子，按当前 native / Docker 执行环境完成参考实现、正确性测试、编译与 GPU 性能测量。用于算子和 kernel 开发，不用于一般模型训练或普通 Python 修改。
 ---
 
 确定算子的数学定义、输入形状、dtype、stride、设备、输出及是否需要 autograd。
@@ -15,7 +15,9 @@ description: 编写、调试或优化 CUDA C++、Triton 和 PyTorch 自定义算
   依据 runtimes.python.executable 选择解释器；不要根据 CLI 所在机器或历史对话推断环境。
 - 区分 GPU 授权、驱动可计算、框架可用和当前算子验证通过。
   Linux native 的 execution.gpu_access.startup_probe 验证驱动/PTX kernel，不验证 PyTorch、Triton 或 nvcc。
-  gpu.status 依赖 PyTorch，缺少 PyTorch 时的 unknown 不代表没有物理 GPU。
+  macOS native 的 execution.gpu_access.startup_probe 验证 Metal kernel，gpu.metal 对应基础能力，
+  gpu.mps 验证选定项目 Python 的 PyTorch MPS 矩阵运算；缺少 PyTorch 不影响基础 Metal。
+  Linux / Docker 的 gpu.status 依赖 PyTorch，缺少 PyTorch 时的 unknown 不代表没有物理 GPU。
   operator_environment_ready 要求 PyTorch CUDA、Triton、nvcc 同时可用，是完整环境自检条件；
   只做 PyTorch 或 Triton 任务时，按实际使用的依赖判断，不因无关组件缺失阻止可做的工作。
 - local 不提供命令/Python 执行；macOS native 不提供本项目的 NVIDIA CUDA GPU 支持。
@@ -30,6 +32,10 @@ description: 编写、调试或优化 CUDA C++、Triton 和 PyTorch 自定义算
   项目环境按启动时的显式配置或 venv/Conda 发现规则选择，不要假定当前激活环境必然被选中，
   也不要假定宿主机任意 CUDA_HOME/LD_LIBRARY_PATH 或 CUDA_VISIBLE_DEVICES 会自动继承。
   缺依赖时说明所需环境准备，不在只读解释器目录或断网命令中反复尝试安装。
+- Apple Silicon macOS native：auto 自动启用 Metal，metal 显式要求，standard 关闭 GPU。
+  使用系统默认设备，不接受 NVIDIA 的设备编号 / UUID。PyTorch 张量和模型需显式放到 mps；
+  CUDA / Triton 程序不会自动转换成 Metal。基础 Metal 不要求 PyTorch、nvcc 或 Rust。
+  MPS 运算须核对 device、同步并验证结果，不开启 CPU fallback 来掩盖不支持的算子。
 - Docker：使用容器 `/workspace` 路径和镜像内依赖，修改先留在副本中，沿用应用回写流程。
   镜像构建、依赖预装和 GPU 选择由宿主机配置；不要把 Docker 配额套用到 native。
 - 两种隔离模式的命令均断网；已启用的主进程 web_search/web_fetch 只用于查询公开资料，
@@ -46,7 +52,7 @@ description: 编写、调试或优化 CUDA C++、Triton 和 PyTorch 自定义算
 
 ## 实现与验证
 
-- 提供或复用简洁的参考实现，再实现用户指定的 CUDA 或 Triton 算子。
+- 提供或复用简洁的参考实现，再实现用户指定的 CUDA、Triton 或 Metal/MPS 算子。
   明确布局、broadcast、dtype promotion 及不支持输入的处理。
   `.cu`/`.cuh` 走 clangd，Triton/PyTorch 的 `.py` 走 Python 语言服务；
   compile_commands.json 或 .clangd 中的 Toolkit/include 和路径须符合实际执行环境。
@@ -64,6 +70,8 @@ description: 编写、调试或优化 CUDA C++、Triton 和 PyTorch 自定义算
 
 ## 性能与迭代
 
+- Metal/MPS 性能测量需等待 GPU 完成；PyTorch 使用 torch.mps.synchronize()，
+  原生 Metal 使用 command buffer 完成状态。MPS 不使用 CUDA events。
 - 正确性通过后再比较性能。完成编译和 warm-up，用 CUDA events 或项目已有 GPU benchmark
   方法测量并确保 GPU 完成工作；区分 kernel-only 与端到端（含分配/拷贝），基线保持相同口径。
   不将工具/容器总耗时或未同步的 CPU 计时当作 GPU kernel 延迟。

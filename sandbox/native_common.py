@@ -99,12 +99,14 @@ class NativeBackendBase:
         initialization_started = perf_counter()
         self.startup_metrics = {}
         self._performance_runs = []
-        if profile not in {"auto", "standard", "cuda"}:
-            raise ValueError("profile must be auto, standard or cuda")
+        if profile not in {"auto", "standard", "cuda", "metal"}:
+            raise ValueError("profile must be auto, standard, cuda or metal")
+        if profile == "metal" and self.platform_name != "macos":
+            raise ValueError("Metal 仅支持 Apple Silicon macOS native")
         if profile == "standard" and gpus is not None:
             raise ValueError("GPU selection requires the cuda profile")
         if (profile == "cuda" or gpus is not None) and self.platform_name != "linux":
-            raise ValueError("原生 GPU 仅支持 Linux / WSL2 NVIDIA CUDA")
+            raise ValueError("原生 GPU 的 cuda profile / GPU 选择仅支持 Linux / WSL2 NVIDIA CUDA")
         self.requested_profile = profile
         self.requested_gpus = gpus
         self._platform_setup()

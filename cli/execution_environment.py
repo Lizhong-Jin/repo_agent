@@ -82,15 +82,16 @@ def open_execution_environment(args, workspace_root, store, capabilities, cleanu
         if capabilities.gpu:
             gpu = native.execution_context()["gpu_access"]
             if gpu["enabled"]:
+                label = "Metal" if gpu["profile"] == "metal" else "CUDA"
                 print(
-                    f"[原生 GPU：{gpu['selection']}] CUDA kernel 自检通过；无显存配额",
+                    f"[原生 GPU：{gpu['selection']}] {label} kernel 自检通过；无 GPU 内存配额",
                     flush=True,
                 )
             else:
                 reason = (
                     "已显式关闭 GPU"
                     if args.sandbox_profile == "standard"
-                    else "未检测到 NVIDIA CUDA 设备"
+                    else gpu.get("disabled_reason", "未检测到 NVIDIA CUDA 设备")
                 )
                 print(f"[原生环境：standard] {reason}", flush=True)
     else:

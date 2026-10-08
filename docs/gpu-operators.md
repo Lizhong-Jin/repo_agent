@@ -1,5 +1,11 @@
 # CUDA、Triton 与 PyTorch 算子开发
 
+Apple Silicon macOS native 已支持 Metal：默认 auto 启用，`--sandbox-profile metal` 显式要求，
+`standard` 关闭。项目 PyTorch 使用 MPS，环境工具的 `gpu.metal` 和 `gpu.mps` 分别报告基础
+GPU 与框架验证。基础支持无需 Rust / Xcode / PyTorch；详见 [Metal 支持与验证](metal-validation.md)。
+下文 CUDA / Triton / nvcc 的组合自检仍专用于 NVIDIA 路径，不作为 Metal 的就绪条件。
+
+
 [文档首页](index.md) · [项目首页](../README.md) · [Sandbox](../sandbox/README.md)
 
 此功能包括 CUDA 文件符号查询、GPU 沙箱运行配置、GPU 开发镜像、环境探测、

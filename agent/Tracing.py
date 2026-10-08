@@ -16,6 +16,8 @@ from uuid import uuid4
 from host_support.cancellation import RunCancelled
 from llm import Message, ToolCall, Usage
 
+from .record_timing import format_seconds, timing_fields
+
 
 @dataclass
 class ModelCallRecord:
@@ -151,9 +153,12 @@ def format_event(event: str, stats: RunStats) -> str:
             text = (
                 f"模型调用 #{call.step} {call.status}，耗时 {call.elapsed_seconds:.3f}s, "
                 f"tokens: {counters}，结束原因: {call.finish_reason or call.error_type or '未知'}"
-                f"，首行数据={call.first_data_seconds}，首字={call.first_text_seconds}"
-                f"，首段思考={call.first_thinking_seconds}，思考字符={call.thinking_characters}"
-                f"，首次显示={call.first_display_seconds}，响应总时长={call.response_seconds}"
+                f"，首行数据={format_seconds(call.first_data_seconds)}"
+                f"，首字={format_seconds(call.first_text_seconds)}"
+                f"，首段思考={format_seconds(call.first_thinking_seconds)}"
+                f"，思考字符={call.thinking_characters}"
+                f"，首次显示={format_seconds(call.first_display_seconds)}"
+                f"，响应总时长={format_seconds(call.response_seconds)}"
                 f"，思考设置={json.dumps(call.thinking, ensure_ascii=False)}"
                 f"，输出上限={call.max_output_tokens}"
             )
@@ -419,7 +424,7 @@ class Tracer:
             "timestamp": datetime.now().astimezone().isoformat(),
             "session_id": self.session_id,
             "run_id": self.run_id,
-            **data,
+            **timing_fields(data),
         }
         try:
             for position, output in enumerate(self._files):
@@ -453,7 +458,7 @@ class Tracer:
         record = {"event": event, "task_id": stats.task_id, "task_number": stats.task_number}
         if event.startswith("model_"):
             record.update(provider=self.metadata["provider"], model=self.metadata["model"])
-            record["model_call"] = asdict(stats.model_calls[-1])
+            record["model_call"] = timing_fields(asdict(stats.model_calls[-1]))
         elif event.startswith("compaction_"):
             record["compaction"] = dict(stats.compaction)
         elif event == "recovery":
@@ -461,7 +466,7 @@ class Tracer:
         elif event == "skill_loaded":
             record["skill"] = stats.skill_loads[-1]
         elif event.startswith("tool_"):
-            record["tool_call"] = asdict(stats.current_tool)
+            record["tool_call"] = timing_fields(asdict(stats.current_tool))
         elif event == "task_end":
             record.update(
                 status=stats.status,

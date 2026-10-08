@@ -335,7 +335,7 @@ def test_cli_rejects_conflicting_or_empty_selection(tmp_path, monkeypatch, flags
 @pytest.mark.parametrize("options", [{"gpus": "all"}, {"profile": "cuda"}])
 def test_macos_native_rejects_gpu_before_starting(tmp_path, options):
     backend = object.__new__(NativeBackend)
-    with pytest.raises(ValueError, match="原生 GPU 仅支持"):
+    with pytest.raises(ValueError, match="仅支持 Linux / WSL2 NVIDIA CUDA"):
         backend.__init__(tmp_path, **options)
 
 

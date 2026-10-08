@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass, field
 
+from .record_timing import seconds
+
 
 def display_text(text):
     # Terminal control sequences must never act as cursor movement or OSC commands.
@@ -43,8 +45,8 @@ class Transcript:
                 "kind": b.kind,
                 "text": b.text(),
                 "step": b.step,
-                "started": b.started,
-                "ended": b.ended,
+                "started": seconds(b.started),
+                "ended": seconds(b.ended),
             }
             for b in self.blocks
         ]

@@ -436,7 +436,7 @@ native 模式返回实际平台的本机工具链信息及 Seatbelt 或 Bubblewr
 
 local 模式仅返回基础系统信息、当前 Python 和本地文件操作规则；其他版本及 GPU 返回 `unknown`，不启动子进程。`execution_allowed` 与 `execution_context` 仅允许受信任的应用代码在构造时设置，不能通过模型参数开启隔离执行权限；这些设置本身不创建沙箱。
 
-组件状态区分 `available`、`missing`、`unavailable`、`unknown`，分别表示确认可用、未找到、检查失败或能力不可用、未检查或无法确定。GPU 总状态依据 PyTorch CUDA 的实际可用性；没有 PyTorch 时为 `unknown`，不能由此判断机器没有 GPU。驱动信息、PyTorch 编译时 CUDA 版本及 nvcc toolkit 信息分别保留，不视为同一个版本。`operator_environment_ready` 延续既有算子自检的组合条件，仅供该流程参考。
+组件状态区分 `available`、`missing`、`unavailable`、`unknown`，分别表示确认可用、未找到、检查失败或能力不可用、未检查或无法确定。Linux / Docker 的 GPU 总状态依据 PyTorch CUDA 的实际可用性；没有 PyTorch 时为 `unknown`，不能由此判断机器没有 GPU。macOS native 的 GPU 总状态依据本次启动的 Metal kernel 自检，`gpu.metal` 报告该证据；`gpu.mps` 独立报告项目 Python 的 PyTorch MPS 构建支持、设备可用性和实际矩阵运算结果。未安装 PyTorch 不影响基础 Metal 支持；MPS 检测禁止 CPU fallback，失败不会报告 `kernel_verified=true`。驱动信息、PyTorch 编译时 CUDA 版本及 nvcc toolkit 信息分别保留，不视为同一个版本。`operator_environment_ready` 延续既有算子自检的组合条件，仅供该流程参考。
 
 版本探测每项最多 3 秒，GPU Python 探测最多 30 秒，整次探测共享默认 45 秒预算（子进程超时取整及进程清理可能额外耗时），每个子进程的每路输出限制为 32 KiB。组件缺失、失败、超时和截断以分项状态返回，整体工具仍可成功；进程清理无法确认时中止后续探测并返回 `PROBE_CLEANUP_FAILED`。不会输出环境变量、凭据、完整包清单或原始失败 stderr。每次调用重新探测，不缓存结果。
 

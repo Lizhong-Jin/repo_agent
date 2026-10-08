@@ -19,6 +19,7 @@ from host_support.filesystem import open_file, stat_at, walk_descriptors
 from host_support.storage import atomic_write, sync_directory
 from tools._internal.file_policy import is_protected_name, runtime_protected_paths
 
+from .record_timing import metric_seconds
 from .verification import plans_from_rows, render_verification, verification_items
 
 SKIP_DIRS = frozenset(
@@ -200,7 +201,15 @@ class ReportStore:
         identity = report["attempt_id"]
         if not re.fullmatch(r"[0-9a-f]{32}", identity):
             raise ValueError("无效的报告标识")
-        payload = json.dumps(report, ensure_ascii=False).encode()
+        # Round our diagnostics only. Raw tool receipts, arguments, file metadata and
+        # hashes must keep their exact values; the in-memory capture is not mutated.
+        exported = dict(report)
+        for key in ("baseline", "final", "host_baseline", "host_final"):
+            if key in report and "metrics" in report[key]:
+                exported[key] = {**report[key], "metrics": metric_seconds(report[key]["metrics"])}
+        if "metrics" in report:
+            exported["metrics"] = metric_seconds(report["metrics"])
+        payload = json.dumps(exported, ensure_ascii=False).encode()
         if len(payload) > MAX_REPORT_BYTES:
             raise ValueError("报告超过大小上限")
         path = self.directory / f"{identity}.json"

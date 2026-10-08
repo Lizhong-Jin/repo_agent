@@ -317,7 +317,7 @@ Python 依赖、`gopls` 和 npm 的 JS/TS 语言服务位于本安装 `.venv` �
 
 **Homebrew 安装或更新的 Node.js、Go、LLVM 属于共享系统工具，不在失败恢复和卸载时删除或降级。** Homebrew/npm/Go 的下载缓存也不进行全局清理。安装前须退出本安装的 Agent 会话。
 
-独立发行版不包含开发工具；源码安装自动安装锁定的 pytest、Ruff 和构建依赖。Docker 的 GPU 依赖由 CUDA 镜像提供；Linux / WSL2 native 使用用户预装的驱动、项目 Python 环境中的 PyTorch/Triton 及系统 Toolkit。native 安装不会自动安装这些计算依赖，macOS native 不提供本项目的 NVIDIA CUDA GPU 支持。
+独立发行版不包含开发工具；源码安装自动安装锁定的 pytest、Ruff 和构建依赖。Docker 的 GPU 依赖由 CUDA 镜像提供；Linux / WSL2 native 使用用户预装的驱动、项目 Python 环境中的 PyTorch/Triton 及系统 Toolkit。native 安装不会自动安装这些计算依赖。Apple Silicon macOS native 默认启用 Metal；基础自检直接使用系统框架，源码和发行包安装均不需要额外的 Rust / Xcode 编译器或 PyTorch。需要 PyTorch MPS 的项目应提前在项目 Python 中安装支持 MPS 的 PyTorch，并通过 `--project-python` 选择该解释器。macOS 不支持本项目的 NVIDIA CUDA GPU 透传；详见 [Metal 说明](metal-validation.md)。
 
 ## 依赖锁定
 

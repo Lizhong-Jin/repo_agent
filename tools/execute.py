@@ -93,7 +93,7 @@ class GetExecutionEnvironmentTool:
             description=(
                 "Inspect the environment where tools actually execute, not the CLI host. "
                 "By default return execution policy, system facts and runtime/tool versions. "
-                "Request the gpu section explicitly for PyTorch, Triton, CUDA and GPU probes. "
+                "Request the gpu section for Metal/MPS, PyTorch, Triton and CUDA probes. "
                 "Component status is available, missing, unavailable or unknown; missing optional "
                 "components are normal report data. Local mode never launches probe processes. "
                 "Resource limits come from the executor policy, not host-wide CPU/memory totals. "
@@ -288,7 +288,10 @@ class GetExecutionEnvironmentTool:
             "project", sys.executable
         )
         result = self._probe([python, "-I", str(script)], deadline, timeout=30)
+        macos_native = self.execution_context.get("platform") == "macos"
         if result["status"] != "available":
+            if macos_native:
+                return self._metal_gpu_report({"framework_probe": result})
             return result
         try:
             report = json.loads(result["output"])
@@ -300,7 +303,18 @@ class GetExecutionEnvironmentTool:
             ):
                 raise ValueError("Invalid compute probe report")
         except (ValueError, TypeError):
+            if macos_native:
+                return self._metal_gpu_report(
+                    {
+                        "framework_probe": {
+                            "status": "unknown",
+                            "reason": "invalid_probe_response",
+                        }
+                    }
+                )
             return {"status": "unknown", "reason": "invalid_probe_response"}
+        if macos_native:
+            return self._metal_gpu_report(report)
         # A successful probe is not evidence that CUDA is available.
         report["status"] = (
             "unknown"
@@ -318,6 +332,30 @@ class GetExecutionEnvironmentTool:
             else {"status": "missing"}
         )
         return report
+
+    def _metal_gpu_report(self, report):
+        access = self.execution_context.get("gpu_access", {})
+        probe = access.get("startup_probe") or {}
+        enabled = access.get("enabled") is True and probe.get("metal_kernel_verified") is True
+        metal = {
+            "status": "available" if enabled else "unavailable",
+            "kernel_verified": enabled,
+            "device": probe.get("device"),
+            "verification": "native_startup_probe",
+        }
+        if not enabled:
+            metal["reason"] = access.get("disabled_reason") or "metal_not_enabled"
+        return {
+            **report,
+            "status": metal["status"],
+            "backend": "metal",
+            "metal": metal,
+            "mps": report.get("mps", {"status": "unknown", "kernel_verified": False}),
+            "driver": {
+                "status": "available" if enabled else "unknown",
+                "source": "macOS system Metal driver",
+            },
+        }
 
 
 # These tools share validation-result and writeback semantics. Keep host-side

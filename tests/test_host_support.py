@@ -68,7 +68,7 @@ def test_identity_is_normalized_without_enabling_unsupported_releases(system, ma
 def test_host_and_execution_guest_capabilities_are_independent():
     assert not backend_capabilities("native", platform="win32").supported
     assert backend_capabilities("docker", platform="win32").writeback
-    assert not backend_capabilities("native", platform="darwin").gpu
+    assert backend_capabilities("native", platform="darwin").gpu_profiles == ("metal",)
     assert backend_capabilities("native", platform="linux").gpu
     assert not backend_capabilities("local", platform="linux").project_python
 
