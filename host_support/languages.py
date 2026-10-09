@@ -55,6 +55,11 @@ def tool_search_path(python, *, platform=None):
             "/usr/sbin",
             "/sbin",
         ]
+    elif selected == "win32":
+        prefix = Path(python).absolute().parent
+        if prefix.name.lower() == "scripts":
+            prefix = prefix.parent
+        system = [str(Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32")]
     else:
         raise ValueError("Toolchain search paths are not implemented on this platform")
     return os.pathsep.join(

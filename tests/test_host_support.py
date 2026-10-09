@@ -66,7 +66,7 @@ def test_identity_is_normalized_without_enabling_unsupported_releases(system, ma
 
 
 def test_host_and_execution_guest_capabilities_are_independent():
-    assert not backend_capabilities("native", platform="win32").supported
+    assert backend_capabilities("native", platform="win32").supported
     assert backend_capabilities("docker", platform="win32").writeback
     assert backend_capabilities("native", platform="darwin").gpu_profiles == ("metal",)
     assert backend_capabilities("native", platform="linux").gpu
@@ -170,17 +170,23 @@ def test_native_platforms_share_lifecycle_without_inheriting_macos_policy(monkey
     from sandbox.linux_native import LinuxNativeBackend
     from sandbox.macos_native import MacOSNativeBackend
     from sandbox.native_common import NativeBackendBase
+    from sandbox.windows_native import WindowsNativeBackend
 
     assert issubclass(LinuxNativeBackend, NativeBackendBase)
     assert not issubclass(LinuxNativeBackend, MacOSNativeBackend)
     monkeypatch.setattr(LinuxNativeBackend, "__init__", lambda *a, **kw: None)
     monkeypatch.setattr(MacOSNativeBackend, "__init__", lambda *a, **kw: None)
-    for platform, expected in (("linux", LinuxNativeBackend), ("darwin", MacOSNativeBackend)):
+    monkeypatch.setattr(WindowsNativeBackend, "__init__", lambda *a, **kw: None)
+    for platform, expected in (
+        ("linux", LinuxNativeBackend),
+        ("darwin", MacOSNativeBackend),
+        ("win32", WindowsNativeBackend),
+    ):
         monkeypatch.setattr(native, "sys", SimpleNamespace(platform=platform))
         assert type(native.create_native_backend(tmp_path)) is expected
     monkeypatch.setattr(native, "sys", SimpleNamespace(platform="linux"))
     assert type(native.NativeBackend.__new__(native.NativeBackend)) is LinuxNativeBackend
     assert type(native.NativeBackend(tmp_path)) is LinuxNativeBackend
-    monkeypatch.setattr(native, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(native, "sys", SimpleNamespace(platform="freebsd"))
     with pytest.raises(ValueError, match="不会退回"):
         native.create_native_backend(tmp_path)

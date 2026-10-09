@@ -2,13 +2,13 @@
 
 [文档首页](index.md) · [项目架构](../Project_Architecture.md) · [开发指南](development.md)
 
-平台相关公共能力集中在 `host_support`。macOS/Linux 保持原有目录布局、安装、会话与沙箱行为。Windows 已接入共享文件访问、文件锁、原子存储与 Docker 快照/回写；新增自带 Python 的 Windows x86_64 ZIP 与 PowerShell 安装/卸载入口；仍不提供 Windows 原生沙箱。Windows 内核和 Docker Desktop 的实际验收须在对应环境执行，不能从 macOS/Linux 的通过结果推断。
+平台相关公共能力集中在 `host_support`。macOS/Linux 保持原有目录布局、安装、会话与沙箱行为。Windows 已接入共享文件访问、文件锁、原子存储与 Docker 快照/回写；新增自带 Python 的 Windows x86_64 ZIP 与 PowerShell 安装/卸载入口；新增 LPAC + Job Object Windows native、私有工作副本与逐调用回写。Windows 内核和 Docker Desktop 的实际验收须在对应环境执行，不能从 macOS/Linux 的通过结果推断。
 
 | 平台 | 发行包与入口 | 首次安装默认模式 | 当前执行能力 |
 | --- | --- | --- | --- |
 | macOS ARM64/x86_64 | tar.gz，`install-release.sh` | native | Seatbelt、local、Docker |
 | Linux ARM64/x86_64（含 WSL2） | tar.gz，`install-release.sh` | native | Bubblewrap/seccomp、local、Docker；GPU 另验收 |
-| Windows x86_64 | ZIP，`install_release.ps1` | local | 文件/Git、Docker Desktop Linux 容器适配；无 native |
+| Windows x86_64 | ZIP，`install_release.ps1` | local | 文件/Git、Docker Desktop Linux 容器、LPAC/Job native |
 
 Windows ARM64 未列为发行目标；WSL2 属于 Linux 执行环境。表中列出代码提供的能力，各平台仍须通过相应实机验收。
 
@@ -39,9 +39,15 @@ Windows ARM64 未列为发行目标；WSL2 属于 Linux 执行环境。表中列
 
 ## 原生后端
 
-`sandbox/native_common.py` 管理可信代码副本、单次调用、工具路由、项目解释器探测、健康状态与临时目录。`macos_native.py` 管理 Seatbelt 策略、读取范围和自检；`linux_native.py` 管理 Bubblewrap、挂载、seccomp 和 GPU。两者分别继承公共基类。
+`sandbox/native_common.py` 管理可信代码副本、工具路由、并发调度、计时、项目解释器探测与健康状态。`macos_native.py` 管理 Seatbelt 策略、读取范围和自检；`linux_native.py` 管理 Bubblewrap、挂载、seccomp 和 GPU。两者分别继承公共基类，并显式指定 `PosixNativeExecutionAdapter`。
+
+`sandbox/native_execution.py` 定义可替换的执行接口。可信后端通过 `execution_adapter_type` 选择实现，工具参数不能指定执行器，公共基类没有默认执行器。适配器负责选择并授权项目解释器，以及一次调用的准备、执行与资源释放：`prepare(backend, NativeCall)` 返回上下文管理器，进入后取得 `NativeProcess`，调用其 `run(timeout_seconds=...)` 得到统一的 `ProcessResult`，退出时释放临时目录和授权资源。直接命令、Python 探测和 worker 请求均经过这条路径。
+
+`sandbox/posix_execution.py` 保留 macOS/Linux 的解释器读取授权、临时目录、worker 引导、Shell Python 别名、环境变量和进程监督，继续调用具体后端的隔离策略。替换执行器时无需复用这些 POSIX 机制，但必须在运行项目代码前建立隔离、遵守取消信号，并如实报告进程清理状态。准备失败要撤销已经取得的资源；无法确认释放时抛出 `NativeCleanupError`。执行或释放后清理状态未知会使后端停止接受后续执行，取消报告也保留该不确定状态。新增接口不改变文件服务授权、工作区模式或执行回执的归属，Windows 使用独立执行适配器与私有工作副本策略。
 
 CLI 使用 `create_native_backend()`。旧 `NativeBackend` 构造入口及 `seatbelt_profile` 导入继续兼容；新增实现直接继承 `NativeBackendBase`。`sandbox/backend.py` 的执行协议不包含 Docker 专有的快照和回写接口。
+
+Windows native 已接入工厂和能力标记：LPAC + Job Object、私有 Python/工作区 ACL、实际隔离自检、确认清理后的冲突检查回写，以及租约和意图记录驱动的残留回收。Windows 首次安装仍默认 local。模块边界、清理限制和 Windows 实机测试见 [Windows 隔离执行与清理](windows-native-isolation.md)。
 
 能力描述仅供选择和展示，不能作为执行授权。`ToolDispatcher` 继续识别可信适配器，后端继续进行真实自检；清理未确认时仍进入不健康状态，不回退到未隔离执行。
 
@@ -88,7 +94,7 @@ python -m pytest -q tests/test_host_file_contracts.py tests/test_windows_files.p
 
 `.github/workflows/host-files.yml` 配置了 Windows/macOS/Linux × Python 3.11/3.13 的六组契约测试，运行 `test_architecture_boundaries.py`、`test_host_file_contracts.py`、`test_windows_files.py`、`test_windows_release.py`、`test_cancellation.py`、`test_task_queue.py`、`test_continue.py`、`test_execution_ledger.py` 八份模块。另有 Windows Python 3.13 作业构建 ZIP、设置归档变量后执行真实安装生命周期，并上传测试产物。Windows 文件测试包含 junction 场景、只读文件原子替换和全部 local 文件工具；非 Windows 环境跳过 Windows 内核用例。
 
-工作流还配置了 Linux/macOS × Python 3.11/3.13 的四组默认全量回归，准备仓库 `.venv` 和安装入口后运行整个 `tests/` 目录。默认全量仍按平台、依赖和开关跳过真实环境用例；Windows 仍限定为上述契约及发行安装测试。另有独立 Ruff 检查与格式检查作业；lint 和默认回归安装锁定的开发依赖。CI 未配置真实 Docker Desktop 回写测试，Windows Docker 回写需下面的独立开关与镜像。
+工作流还配置了 Linux/macOS × Python 3.11/3.13 的四组默认全量回归，准备仓库 `.venv` 和安装入口后运行整个 `tests/` 目录。默认全量仍按平台、依赖和开关跳过真实环境用例；Windows 另有独立 LPAC/Job 和完整 native 的真实内核测试作业。另有独立 Ruff 检查与格式检查作业；lint 和默认回归安装锁定的开发依赖。CI 未配置真实 Docker Desktop 回写测试，Windows Docker 回写需下面的独立开关与镜像。
 
 可选扫描器还有 `.github/workflows/policy-scan-rust.yml`：Linux/macOS × Python 3.11/3.13，检查 Rust 格式、Clippy 和单元测试，构建并导入扩展后运行 Python/Rust 差分与策略集成契约。覆盖 Linux 策略扫描、两平台文件系统/目录批量协议及 native 文件工具。macOS 还使用 Rust 做自身工作区硬链接预检，内核隔离规则仍由 Seatbelt 提供；该作业不提供 Windows Rust 后端，未开启真实隔离开关的用例仍跳过。
 

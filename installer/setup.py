@@ -294,8 +294,6 @@ def main(argv=None, *, approved_commands=None) -> None:
         agent_home = args.agent_home.expanduser().resolve(strict=True)
         bin_dir = args.bin_dir.expanduser().resolve()
         args.mode = args.mode or available_mode(agent_home)
-        if os.name == "nt" and args.mode == "native":
-            raise ValueError("Windows 安装支持 --mode local 或 docker；不提供 native 沙箱")
         selected_languages(args.languages)
         release = None
         if args.wheel:

@@ -87,7 +87,13 @@ def open_execution_environment(args, workspace_root, store, capabilities, cleanu
         platform_label = capabilities.label
         print(
             f"[执行环境：{platform_label} native] 工具断网；"
-            + ("修改独立工作区" if independent else "直接修改原项目，无副本回写"),
+            + (
+                "进程使用私有副本，清理确认后检查冲突并回写"
+                if native.execution_context().get("writeback_mode") == "per_call_after_cleanup"
+                else "修改独立工作区"
+                if independent
+                else "直接修改原项目，无副本回写"
+            ),
             flush=True,
         )
         if capabilities.gpu:

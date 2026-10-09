@@ -122,6 +122,12 @@ def brew_executable():
 
 def preparation_report(python, languages="all"):
     rows, available = toolchain_report(python, languages)
+    if sys.platform == "win32":
+        if any(name != "python" for name in selected_languages(languages)):
+            rows.append(
+                ("ERROR", "Windows native", "当前自动配置仅支持 Python；请使用 --languages python")
+            )
+        return rows
     if sys.platform == "linux":
         if any(name not in available for name in selected_languages(languages)):
             rows.append(
@@ -157,6 +163,10 @@ def preparation_report(python, languages="all"):
 def prepare_toolchains(python, languages="all"):
     _, available = toolchain_report(python, languages)
     missing = [name for name in selected_languages(languages) if name not in available]
+    if sys.platform == "win32":
+        if any(name != "python" for name in selected_languages(languages)) or missing:
+            raise ValueError("Windows native 自动配置仅支持 Python；请使用 --languages python")
+        return available
     if missing and sys.platform == "linux":
         raise ValueError(
             "Linux 缺少工具链："

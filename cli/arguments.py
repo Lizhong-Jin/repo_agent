@@ -57,8 +57,8 @@ def create_parser():
         choices=["local", "native", "docker"],
         default=available_mode(installation_root()),
         help=(
-            "执行方式：默认沿用安装模式（未登记为 native）；"
-            "native 原生隔离直接修改；local 无命令执行；docker 使用副本"
+            "执行方式：默认沿用安装模式（首次 Windows 为 local，其余 native）；"
+            "native 原生隔离（Windows 逐调用副本回写）；local 无命令执行；docker 使用副本"
         ),
     )
     parser.add_argument("--sandbox-image", help=f"自定义沙箱镜像，默认 {DEFAULT_IMAGE}")
@@ -123,7 +123,9 @@ def validate_execution_options(parser, args):
     if args.restore_backup:
         parser.error("--restore-backup 必须与 --sandbox-review 一起使用")
     if args.sandbox != "docker" and args.sandbox_writeback == "on-success":
-        parser.error("on-success 仅适用于 Docker 副本模式；local/native 会直接修改原项目")
+        parser.error(
+            "on-success 仅适用于 Docker；Windows native 使用逐调用回写，其余 local/native 直接修改"
+        )
     if args.sandbox_writeback is None:
         try:
             args.sandbox_writeback = (

@@ -10,6 +10,7 @@ from host_support.languages import sandbox_environment
 from tools._internal.file_policy import PROTECTED_NAMES, PROTECTED_SUFFIXES
 
 from .native_common import NativeBackendBase
+from .posix_execution import PosixNativeExecutionAdapter
 
 
 def _quoted(value):
@@ -90,6 +91,7 @@ def seatbelt_profile(
 
 
 class MacOSNativeBackend(NativeBackendBase):
+    execution_adapter_type = PosixNativeExecutionAdapter
     platform_name = "macos"
     isolation = "seatbelt"
     temporary_root = "/private/tmp"

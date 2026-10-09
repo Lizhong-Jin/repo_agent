@@ -5,11 +5,13 @@ Set-StrictMode -Version Latest
 [string[]]$agentArguments = @($args)
 if (($agentArguments -contains '--help') -or ($agentArguments -contains '-h')) {
     Write-Output @'
-Usage: .\install_release.ps1 [--mode local|docker] [options]
+Usage: .\install_release.ps1 [--mode local|docker|native] [options]
        .\install_release.ps1 --uninstall [--dry-run] [--purge] [--remove-image]
 Options: --data-dir DIR, --bin-dir DIR, --no-path, --offline, --skip-sandbox,
          --skip-toolchains, --check, --recover, --archive ZIP, --sha256 HASH.
 First install defaults to local; reinstall preserves the recorded mode.
+Native currently supports Python: use --mode native --languages python.
+Native installation needs online language-service dependencies (not bundled).
 Bundled Python and wheels are used without a system Python or administrator rights.
 Existing configuration is preserved. Core install failures roll back commands and venv.
 --check / --recover / --uninstall do not create or download a Python runtime.

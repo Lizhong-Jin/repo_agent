@@ -22,10 +22,12 @@ from .native_common import NativeBackendBase
 from .policy_scan import PolicyPlan, PolicyScanner, ScanFailure, ScanRequest
 from .policy_scan import outermost as _outermost
 from .policy_scanners import create_policy_scanner
+from .posix_execution import PosixNativeExecutionAdapter
 from .wsl_drivers import WSLDriverStore
 
 
 class LinuxNativeBackend(NativeBackendBase):
+    execution_adapter_type = PosixNativeExecutionAdapter
     platform_name = "linux"
     isolation = "bubblewrap+seccomp"
     temporary_root = "/tmp"

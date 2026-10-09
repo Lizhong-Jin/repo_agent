@@ -21,6 +21,8 @@ def backend_capabilities(mode, *, platform=None):
     if mode == "docker":
         return BackendCapabilities("Docker", True, gpu=True, writeback=True, gpu_profiles=("cuda",))
     if mode == "native":
+        if platform == "win32":
+            return BackendCapabilities("Windows", True, project_python=True)
         if platform == "darwin":
             return BackendCapabilities(
                 "macOS", True, project_python=True, gpu=True, gpu_profiles=("metal",)

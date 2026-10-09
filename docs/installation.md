@@ -80,7 +80,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --offline
 ```
 
-上面的执行策略仅作用于本次 PowerShell 进程，不修改系统策略。首次默认 `local`；需要命令执行时选择 `--mode docker`，预先安装 Git for Windows 并启动 Docker Desktop 的 Linux 容器模式。离线 Docker 安装还须提前准备镜像并传 `--skip-sandbox`。Windows 不提供 `native` 沙箱；macOS/Linux 的默认 native 行为不变。
+上面的执行策略仅作用于本次 PowerShell 进程，不修改系统策略。首次默认 `local`；需要命令执行时选择 `--mode docker`，预先安装 Git for Windows 并启动 Docker Desktop 的 Linux 容器模式。离线 Docker 安装还须提前准备镜像并传 `--skip-sandbox`。Windows 可显式使用 `--mode native --languages python`，联网补齐 Python 语言服务后使用 LPAC/Job 隔离和逐调用回写；ZIP 尚不提供 native 离线依赖，详见 [Windows native](windows-native-isolation.md)。macOS/Linux 的默认 native 行为不变。
 
 目录布局沿用上表（`~` 为用户目录），命令名为 `repo-agent.exe`、`repo-agent-build-sandbox.exe`。安装器将独立 Python 校验并复制到用户数据目录的共享缓存，再在最终版本目录创建 `.venv`；安装成功后可以删除 ZIP 和解压目录。`AGENT_PYTHON_CACHE` 可指定缓存位置；`AGENT_PYTHON` 可指定完整解释器路径或 `system`。`--data-dir`、`--bin-dir` 支持含空格的路径，请用引号包裹。
 

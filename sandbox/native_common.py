@@ -2,7 +2,6 @@
 
 import json
 import os
-import shlex
 import shutil
 import stat
 import sys
@@ -12,10 +11,11 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from time import perf_counter
 
+from host_support.cancellation import current_cancellation
 from tools._internal.base import ExecutionKind, ToolEffects, ToolResult, execution_kind_of
 from tools._internal.file_access import FileAccess
 from tools._internal.file_policy import runtime_protected_paths
-from tools._internal.process_runner import ProcessRunner, _BoundedCapture
+from tools._internal.process_runner import _BoundedCapture
 from tools.execute import (
     PROCESS_EXECUTION_TOOLS,
     GetExecutionEnvironmentTool,
@@ -27,7 +27,7 @@ from tools.factory import create_default_tools, create_file_tools
 from tools.scheduling import SERIAL, scheduling_policy_of
 
 from .concurrency import backend_gate
-from .project_python import select_python
+from .native_execution import NativeCall, NativeCleanupError, NativeExecutionAdapter
 
 _call_metrics = ContextVar("native_call_metrics", default=None)
 
@@ -63,6 +63,7 @@ class _NativeCommandRunner:
 class NativeBackendBase:
     """Shared lifecycle; platform policy and enforcement live in concrete backends."""
 
+    execution_adapter_type: type[NativeExecutionAdapter] | None = None
     platform_name = "unsupported"
     isolation = None
     temporary_root = None
@@ -79,6 +80,16 @@ class NativeBackendBase:
             "get_path_info",
         }
     )
+
+    @property
+    def execution_adapter(self):
+        """Select an adapter from trusted backend code, including __new__ callers."""
+        with backend_gate(self).metadata:
+            if not hasattr(self, "_native_execution_adapter"):
+                if self.execution_adapter_type is None:
+                    raise NotImplementedError("A native execution adapter is required")
+                self._native_execution_adapter = self.execution_adapter_type()
+            return self._native_execution_adapter
 
     def _platform_setup(self):
         raise NotImplementedError("A native platform backend is required")
@@ -149,13 +160,7 @@ class NativeBackendBase:
             self._prepare_workspace()
             self.startup_metrics["workspace_check_ms"] = self.last_workspace_check_ms
             self._preflight()
-            self.project_python = select_python(
-                self.workspace,
-                project_python,
-                agent_python=self.python,
-                trusted_paths=self.read_paths,
-                environment={"PATH": os.devnull} if isolated_workspace else None,
-            )
+            self.project_python = self.execution_adapter.select_project_python(self, project_python)
             if isolated_workspace and self.project_python.source != "agent fallback":
                 parent = self.project_python.executable.parent
                 if parent.resolve() != parent.absolute():
@@ -228,7 +233,7 @@ class NativeBackendBase:
             "persistence": {
                 "workspace_files_across_calls": True,
                 "tmp_across_calls": False,
-                "process_cleanup": "host_supervised_pid_and_start_time_best_effort",
+                "process_cleanup": self.execution_adapter.process_cleanup,
             },
         }
 
@@ -296,101 +301,73 @@ class NativeBackendBase:
         self, command, *, request, git_read, timeout, cwd, max_output_bytes, metrics, project=False
     ):
         preparation_started = perf_counter()
-        with tempfile.TemporaryDirectory(prefix="call-", dir=self.directory) as call:
-            control = Path(call)
-            scratch = control / "scratch"
-            scratch.mkdir()
-            read_paths = self.read_paths
-            project_environment = getattr(self, "project_python", None)
-            if project_environment:
-                # Embedded environments are already visible through the workspace;
-                # protect them from writes even during control-only operations.
-                read_paths = tuple(
-                    dict.fromkeys(
-                        (
-                            *read_paths,
-                            *(
-                                path
-                                for path in project_environment.read_paths
-                                if path.is_relative_to(self.workspace)
-                            ),
-                        )
-                    )
-                )
-            selected = project_environment if project else None
-            if selected:
-                read_paths = tuple(dict.fromkeys((*read_paths, *selected.read_paths)))
-            aliases = None
-            if selected and request is None:
-                aliases = control / "python-bin"
-                aliases.mkdir()
-                for name in ("python", "python3"):
-                    path = aliases / name
-                    path.write_text(
-                        "#!/bin/sh\nexec " + shlex.quote(str(selected.executable)) + ' "$@"\n'
-                    )
-                    path.chmod(0o555)
-                read_paths = (*read_paths, aliases)
-            if request is not None:
-                request_path = control / "request.json"
-                request_path.write_text(json.dumps(request))
-                read_paths = (*read_paths, request_path)
-                bootstrap = (
-                    "import sys; "
-                    f"sys.path.insert(0, {str(self.runtime)!r}); "
-                    "from sandbox.worker import execute_request; import json; "
-                    f"execute_request(json.load(open({str(request_path)!r})), "
-                    f"{str(self.workspace)!r})"
-                )
-                command = [str(self.python), "-I", "-c", bootstrap]
-            self._set_metric("last_policy_metrics", None)
-            try:
-                invocation = self._sandbox_command(
-                    command, control, scratch, read_paths, git_read=git_read
-                )
-            finally:
+        call = NativeCall(
+            command=tuple(command) if command is not None else None,
+            request=request,
+            cwd=cwd or self.workspace,
+            git_read=git_read,
+            project=project,
+            max_output_bytes=max_output_bytes,
+        )
+        execution = None
+        run_error = None
+        self._set_metric("last_policy_metrics", None)
+        try:
+            with self.execution_adapter.prepare(self, call) as execution:
                 metrics["preparation_ms"] = (perf_counter() - preparation_started) * 1000
-                policy_metrics = self._get_metric("last_policy_metrics")
-                if policy_metrics is not None:
-                    metrics["policy"] = dict(policy_metrics)
-            environment = self._environment(scratch)
-            # Worker/control executables retain trusted PATH. Only user commands
-            # receive the project environment's command search path.
-            if selected and request is None:
-                environment["PATH"] = os.pathsep.join(
-                    [str(aliases), str(selected.executable.parent), environment["PATH"]]
+                process_started = perf_counter()
+                try:
+                    result = execution.run(timeout_seconds=timeout)
+                except BaseException as error:
+                    run_error = error
+                    raise
+                finally:
+                    metrics["process_ms"] = (perf_counter() - process_started) * 1000
+        except BaseException as error:
+            if isinstance(error, NativeCleanupError) or (
+                execution is not None
+                and (error is not run_error or execution.last_cleanup_status == "unknown")
+            ):
+                self._execution_unhealthy(
+                    {
+                        "cleanup_status": "unknown",
+                        "cleanup_error": "Native execution or resource cleanup was not confirmed",
+                        "cleanup_diagnostics": [
+                            {"stage": "execution" if error is run_error else "release"}
+                        ],
+                    }
                 )
-                prefix = selected.executable.parent.parent
-                if (prefix / "conda-meta").is_dir():
-                    environment["CONDA_PREFIX"] = str(prefix)
-                elif (prefix / "pyvenv.cfg").is_file():
-                    environment["VIRTUAL_ENV"] = str(prefix)
-            runner = ProcessRunner(
-                max_output_bytes=max_output_bytes, base_env=environment, supervise_tree=True
-            )
-            process_started = perf_counter()
-            try:
-                result = runner.run(
-                    invocation,
-                    cwd=cwd or self.workspace,
-                    timeout_seconds=timeout,
-                )
-            except BaseException:
-                if runner.last_cleanup_status == "unknown":
-                    self.healthy = False
-                raise
-            finally:
-                metrics["process_ms"] = (perf_counter() - process_started) * 1000
-            if result.cleanup_error or (result.timed_out and result.cleanup_status != "confirmed"):
-                self.healthy = False
-                self.last_cleanup = {
+            raise
+        finally:
+            if execution is None:
+                metrics["preparation_ms"] = (perf_counter() - preparation_started) * 1000
+            policy_metrics = self._get_metric("last_policy_metrics")
+            if policy_metrics is not None:
+                metrics["policy"] = policy_metrics
+        if (
+            result.cleanup_error
+            or result.cleanup_status == "unknown"
+            or (result.timed_out and result.cleanup_status != "confirmed")
+        ):
+            self._execution_unhealthy(
+                {
                     "cleanup_status": result.cleanup_status,
                     "cleanup_error": result.cleanup_error,
                     "cleanup_diagnostics": result.cleanup_diagnostics,
                     "pid": result.pid,
                     "process_group_id": result.process_group_id,
                 }
-            return result
+            )
+        return result
+
+    def _execution_unhealthy(self, cleanup):
+        self.healthy = False
+        self.last_cleanup = cleanup
+        cancellation = current_cancellation()
+        if cancellation is not None:
+            cancellation.record_cleanup(
+                "unknown", source="native_execution", error=cleanup.get("cleanup_error")
+            )
 
     def tools(self):
         return [

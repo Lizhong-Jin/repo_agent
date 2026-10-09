@@ -274,8 +274,14 @@ def test_mode_is_read_from_installation_not_working_directory(installation, tmp_
 
 
 def test_non_native_platform_is_rejected(monkeypatch):
-    monkeypatch.setattr(dependencies, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(dependencies, "sys", SimpleNamespace(platform="freebsd"))
     assert dependencies.native_preflight()[0][0] == "ERROR"
+
+
+def test_windows_native_is_declared_with_mandatory_startup_verification(monkeypatch):
+    monkeypatch.setattr(dependencies, "sys", SimpleNamespace(platform="win32"))
+    rows = dependencies.native_preflight()
+    assert rows[0][0] == "OK" and "启动时验证" in rows[0][2]
 
 
 def test_doctor_native_uses_actual_probe_and_surfaces_failures(installation, tmp_path, monkeypatch):

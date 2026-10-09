@@ -81,7 +81,7 @@ dist/
         └── repo-agent-0.1.4-windows-x86_64.zip.sha256
 ```
 
-Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独输出到发布目录。每个压缩包只有一个 `repo-agent-<版本>-<平台>/` 顶层文件夹，内含运行时锁文件、平台标记和 `wheelhouse/`。macOS/Linux 内含固定的 `runtime/python.tar.gz`；Windows 上游 tar.gz 经固定 SHA256 校验后在构建阶段展开为 `runtime/python/python.exe` 等文件，避免安装引导依赖系统 Python 或 tar。当前构建器会移除有对应源码的 `.pyc`，遇到无源码字节码则拒绝构建；Windows 维护入口也校验和清理运行时缓存，具体边界见[安装说明](installation.md#windows-x86_64-zip-安装)。Windows 只收集 local/Docker 核心依赖，并按 Windows 目标评估锁文件的平台条件，不携带 native 语言服务依赖。完整包不包含项目的 PyTorch/CUDA 依赖、系统工具链或开发用 pytest/Ruff；后者通过源码开发材料准备。
+Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独输出到发布目录。每个压缩包只有一个 `repo-agent-<版本>-<平台>/` 顶层文件夹，内含运行时锁文件、平台标记和 `wheelhouse/`。macOS/Linux 内含固定的 `runtime/python.tar.gz`；Windows 上游 tar.gz 经固定 SHA256 校验后在构建阶段展开为 `runtime/python/python.exe` 等文件，避免安装引导依赖系统 Python 或 tar。当前构建器会移除有对应源码的 `.pyc`，遇到无源码字节码则拒绝构建；Windows 维护入口也校验和清理运行时缓存，具体边界见[安装说明](installation.md#windows-x86_64-zip-安装)。Windows 只收集核心依赖，并按 Windows 目标评估锁文件的平台条件，不携带 native 语言服务依赖；选择 Windows native 安装时须联网补齐。完整包不包含项目的 PyTorch/CUDA 依赖、系统工具链或开发用 pytest/Ruff；后者通过源码开发材料准备。
 
 发行包通过明确的文件清单收集源码、默认模板和资源，不复制构建机器的 `.venv`、`.git`、项目 `.env`、日志或缓存。wheel 内置用于重建 Docker 镜像的源码资源。`release.json` 记录版本、wheel 和各文件 SHA256，安装前逐项校验。macOS/Linux 的上游 Python 内部链接保留在固定哈希校验的内层归档中；Windows 展开步骤拒绝链接。外层发行归档只接受普通文件/目录。
 

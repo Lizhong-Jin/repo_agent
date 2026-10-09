@@ -74,6 +74,33 @@ jobs:
       - run: python -m pip install -e ".[dev]"
       - run: python -m pytest -q tests/test_architecture_boundaries.py tests/test_host_file_contracts.py tests/test_windows_files.py tests/test_windows_release.py tests/test_cancellation.py tests/test_task_queue.py tests/test_continue.py tests/test_execution_ledger.py tests/test_task_reports.py tests/test_verification_plan.py tests/test_tui_reports.py tests/test_workspaces.py tests/test_review_mode.py
 
+  windows-isolation:
+    name: Windows native and isolation kernel tests (Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.13']
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      RUN_WINDOWS_ISOLATION_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+          architecture: x64
+      - run: python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
+      - run: python -m pip install --require-hashes --only-binary=:all: -r requirements-lsp.lock
+      - name: Build probe with installed SDK and run real isolation tests
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "ISOLATION_VS=%%i"
+          if not defined ISOLATION_VS exit /b 1
+          call "%ISOLATION_VS%\VC\Auxiliary\Build\vcvars64.bat"
+          if errorlevel 1 exit /b 1
+          python -m pytest -q -ra tests/test_windows_isolation.py tests/test_windows_isolation_kernel.py tests/test_windows_native.py tests/test_windows_native_kernel.py tests/test_native_execution_adapter.py
+
   windows-release:
     runs-on: windows-latest
     timeout-minutes: 25

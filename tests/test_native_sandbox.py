@@ -14,7 +14,7 @@ from tools._internal.process_runner import ProcessResult
 
 
 def test_native_rejects_other_platforms_before_creating_state(monkeypatch, tmp_path):
-    monkeypatch.setattr("sandbox.native.sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr("sandbox.native.sys", SimpleNamespace(platform="freebsd"))
     with pytest.raises(ValueError, match="仅支持 macOS"):
         NativeBackend(tmp_path)
 

@@ -1,5 +1,7 @@
 # macOS / Linux 原生沙箱
 
+Windows x86_64 使用 LPAC/Job 和私有工作副本、逐调用回写，见 [Windows native](windows-native-isolation.md)。本文下面的直接修改项目、POSIX 工具链和信号清理说明针对 macOS/Linux。
+
 [文档首页](index.md) · [项目首页](../README.md) · [Docker 沙箱](../sandbox/README.md)
 
 macOS/Linux 首次安装默认使用 `native`（已显式安装其他模式时，以安装记录为准）：文件工具通过受控的轻量文件服务直接修改原项目；Git 工具、命令、Python、环境探测和语言服务器通过 macOS Seatbelt 或 Linux Bubblewrap + seccomp 执行。首次默认的 `repo-agent` 等同于 `repo-agent --sandbox native`：
@@ -47,7 +49,7 @@ repo-agent --sandbox native
 
 Fedora 的对应包是 `bubblewrap libseccomp`。需要其他语言时，先准备 Node.js/npm、Go 1.25+ 或 clangd，再使用 `repo-agent toolchains install` 安装受管语言服务。安装器不自动提权或修改 Linux 系统包。某些发行版的 AppArmor、sysctl 策略或外层容器会禁止非特权 namespace；启动自检失败会明确报错，不会自动放宽安全策略或退回 local。
 
-`sandbox/native.py` 的 `create_native_backend()` 选择 `sandbox/linux_native.py`；`sandbox/native_common.py` 管理共用工具接口、受信任代码副本和调用生命周期，`host_support` 提供输出收集与进程监督。每次隔离执行调用创建独立 namespace，挂载原工作区及私有临时目录；`sandbox/linux_exec.py` 在执行项目代码前加载 seccomp，禁止 sockets（含 Unix socket）、io_uring、硬链接及重新配置 namespace/mount 等系统调用，子进程继承这些限制。匿名 `socketpair` 保留给 Node/libuv 等进程内部通信，不能用于连接宿主机服务。
+`sandbox/native.py` 的 `create_native_backend()` 选择 `sandbox/linux_native.py`；`sandbox/native_common.py` 管理共用工具接口、受信任代码副本、调度和健康状态。Linux 与 macOS 显式使用 `sandbox/posix_execution.py` 的执行适配器准备单次调用、构造环境并释放资源，`host_support` 继续提供输出收集与进程监督。可替换接口与接入约束见[平台适配边界](platform-adaptation.md#原生后端)。每次隔离执行调用创建独立 namespace，挂载原工作区及私有临时目录；`sandbox/linux_exec.py` 在执行项目代码前加载 seccomp，禁止 sockets（含 Unix socket）、io_uring、硬链接及重新配置 namespace/mount 等系统调用，子进程继承这些限制。匿名 `socketpair` 保留给 Node/libuv 等进程内部通信，不能用于连接宿主机服务。
 
 | 路径或资源 | Linux native 权限 |
 | --- | --- |
@@ -128,7 +130,7 @@ Metal 命令/Python 超时上限均为 900 秒，默认仍为 60/10 秒，无 GP
 - 工具环境不继承 API Key、代理设置、SSH Agent socket 或 Python 启动变量。HOME、缓存及临时目录指向本次调用的私有目录。
 - 开始会话时复制受信任的工具实现，worker 通过隔离的 Python 启动方式加载副本；修改 Agent 自身项目不会改变当前会话的工具实现。
 
-启动自检实际验证目录外文件读写被拒绝、网络被拒绝、子进程继承限制、工作目录写入和硬链接限制。自检失败直接报错，不自动切换为 local 或无限制执行。Linux 使用上述独立后端；Windows ZIP 提供 local / Docker 适配，不提供 native。需要本文的原生隔离能力时，Windows 用户应在具备 namespace 能力的 WSL2 中使用 Linux 包。
+启动自检实际验证目录外文件读写被拒绝、网络被拒绝、子进程继承限制、工作目录写入和硬链接限制。自检失败直接报错，不自动切换为 local 或无限制执行。Linux 使用上述独立后端；Windows ZIP 还支持 LPAC/Job native，文件授权与回写方式见 [Windows native](windows-native-isolation.md)；WSL2 继续使用 Linux 后端。
 
 ### 文件访问范围
 

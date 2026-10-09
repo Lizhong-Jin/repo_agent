@@ -5,6 +5,11 @@ from sandbox import SandboxSession
 
 
 def dispatch_command(argv):
+    if argv[:1] == ["native-cleanup"]:
+        from .windows_native_command import main as cleanup_main
+
+        cleanup_main(argv[1:])
+        return True
     if argv[:1] == ["workspaces"]:
         from .workspaces_command import main as workspaces_main
 

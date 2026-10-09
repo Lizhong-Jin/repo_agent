@@ -39,6 +39,7 @@
 | --- | --- |
 | [项目架构](../Project_Architecture.md) | 模块职责、任务流程与状态归属 |
 | [平台适配边界](platform-adaptation.md) | 公共宿主服务、Windows 文件/安装适配、原生后端分工和验证范围 |
+| [Windows 隔离执行与清理](windows-native-isolation.md) | LPAC/Job、私有工作区与 Python 授权、回写、异常恢复及 Windows 实机验收 |
 | [开发指南](development.md) | 开发环境、验证矩阵、最小 Runtime 与压缩集成 |
 | [工具开发参考](tools.md) | 工厂、并发与预算、结果回读、Git 历史、文件/进程工具及 LSP |
 | [统一模型接口](llm.md) | 同步/异步客户端、工具消息、协议、用量、错误与流式事件 |

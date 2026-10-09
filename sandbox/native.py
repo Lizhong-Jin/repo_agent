@@ -19,12 +19,16 @@ def create_native_backend(workspace, **options):
         return LinuxNativeBackend(workspace, **options)
     if sys.platform == "darwin":
         return MacOSNativeBackend(workspace, **options)
-    raise ValueError("native 沙箱仅支持 macOS/Linux；不会退回未隔离执行")
+    if sys.platform == "win32":
+        from .windows_native import WindowsNativeBackend
+
+        return WindowsNativeBackend(workspace, **options)
+    raise ValueError("native 沙箱仅支持 macOS/Linux/Windows；不会退回未隔离执行")
 
 
 class _NativeConstructor(type):
     def __call__(cls, *args, **kwargs):
-        if cls is NativeBackend and sys.platform == "linux":
+        if cls is NativeBackend and sys.platform in {"linux", "win32"}:
             return create_native_backend(*args, **kwargs)
         return super().__call__(*args, **kwargs)
 
@@ -40,6 +44,10 @@ class NativeBackend(MacOSNativeBackend, metaclass=_NativeConstructor):
                 # Preserve direct __new__ calls used to allocate an uninitialized
                 # backend. Normal construction is dispatched by the metaclass.
                 return object.__new__(LinuxNativeBackend)
+            if sys.platform == "win32":
+                from .windows_native import WindowsNativeBackend
+
+                return object.__new__(WindowsNativeBackend)
             if sys.platform != "darwin":
-                raise ValueError("native 沙箱仅支持 macOS/Linux；不会退回未隔离执行")
+                raise ValueError("native 沙箱仅支持 macOS/Linux/Windows；不会退回未隔离执行")
         return object.__new__(cls)

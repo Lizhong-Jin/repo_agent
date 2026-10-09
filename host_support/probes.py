@@ -7,6 +7,10 @@ from .diagnostics import Diagnostic
 
 
 def _native_rows(platform):
+    if platform == "win32":
+        return [
+            ("OK", "原生沙箱", "Windows LPAC/Job；启动时验证实际隔离，Python/Git 在私有副本运行")
+        ]
     if platform == "linux":
         import ctypes
 
@@ -35,7 +39,7 @@ def _native_rows(platform):
             (
                 "ERROR",
                 "原生沙箱",
-                "native 仅支持 macOS/Linux；Windows 请通过 WSL2 运行",
+                "native 仅支持 macOS/Linux/Windows x86_64",
             )
         ]
     if not Path("/usr/bin/sandbox-exec").is_file():

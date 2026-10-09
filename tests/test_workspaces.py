@@ -487,8 +487,11 @@ def test_native_worktree_does_not_inherit_launch_python(tmp_path, monkeypatch):
     from test_project_python import executable
 
     from sandbox.native_common import NativeBackendBase
+    from sandbox.posix_execution import PosixNativeExecutionAdapter
 
     class Backend(NativeBackendBase):
+        execution_adapter_type = PosixNativeExecutionAdapter
+
         def _platform_setup(self):
             pass
 
