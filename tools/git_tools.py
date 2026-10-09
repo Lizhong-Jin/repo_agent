@@ -1138,7 +1138,9 @@ class GitShowTool(_HistoryTool):
         safe = []
         for name in filter(None, names.stdout.split("\0")):
             try:
-                selected = self.path(str(root / name), root)
+                # The validator accepts Git-style separators on every host;
+                # str(Path) would introduce backslashes on Windows.
+                selected = self.path((root / name).as_posix(), root)
                 if selected != name:
                     raise GitHistoryError("GIT_PARSE_ERROR", "Invalid changed path.")
                 safe.append(name)

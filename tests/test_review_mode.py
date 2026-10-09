@@ -138,6 +138,34 @@ def test_git_queries_do_not_launch_project_git(project, monkeypatch):
     assert not (project / "must-not-exist").exists()
 
 
+@pytest.mark.parametrize("directory", [".", "nested repo"])
+def test_review_git_show_handles_native_paths_and_keeps_path_checks(project, directory):
+    from tools import GitShowTool
+
+    root = project / directory
+    root.mkdir(exist_ok=True)
+    source = root / "src" / "space 中文.py"
+    source.parent.mkdir()
+    source.write_text("WINDOWS_PATCH_CONTENT\n", encoding="utf-8")
+    (root / ".env").write_text("PRIVATE_HISTORY_CONTENT\n")
+    git = Git(root)
+    git.run("init", "--template=", "--initial-branch=main")
+    git.run("add", "-f", "--", "src/space 中文.py", ".env")
+    git.run("commit", "-m", "nested paths")
+    tool = GitShowTool(project)
+    before = contents(project)
+
+    result = tool.execute({"cwd": directory})
+    assert result.success, result
+    assert result.data["repo_root"] == directory
+    assert "+WINDOWS_PATCH_CONTENT" in result.data["diff"]
+    assert "PRIVATE_HISTORY_CONTENT" not in result.data["diff"]
+    assert tool.execute({"cwd": directory, "path": "src\\space 中文.py"}).error_code == (
+        "INVALID_ARGUMENTS"
+    )
+    assert contents(project) == before
+
+
 def test_review_refuses_partial_clones_before_query(project):
     git = Git(project)
     git.run("init", "--template=", "--initial-branch=main")
