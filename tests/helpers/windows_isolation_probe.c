@@ -3,9 +3,49 @@
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <windows.h>
+#include <sddl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <wchar.h>
+
+static int failed(const char *stage, DWORD error, int code) {
+    fprintf(stderr, "{\"stage\":\"%s\",\"error\":%lu}\n", stage, error);
+    return code;
+}
+
+static int report_identity(void) {
+    HANDLE token = NULL;
+    DWORD container = 0, size = 0;
+    BOOL job = FALSE, all_packages = TRUE;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+        return failed("identity.OpenProcessToken", GetLastError(), 98);
+    if (!GetTokenInformation(token, TokenIsAppContainer, &container, sizeof(container), &size))
+        return failed("identity.GetTokenInformation", GetLastError(), 98);
+    PSID all_packages_sid = NULL;
+    if (!ConvertStringSidToSidW(L"S-1-15-2-1", &all_packages_sid))
+        return failed("identity.packageSID", GetLastError(), 98);
+    if (!CheckTokenMembershipEx(NULL, all_packages_sid, CTMF_INCLUDE_APPCONTAINER, &all_packages))
+        return failed("identity.CheckTokenMembershipEx", GetLastError(), 98);
+    LocalFree(all_packages_sid);
+    GetTokenInformation(token, TokenCapabilities, NULL, 0, &size);
+    TOKEN_GROUPS *groups = (TOKEN_GROUPS *)malloc(size);
+    if (!groups) return failed("identity.allocate", ERROR_NOT_ENOUGH_MEMORY, 98);
+    if (!GetTokenInformation(token, TokenCapabilities, groups, size, &size))
+        return failed("identity.TokenCapabilities", GetLastError(), 98);
+    LPWSTR capability = NULL;
+    if (groups->GroupCount != 1 ||
+        !ConvertSidToStringSidW(groups->Groups[0].Sid, &capability))
+        return failed("identity.capability", ERROR_INVALID_DATA, 98);
+    if (!IsProcessInJob(GetCurrentProcess(), NULL, &job))
+        return failed("identity.IsProcessInJob", GetLastError(), 98);
+    printf("{\"identity\":{\"pid\":%lu,\"container\":%lu,\"all_packages_member\":%d,\"job\":%d,"
+           "\"capability\":\"%ls\",\"attributes\":%lu}}\n",
+           GetCurrentProcessId(), container, all_packages, job, capability, groups->Groups[0].Attributes);
+    LocalFree(capability);
+    free(groups);
+    CloseHandle(token);
+    return 0;
+}
 
 static DWORD file_access(const wchar_t *path, DWORD access, DWORD disposition) {
     HANDLE h = CreateFileW(path, access, FILE_SHARE_READ | FILE_SHARE_WRITE |
@@ -25,14 +65,25 @@ static BOOL child(const wchar_t *mode, DWORD flags, PROCESS_INFORMATION *pi) {
     si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
     si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-    return CreateProcessW(exe, line, NULL, NULL, TRUE, flags | CREATE_NO_WINDOW,
-                          NULL, NULL, &si, pi);
+    BOOL created = CreateProcessW(exe, line, NULL, NULL, TRUE, flags | CREATE_NO_WINDOW,
+                                  NULL, NULL, &si, pi);
+    if (!created) {
+        DWORD error = GetLastError();
+        failed("CreateProcessW", error, 91);
+        SetLastError(error);  /* Preserve the error for the breakaway assertion. */
+    }
+    return created;
 }
 
 int wmain(int argc, wchar_t **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
     if (argc < 2) return 90;
+    if (!wcscmp(argv[1], L"sleep") || !wcscmp(argv[1], L"tree") ||
+        !wcscmp(argv[1], L"middle")) {
+        int error = report_identity();
+        if (error) return error;
+    }
     if (!wcscmp(argv[1], L"sleep")) {
         printf("{\"ready\":%lu}\n", GetCurrentProcessId());
         Sleep(60000);
@@ -72,19 +123,22 @@ int wmain(int argc, wchar_t **argv) {
         DWORD container = 0, size = 0, caps = 999;
         BOOL job = FALSE;
         HANDLE token = NULL;
-        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return 93;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+            return failed("OpenProcessToken", GetLastError(), 93);
         if (!GetTokenInformation(token, TokenIsAppContainer, &container,
-                                  sizeof(container), &size)) return 94;
+                                  sizeof(container), &size))
+            return failed("TokenIsAppContainer", GetLastError(), 94);
         GetTokenInformation(token, TokenCapabilities, NULL, 0, &size);
         TOKEN_GROUPS *groups = (TOKEN_GROUPS *)malloc(size);
         if (!groups || !GetTokenInformation(token, TokenCapabilities, groups, size, &size))
-            return 95;
+            return failed("TokenCapabilities", GetLastError(), 95);
         caps = groups->GroupCount;
         free(groups);
         CloseHandle(token);
         IsProcessInJob(GetCurrentProcess(), NULL, &job);
         WSADATA data;
-        if (WSAStartup(MAKEWORD(2, 2), &data)) return 96;
+        int startup_error = WSAStartup(MAKEWORD(2, 2), &data);
+        if (startup_error) return failed("WSAStartup", (DWORD)startup_error, 96);
         SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         int network = WSAGetLastError();
         if (s != INVALID_SOCKET) {

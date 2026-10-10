@@ -49,9 +49,9 @@ ACL 只设置在本次拥有的私有目录：运行时、请求和 Git 元数�
 
 ## 隔离与清理
 
-每次调用新建随机 AppContainer profile，无网络或目录 capability。`SECURITY_CAPABILITIES` 配合 `ALL_APPLICATION_PACKAGES_OPT_OUT` 创建 LPAC，不继承普通 AppContainer 对 `ALL APPLICATION PACKAGES` 的额外访问。系统对受限应用共享的基础资源仍可能可见；它不是虚拟机。
+每次调用新建随机 AppContainer profile，仅授予固定的 `registryRead` capability，满足 Winsock 初始化、子进程创建和 Python 启动所需的系统注册表读取；无网络或目录 capability。该权限扩大可读取的注册表资源范围，实际访问仍受目标对象 ACL 和用户权限约束，不能将其视为宿主配置信息完全不可见。`SECURITY_CAPABILITIES` 配合 `ALL_APPLICATION_PACKAGES_OPT_OUT` 创建 LPAC，不继承普通 AppContainer 对 `ALL APPLICATION PACKAGES` 的额外访问。系统对受限应用共享的基础资源仍可能可见；它不是虚拟机。
 
-创建时禁用 Win32k 与扩展点，使用 `CREATE_SUSPENDED`，通过 `PROC_THREAD_ATTRIBUTE_JOB_LIST` 在创建时原子加入私有 Job；恢复主线程前核验 Job、AppContainer SID 和零 capability。任何属性或检查失败都拒绝执行。环境由可信层显式提供，句柄白名单只有标准输入输出，stdin 立即 EOF。
+创建时禁用 Win32k 与扩展点，使用 `CREATE_SUSPENDED`，通过 `PROC_THREAD_ATTRIBUTE_JOB_LIST` 在创建时原子加入私有 Job；恢复主线程前核验 Job、AppContainer SID，以及恰好一个启用的 `registryRead` SID。缺失、替换、额外 capability 或错误属性均拒绝执行。环境由可信层显式提供，句柄白名单只有标准输入输出，stdin 立即 EOF。
 
 Job 设置 `KILL_ON_JOB_CLOSE`、禁止 breakaway。正常退出也终止残余子孙进程；超时/取消后在独立的有界期限内验证 `ActiveProcesses == 0` 和主进程已结束。stdout/stderr 持续排空并保留有界头尾。查询、终止、句柄或 profile 释放失败会传播不确定状态并禁用后端。
 

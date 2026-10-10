@@ -269,9 +269,20 @@ def test_session_log_history_and_diagnostics_share_host_storage(tmp_path):
         restored.close()
 
 
-def test_docker_snapshot_writeback_conflict_resume_and_restore(tmp_path):
+@pytest.mark.parametrize("default_encoding", ["utf-8", "gbk"])
+def test_docker_snapshot_writeback_conflict_resume_and_restore(
+    tmp_path, monkeypatch, default_encoding
+):
+    from pathlib import Path
+
     from sandbox.session import SandboxSession
 
+    original_read = Path.read_text
+
+    def locale_read(path, encoding=None, errors=None):
+        return original_read(path, encoding=encoding or default_encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", locale_read)
     project = tmp_path / "工作区 with spaces"
     project.mkdir()
     (project / "a.txt").write_bytes(b"before\r\n")
@@ -299,6 +310,38 @@ def test_docker_snapshot_writeback_conflict_resume_and_restore(tmp_path):
         assert (project / "a.txt").read_bytes() == b"before\r\n"
         assert (project / "remove.txt").read_bytes() == b"delete me"
         assert not (project / "nested/new.txt").exists()
+    finally:
+        shutil.rmtree(session.directory)
+
+
+def test_docker_snapshot_initialization_does_not_launch_git_maintenance(tmp_path, monkeypatch):
+    from sandbox import session as module
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "a.txt").write_bytes(b"baseline\n")
+    trace = tmp_path / "git-trace.jsonl"
+    original_run = module.subprocess.run
+
+    def traced_run(command, **kwargs):
+        # Observe real Git children rather than checking the spelling of flags.
+        kwargs["env"] = {**kwargs["env"], "GIT_TRACE2_EVENT": str(trace)}
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(module.subprocess, "run", traced_run)
+    session = module.SandboxSession(project, backend=SimpleNamespace(healthy=True))
+    try:
+        events = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+        assert any(event.get("name") == "commit" for event in events)
+        maintenance = [
+            event["argv"]
+            for event in events
+            if event.get("event") == "child_start"
+            and any(arg in {"maintenance", "gc"} for arg in event.get("argv", []))
+        ]
+        assert not maintenance, maintenance
+        assert session.changes()[1] == []
+        assert (session.workspace / "a.txt").read_bytes() == b"baseline\n"
     finally:
         shutil.rmtree(session.directory)
 

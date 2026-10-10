@@ -278,6 +278,10 @@ def test_win32_launch_attributes_are_atomic_restricted_and_explicit(monkeypatch)
 
         def UpdateProcThreadAttribute(self, buffer, flags, key, value, size, prev, returned):
             captured[key] = ctypes.string_at(value, size)
+            if key == win.SECURITY_CAPABILITIES:
+                caps = ctypes.cast(value, ctypes.POINTER(win.SecurityCapabilities)).contents
+                entry = ctypes.cast(caps.capabilities, ctypes.POINTER(win.SidAndAttributes))[0]
+                captured["capability"] = (entry.sid, entry.attributes)
             return True
 
         def CreateProcessW(self, exe, line, pa, ta, inherit, flags, env, cwd, si, pi):
@@ -303,6 +307,7 @@ def test_win32_launch_attributes_are_atomic_restricted_and_explicit(monkeypatch)
 
     api = object.__new__(win.WindowsIsolationAPI)
     api.kernel = Kernel()
+    api.registry_read_sid = ctypes.create_string_buffer(b"registryRead")
     monkeypatch.setattr(ctypes, "get_last_error", lambda: 122, raising=False)
     owned = []
     api.create_suspended(
@@ -315,12 +320,100 @@ def test_win32_launch_attributes_are_atomic_restricted_and_explicit(monkeypatch)
         owned.append,
     )
     capabilities = win.SecurityCapabilities.from_buffer_copy(captured[win.SECURITY_CAPABILITIES])
-    assert capabilities.sid == 123 and capabilities.count == 0 and not capabilities.capabilities
+    assert capabilities.sid == 123 and capabilities.count == 1
+    assert captured["capability"] == (ctypes.addressof(api.registry_read_sid), 4)
     assert list((win.HANDLE * 3).from_buffer_copy(captured[win.HANDLE_LIST])) == [1, 2, 3]
     assert list((win.HANDLE * 1).from_buffer_copy(captured[win.JOB_LIST])) == [99]
     assert win.DWORD.from_buffer_copy(captured[win.ALL_APPLICATION_PACKAGES_POLICY]).value == 1
     assert ctypes.c_uint64.from_buffer_copy(captured[win.MITIGATION_POLICY]).value & (1 << 28)
     assert owned == [100, 101] and captured["released"]
+
+
+@pytest.mark.parametrize(
+    "count,sid,attributes,accepted",
+    [
+        (1, 123, 4, True),
+        (0, 123, 4, False),
+        (2, 123, 4, False),
+        (1, 456, 4, False),
+        (1, 0, 4, False),
+        (1, 123, 0, False),
+        (1, 123, 16, False),
+    ],
+)
+def test_capability_verification_requires_only_enabled_registry_read(
+    count, sid, attributes, accepted
+):
+    from host_support import windows_isolation as win
+
+    api = object.__new__(win.WindowsIsolationAPI)
+    api.registry_read_sid = ctypes.create_string_buffer(b"expected")
+    api.security = SimpleNamespace(
+        EqualSid=lambda actual, expected: (
+            actual == 123 and expected == ctypes.addressof(api.registry_read_sid)
+        )
+    )
+    groups = win.TokenGroups(
+        count, (win.SidAndAttributes * 1)(win.SidAndAttributes(sid, attributes))
+    )
+    data = ctypes.create_string_buffer(bytes(groups))
+    if accepted:
+        api._verify_capabilities(data)
+    else:
+        with pytest.raises(OSError, match="Unexpected AppContainer capabilities"):
+            api._verify_capabilities(data)
+    with pytest.raises(OSError, match="Truncated"):
+        api._verify_capabilities(ctypes.create_string_buffer(4))
+
+
+@pytest.mark.parametrize("failure", [None, "count", "length"])
+def test_capability_derivation_copies_sid_and_frees_all_native_allocations(failure):
+    from host_support import windows_isolation as win
+
+    api = object.__new__(win.WindowsIsolationAPI)
+    group = ctypes.create_string_buffer(b"group")
+    capability = ctypes.create_string_buffer(b"registry")
+    other = ctypes.create_string_buffer(b"unexpected")
+    count = 2 if failure == "count" else 1
+    groups = (win.HANDLE * 1)(ctypes.addressof(group))
+    pointers = [ctypes.addressof(capability), ctypes.addressof(other)][:count]
+    capabilities = (win.HANDLE * count)(*pointers)
+
+    def derive(name, group_array, ng, cap_array, nc):
+        assert name == "registryRead"
+        ctypes.cast(group_array, ctypes.POINTER(win.HANDLE))[0] = ctypes.addressof(groups)
+        ctypes.cast(ng, ctypes.POINTER(win.DWORD))[0] = 1
+        ctypes.cast(cap_array, ctypes.POINTER(win.HANDLE))[0] = ctypes.addressof(capabilities)
+        ctypes.cast(nc, ctypes.POINTER(win.DWORD))[0] = count
+        return True
+
+    def length(sid):
+        assert sid == ctypes.addressof(capability)
+        if failure == "length":
+            raise OSError("invalid SID")
+        return 8
+
+    freed = []
+    api.base = SimpleNamespace(DeriveCapabilitySidsFromName=derive)
+    api.security = SimpleNamespace(GetLengthSid=length)
+    api.kernel = SimpleNamespace(
+        LocalFree=lambda address: freed.append(
+            address.value if isinstance(address, win.HANDLE) else address
+        )
+    )
+    if failure:
+        with pytest.raises(OSError):
+            api._derive_registry_read_sid()
+    else:
+        result = api._derive_registry_read_sid()
+        capability[0] = b"X"
+        assert result.value == b"registry"
+    assert freed == [
+        ctypes.addressof(group),
+        ctypes.addressof(groups),
+        *pointers,
+        ctypes.addressof(capabilities),
+    ]
 
 
 def test_job_is_unnamed_noninheritable_and_cannot_break_away():

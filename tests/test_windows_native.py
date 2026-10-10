@@ -7,12 +7,148 @@ from types import SimpleNamespace
 import pytest
 
 from host_support.cancellation import CancellationContext, RunCancelled
+from host_support.processes import ProcessResult
 from host_support.windows_recovery import RecoveryLease, recover_profiles
 from host_support.windows_security import PrivateWindowsSecurity
 from sandbox.native_execution import NativeCall, NativeCleanupError
 from sandbox.windows_native import WindowsNativeBackend
 from sandbox.windows_python import inspect_python, stage_python
 from sandbox.windows_workspace import WindowsCallSnapshot, copy_private_tree
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["startup", "malformed_json", "check", "timeout", "cleanup", "stdout", "stderr", "unhealthy"],
+)
+def test_preflight_failures_keep_bounded_diagnostics(tmp_path, failure):
+    backend = object.__new__(WindowsNativeBackend)
+    backend.directory = tmp_path
+    backend.python = tmp_path / "python.exe"
+    backend.healthy = failure != "unhealthy"
+    report = dict.fromkeys(
+        ["host_read", "host_write", "runtime_write", "network", "workspace_write"], True
+    )
+    if failure == "check":
+        report["network"] = False
+    stdout = json.dumps(report)
+    if failure in {"startup", "malformed_json"}:
+        stdout = "invalid-output" * 1000
+    result = ProcessResult(
+        exit_code=0xC0000022 if failure == "startup" else None if failure == "timeout" else 0,
+        stdout=stdout,
+        stderr="loader diagnostic " * 1000,
+        timed_out=failure == "timeout",
+        cleanup_error="job still active" if failure == "cleanup" else None,
+        duration_ms=1,
+        stdout_truncated=failure == "stdout",
+        stderr_truncated=failure == "stderr",
+        cleanup_status="unknown" if failure == "cleanup" else "confirmed",
+    )
+    backend._run = lambda *args, **kwargs: result
+    with pytest.raises(ValueError, match="Windows native 隔离自检失败") as caught:
+        backend._preflight()
+    diagnostic = json.loads(str(caught.value).split("：", 1)[1])
+    assert diagnostic["exit_code"] == result.exit_code
+    if failure == "startup":
+        assert diagnostic["exit_code_hex"] == "0xC0000022"
+    assert diagnostic["timed_out"] == result.timed_out
+    assert diagnostic["cleanup_status"] == result.cleanup_status
+    assert diagnostic["healthy"] == backend.healthy
+    assert diagnostic["stdout"] == stdout[:1000]
+    assert diagnostic["stderr"] == result.stderr[:1000]
+    if failure == "check":
+        assert "'network': False" in diagnostic["checks"]
+    assert not backend._checking_isolation
+    assert not (tmp_path / "host-only.txt").exists()
+
+
+def test_preflight_accepts_complete_isolation_report(tmp_path):
+    backend = object.__new__(WindowsNativeBackend)
+    backend.directory, backend.python, backend.healthy = tmp_path, tmp_path / "python.exe", True
+    report = dict.fromkeys(
+        ["host_read", "host_write", "runtime_write", "network", "workspace_write"], True
+    )
+    backend._run = lambda *args, **kwargs: ProcessResult(
+        0, json.dumps(report), "", False, None, 1, False, False, cleanup_status="confirmed"
+    )
+    backend._preflight()
+    assert backend.preflight_metrics == {"isolation_verified": True, "checks": report}
+    assert not (tmp_path / "host-only.txt").exists()
+
+
+@pytest.mark.parametrize("denied_at", ["create", "connect", None])
+def test_preflight_network_probe_handles_creation_and_connection_denial(tmp_path, denied_at):
+    import builtins
+
+    backend = object.__new__(WindowsNativeBackend)
+    backend.directory, backend.python, backend.healthy = tmp_path, tmp_path / "python.exe", True
+    secret = str(tmp_path / "host-only.txt")
+
+    class ProbePath:
+        def __init__(self, name):
+            self.name = name
+
+        def __truediv__(self, name):
+            return ProbePath(self.name + "/" + name)
+
+        def read_bytes(self):
+            raise PermissionError("host read denied")
+
+        def write_text(self, value):
+            if self.name == secret or self.name.startswith("private-runtime/"):
+                raise PermissionError("protected write denied")
+
+        def read_text(self):
+            return "allowed"
+
+    class ProbeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def settimeout(self, seconds):
+            pass
+
+        def connect(self, address):
+            if denied_at == "connect":
+                raise PermissionError("connection denied")
+
+    def socket_factory():
+        if denied_at == "create":
+            raise PermissionError("socket creation denied")
+        return ProbeSocket()
+
+    modules = {
+        "json": json,
+        "os": SimpleNamespace(environ={"AGENT_PRIVATE_RUNTIME": "private-runtime"}),
+        "pathlib": SimpleNamespace(Path=ProbePath),
+        "socket": SimpleNamespace(socket=socket_factory),
+    }
+
+    def run(command, **kwargs):
+        output = []
+        namespace = {
+            "__builtins__": {
+                **vars(builtins),
+                "__import__": lambda name, *args, **kw: modules[name],
+                "print": output.append,
+            }
+        }
+        # Execute the actual generated preflight, including the socket context.
+        exec(command[-1], namespace)
+        return ProcessResult(
+            0, output[0], "", False, None, 1, False, False, cleanup_status="confirmed"
+        )
+
+    backend._run = run
+    if denied_at is None:
+        with pytest.raises(ValueError, match="'network': False"):
+            backend._preflight()
+    else:
+        backend._preflight()
+        assert backend.preflight_metrics["checks"]["network"]
 
 
 class RecoveryAPI:

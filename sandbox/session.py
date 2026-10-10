@@ -229,7 +229,10 @@ class SandboxSession:
             ["-c", f"core.hooksPath={os.devnull}", "commit", "--allow-empty", "-m", "Baseline"],
         ):
             subprocess.run(
-                [git, *args],
+                # Detached maintenance can remove .git lock files while the
+                # permission walk below is using its directory listing. Keep
+                # this fresh, private repository idle once each command exits.
+                [git, "-c", "gc.auto=0", "-c", "maintenance.auto=false", *args],
                 cwd=self.workspace,
                 env=env,
                 capture_output=True,
@@ -245,7 +248,7 @@ class SandboxSession:
     def review(cls, directory: str | Path):
         self = cls.__new__(cls)
         self.directory = Path(directory).resolve(strict=True)
-        state = json.loads((self.directory / "state.json").read_text())
+        state = json.loads((self.directory / "state.json").read_text(encoding="utf-8"))
         self.root = Path(state["root"]).resolve(strict=True)
         self.workspace = self.directory / "workspace"
         self.policy = SandboxPolicy()
@@ -507,7 +510,7 @@ class SandboxSession:
         if len(backup_id) != 32 or any(c not in "0123456789abcdef" for c in backup_id):
             raise ValueError("备份 ID 必须是 backups 目录下的 32 位名称。")
         directory = self.directory / "backups" / backup_id
-        record = json.loads((directory / "manifest.json").read_text())
+        record = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
         if os.name == "nt":
             from host_support.windows_files import validate_snapshot_names
 

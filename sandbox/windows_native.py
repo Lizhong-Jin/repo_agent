@@ -98,9 +98,12 @@ denied('host_read', lambda: pathlib.Path(HOST_SECRET).read_bytes())
 denied('host_write', lambda: pathlib.Path(HOST_SECRET).write_text('modified'))
 runtime = pathlib.Path(os.environ['AGENT_PRIVATE_RUNTIME'])
 denied('runtime_write', lambda: (runtime / 'bad.py').write_text('x'))
-with socket.socket() as sock:
-    sock.settimeout(2)
-    denied('network', lambda: sock.connect(('127.0.0.1', PORT)))
+def network_access():
+    # Windows may reject socket creation before connect is reached.
+    with socket.socket() as sock:
+        sock.settimeout(2)
+        sock.connect(('127.0.0.1', PORT))
+denied('network', network_access)
 pathlib.Path('native-write-test.txt').write_text('allowed')
 checks['workspace_write'] = pathlib.Path('native-write-test.txt').read_text() == 'allowed'
 print(json.dumps(checks))
@@ -114,23 +117,49 @@ print(json.dumps(checks))
                     "network",
                     "workspace_write",
                 }
-                report = json.loads(result.stdout) if result.exit_code == 0 else None
+                report = None
+                if result.exit_code == 0:
+                    try:
+                        report = json.loads(result.stdout)
+                    except ValueError:
+                        pass  # Include malformed output in the same bounded diagnostic below.
                 if (
                     not isinstance(report, dict)
                     or set(report) != expected
                     or any(value is not True for value in report.values())
                     or result.timed_out
                     or result.stdout_truncated
+                    or result.stderr_truncated
                     or result.cleanup_status != "confirmed"
                     or not self.healthy
                 ):
                     raise ValueError(
-                        "Windows native 隔离自检失败；不会退回未隔离执行：" + result.stderr[:1000]
+                        "Windows native 隔离自检失败；不会退回未隔离执行："
+                        + self._preflight_diagnostic(result, report)
                     )
                 self.preflight_metrics = {"isolation_verified": True, "checks": report}
         finally:
             self._checking_isolation = False
             secret.unlink(missing_ok=True)
+
+    def _preflight_diagnostic(self, result, report):
+        code = result.exit_code
+        return json.dumps(
+            {
+                "exit_code": code,
+                "exit_code_hex": f"0x{code & 0xFFFFFFFF:08X}" if code is not None else None,
+                "timed_out": result.timed_out,
+                "cleanup_status": result.cleanup_status,
+                "cleanup_error": (result.cleanup_error or "")[:1000],
+                "healthy": self.healthy,
+                "stdout_truncated": result.stdout_truncated,
+                "stderr_truncated": result.stderr_truncated,
+                "checks": repr(report)[:1000],
+                "stdout": result.stdout[:1000],
+                "stderr": result.stderr[:1000],
+            },
+            ensure_ascii=False,
+        )
 
     @contextmanager
     def _prepare_windows_call(self, isolation, call):

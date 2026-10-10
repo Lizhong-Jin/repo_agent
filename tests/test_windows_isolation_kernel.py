@@ -18,6 +18,7 @@ from host_support.cancellation import CancellationContext, RunCancelled, cancell
 from host_support.windows_isolation import WindowsIsolationAPI
 from host_support.windows_processes import WindowsIsolation
 from host_support.windows_recovery import recover_profiles
+from host_support.windows_security import PrivateWindowsSecurity
 
 pytestmark = pytest.mark.skipif(
     os.name != "nt" or os.getenv("RUN_WINDOWS_ISOLATION_TESTS") != "1",
@@ -68,7 +69,7 @@ def staged_probe(probe_exe):
         yield isolation, executable, environment
 
 
-def assert_dead(pid):
+def assert_dead(pid, *, wait_ms=0):
     kernel = C.WinDLL("kernel32", use_last_error=True)
     kernel.OpenProcess.argtypes = [C.c_uint32, C.c_int32, C.c_uint32]
     kernel.OpenProcess.restype = C.c_void_p
@@ -80,7 +81,7 @@ def assert_dead(pid):
         assert C.get_last_error() == 87  # PID no longer exists; access denied is not evidence.
         return
     try:
-        assert kernel.WaitForSingleObject(handle, 0) == 0
+        assert kernel.WaitForSingleObject(handle, wait_ms) == 0
     finally:
         kernel.CloseHandle(handle)
 
@@ -117,7 +118,7 @@ def test_real_token_file_network_isolation_and_profile_release(probe_exe, tmp_pa
             report = json.loads(result.stdout)
             assert report == {
                 "container": 1,
-                "capabilities": 0,
+                "capabilities": 1,  # The launcher verifies the exact registryRead SID.
                 "job": 1,
                 "read": 5,
                 "write": 5,
@@ -145,8 +146,25 @@ def test_real_descendants_breakaway_and_bounded_output(probe_exe, mode):
             rows = [json.loads(line) for line in result.stdout.splitlines()]
             children = [row["child"] for row in rows if "child" in row]
             assert len(children) == 2, rows
+            identities = [row["identity"] for row in rows if "identity" in row]
+            expected_sid = PrivateWindowsSecurity(scope.api).sid_string(
+                C.addressof(scope.api.registry_read_sid)
+            )
+            assert len(identities) == 3, rows
+            assert {row["pid"] for row in identities} == {result.pid, *children}
+            for identity in identities:
+                assert identity == {
+                    "pid": identity["pid"],
+                    "container": 1,
+                    "all_packages_member": 0,
+                    "job": 1,
+                    "capability": expected_sid,
+                    "attributes": 4,
+                }
             for pid in children:
-                assert_dead(pid)
+                # Job accounting can reach zero just before descendant handles
+                # become signaled. Still require actual death within a bound.
+                assert_dead(pid, wait_ms=5000)
         elif mode == "breakaway":
             assert json.loads(result.stdout)["breakaway_error"] == 5
         else:
@@ -222,9 +240,10 @@ def test_real_supervisor_death_kills_entire_job(probe_exe, tmp_path):
     # flushed outside the LPAC so readiness does not depend on process completion.
     code = r"""
 import json, shutil, sys
+from dataclasses import asdict
 from pathlib import Path
 from host_support.windows_processes import WindowsIsolation
-with open(sys.argv[2], "w", encoding="utf-8", buffering=1) as log:
+with open(sys.argv[2], "w", encoding="utf-8", buffering=1, newline="") as log:
     with WindowsIsolation(recovery_root=Path(sys.argv[3])) as scope:
         exe = scope.profile.directory / "probe.exe"
         shutil.copyfile(sys.argv[1], exe)
@@ -240,9 +259,11 @@ with open(sys.argv[2], "w", encoding="utf-8", buffering=1) as log:
                 log.write(data.decode("utf-8"))
             return data
         scope.api.create_suspended, scope.api.read = created, drained
-        scope.process([str(exe), "middle"], cwd=scope.profile.directory,
-                      environment={"SystemRoot": scope.api.windows_directory()}).run(
-                          timeout_seconds=60)
+        result = scope.process([str(exe), "middle"], cwd=scope.profile.directory,
+                               environment={"SystemRoot": scope.api.windows_directory()}).run(
+                                   timeout_seconds=60)
+        log.write(json.dumps({"probe_result": asdict(result)}) + "\n")
+        raise RuntimeError(f"Probe returned before supervisor was killed: {result!r}")
 """
     supervisor = subprocess.Popen(
         [sys.executable, "-c", code, str(probe_exe), str(log), str(tmp_path)],
@@ -257,12 +278,12 @@ with open(sys.argv[2], "w", encoding="utf-8", buffering=1) as log:
             if log.exists():
                 lines = log.read_text(encoding="utf-8").splitlines()
                 try:
-                    rows = [json.loads(line) for line in lines]
+                    rows = [json.loads(line) for line in lines if line.strip()]
                 except ValueError:  # Writer may be between writes of one line.
                     continue
                 if any("ready" in row for row in rows):
                     break
-            assert supervisor.poll() is None, "Supervisor exited before readiness"
+            assert supervisor.poll() is None, f"Supervisor exited before readiness: {rows}"
             time.sleep(0.02)
         assert any("ready" in row for row in rows), f"Supervisor did not become ready: {rows}"
         supervisor.kill()

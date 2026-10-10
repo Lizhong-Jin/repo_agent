@@ -65,6 +65,25 @@ def test_startup_failure_keeps_supervisor_diagnostics(monkeypatch, tmp_path, cle
     assert recovered == [tmp_path]
 
 
+def test_early_exit_includes_probe_result(monkeypatch, tmp_path):
+    harness(monkeypatch, tmp_path, ready=False)
+    with (tmp_path / "supervisor.jsonl").open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"probe_result": {"exit_code": 91, "stderr": "error=5"}}) + "\n")
+    with pytest.raises(AssertionError, match="Supervisor exited before readiness") as caught:
+        kernel.test_real_supervisor_death_kills_entire_job(tmp_path / "probe.exe", tmp_path)
+    assert "'exit_code': 91" in str(caught.value)
+    assert "error=5" in str(caught.value)
+
+
+def test_readiness_log_tolerates_windows_blank_lines(monkeypatch, tmp_path):
+    report = {"removed": ["test-profile"], "active": [], "retained": [], "failed": []}
+    supervisor, _ = harness(monkeypatch, tmp_path, ready=True, report=report)
+    log = tmp_path / "supervisor.jsonl"
+    log.write_bytes(log.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\r\n"))
+    kernel.test_real_supervisor_death_kills_entire_job(tmp_path / "probe.exe", tmp_path)
+    assert supervisor.returncode == -9
+
+
 @pytest.mark.parametrize("removed", [[], ["test-profile"]])
 def test_successful_kill_still_requires_expected_profile_recovery(monkeypatch, tmp_path, removed):
     report = {"removed": removed, "active": [], "retained": [], "failed": []}

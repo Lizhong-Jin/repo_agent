@@ -69,6 +69,14 @@ class SecurityCapabilities(C.Structure):
     _fields_ = [("sid", HANDLE), ("capabilities", HANDLE), ("count", DWORD), ("reserved", DWORD)]
 
 
+class SidAndAttributes(C.Structure):
+    _fields_ = [("sid", HANDLE), ("attributes", DWORD)]
+
+
+class TokenGroups(C.Structure):
+    _fields_ = [("count", DWORD), ("groups", SidAndAttributes * 1)]
+
+
 class JobBasicLimits(C.Structure):
     _fields_ = [
         ("process_time", C.c_int64),
@@ -136,6 +144,7 @@ class WindowsIsolationAPI:
         self.security = C.WinDLL("advapi32", use_last_error=True)
         self.userenv = C.WinDLL("userenv", use_last_error=True)
         self.ole = C.WinDLL("ole32", use_last_error=True)
+        self.base = C.WinDLL("kernelbase", use_last_error=True)
         ptr = C.POINTER
         signatures = [
             (self.kernel, "CloseHandle", BOOL, [HANDLE]),
@@ -207,6 +216,13 @@ class WindowsIsolationAPI:
                 [HANDLE, DWORD, HANDLE, DWORD, ptr(DWORD)],
             ),
             (self.security, "EqualSid", BOOL, [HANDLE, HANDLE]),
+            (self.security, "GetLengthSid", DWORD, [HANDLE]),
+            (
+                self.base,
+                "DeriveCapabilitySidsFromName",
+                BOOL,
+                [LPWSTR, ptr(HANDLE), ptr(DWORD), ptr(HANDLE), ptr(DWORD)],
+            ),
             (self.security, "FreeSid", HANDLE, [HANDLE]),
             (self.security, "ConvertSidToStringSidW", BOOL, [HANDLE, ptr(HANDLE)]),
             (
@@ -228,6 +244,37 @@ class WindowsIsolationAPI:
         for library, name, result, arguments in signatures:
             function = getattr(library, name)
             function.restype, function.argtypes = result, arguments
+        # The sole non-network capability enables LPAC system registry reads
+        # needed by Winsock, child creation and Python runtime initialization.
+        # Keep a Python-owned copy so no native allocation outlives this call.
+        self.registry_read_sid = self._derive_registry_read_sid()
+
+    def _derive_registry_read_sid(self):
+        groups, capabilities = HANDLE(), HANDLE()
+        group_count, capability_count = DWORD(), DWORD()
+        try:
+            self.check(
+                self.base.DeriveCapabilitySidsFromName(
+                    "registryRead",
+                    C.byref(groups),
+                    C.byref(group_count),
+                    C.byref(capabilities),
+                    C.byref(capability_count),
+                )
+            )
+            if capability_count.value != 1 or not capabilities.value:
+                raise OSError("Expected one registryRead capability SID")
+            sid = C.cast(capabilities, C.POINTER(HANDLE))[0]
+            if not sid:
+                raise OSError("Missing registryRead capability SID")
+            length = self.check(self.security.GetLengthSid(sid))
+            return C.create_string_buffer(C.string_at(sid, length))
+        finally:
+            for array, count in ((groups, group_count), (capabilities, capability_count)):
+                if array.value:
+                    for index in range(count.value):
+                        self.kernel.LocalFree(C.cast(array, C.POINTER(HANDLE))[index])
+                    self.kernel.LocalFree(array)
 
     @staticmethod
     def check(result):
@@ -330,7 +377,10 @@ class WindowsIsolationAPI:
         return read.value, write.value
 
     def create_suspended(self, profile, job, stdio, command, cwd, environment, own):
-        capabilities = SecurityCapabilities(profile.sid, None, 0, 0)
+        allowed = (SidAndAttributes * 1)(
+            SidAndAttributes(C.addressof(self.registry_read_sid), 4)  # SE_GROUP_ENABLED
+        )
+        capabilities = SecurityCapabilities(profile.sid, C.cast(allowed, HANDLE), 1, 0)
         handles = (HANDLE * 3)(*stdio)
         jobs = (HANDLE * 1)(job)
         lpac = DWORD(1)
@@ -424,10 +474,24 @@ class WindowsIsolationAPI:
             self.check(
                 self.security.GetTokenInformation(token, 30, groups, len(groups), C.byref(length))
             )
-            if C.cast(groups, C.POINTER(DWORD))[0] != 0:
-                raise OSError("Unexpected AppContainer capabilities")
+            self._verify_capabilities(groups)
         finally:
             self.close_handle(token.value)
+
+    def _verify_capabilities(self, data):
+        # Check identity and attributes, not just count: a network capability
+        # must never replace registryRead or appear alongside it.
+        if len(data) < C.sizeof(TokenGroups):
+            raise OSError("Truncated AppContainer capabilities")
+        groups = TokenGroups.from_buffer(data)
+        entry = groups.groups[0]
+        if (
+            groups.count != 1
+            or not entry.sid
+            or entry.attributes != 4
+            or not self.security.EqualSid(entry.sid, C.addressof(self.registry_read_sid))
+        ):
+            raise OSError("Unexpected AppContainer capabilities; expected only registryRead")
 
     def resume(self, thread):
         if self.kernel.ResumeThread(thread) != 1:

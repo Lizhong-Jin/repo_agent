@@ -101,7 +101,7 @@ jobs:
           if not defined ISOLATION_VS exit /b 1
           call "%ISOLATION_VS%\VC\Auxiliary\Build\vcvars64.bat"
           if errorlevel 1 exit /b 1
-          python -m pytest -q -ra tests/test_windows_isolation.py tests/test_windows_isolation_kernel.py tests/test_windows_native.py tests/test_windows_native_kernel.py tests/test_native_execution_adapter.py
+          python -m pytest -q -ra tests/test_windows_isolation.py tests/test_windows_isolation_kernel.py tests/test_windows_native.py tests/test_windows_native_kernel.py tests/test_native_execution_adapter.py tests/test_windows_supervisor_diagnostics.py
 
   windows-release:
     runs-on: windows-latest
