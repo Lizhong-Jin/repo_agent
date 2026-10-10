@@ -8,6 +8,7 @@ import socket
 import sys
 from contextlib import contextmanager
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 
 from host_support.cancellation import defer_cancellation
@@ -15,10 +16,12 @@ from host_support.paths import app_directory, find_windows_executable
 from host_support.windows_isolation import WindowsIsolationAPI
 from host_support.windows_recovery import recover_profiles
 from host_support.windows_security import PrivateWindowsSecurity
+from tools.git_tools import GitDiffTool, GitLogTool, GitShowTool, GitStatusTool
 
 from .native_common import NativeBackendBase
 from .native_execution import NativeCleanupError
 from .windows_execution import WindowsLaunch, WindowsNativeExecutionAdapter
+from .windows_git import WindowsGitRunner, copy_git_runtime, validate_git_query
 from .windows_python import inspect_python, select_project, stage_python
 from .windows_workspace import WindowsCallSnapshot, copy_private_tree
 
@@ -70,12 +73,32 @@ class WindowsNativeBackend(NativeBackendBase):
         context.update(
             writeback_mode="per_call_after_cleanup",
             process_workspace="filtered_private_copy",
-            command_path_policy="private_python_git_system32_or_workspace_exe",
+            command_path_policy="private_python_system32_or_workspace_exe",
+            git_execution_policy="read_only_direct_git_lpac_no_children",
             last_writeback=self.last_writeback,
             recovery=self.recovery_report,
         )
         context["persistence"]["tmp_across_calls"] = False
         return context
+
+    def _execute(self, workspace, name, arguments):
+        queries = {
+            "git_status": GitStatusTool,
+            "git_diff": GitDiffTool,
+            "git_log": GitLogTool,
+            "git_show": GitShowTool,
+        }
+        if name not in queries or not self.healthy:
+            return super()._execute(workspace, name, arguments)
+        if Path(workspace).resolve() != self.workspace:
+            raise ValueError("Native 后端不能切换工作区")
+        self._prepare_workspace()
+        # Validation/parsing stays in trusted built-ins. Only their generated Git
+        # commands enter the compatibility profile; no Python worker runs there.
+        tool = queries[name](self.workspace, execution_allowed=True)
+        tool.runner = WindowsGitRunner(self, tool.max_output_bytes)
+        result = tool.execute(arguments)
+        return replace(result, data={**result.data, "execution_allowed": self.healthy})
 
     def _preflight(self):
         secret = self.directory / "host-only.txt"
@@ -168,13 +191,36 @@ print(json.dumps(checks))
         runtime = profile / "runtime"
         scratch = profile / "scratch"
         scratch.mkdir()
-        copy_private_tree(self.runtime, runtime)
-        agent, agent_base = stage_python(self._agent_layout, profile / "agent-python")
+        git_query = call.git_read
+        if git_query and (call.request is not None or not call.command or call.command[0] != "git"):
+            raise ValueError("Windows Git compatibility requires a trusted direct query")
+        if git_query:
+            validate_git_query(call.command)
         chosen = self._project_layout if call.project else self._agent_layout
-        if chosen == self._agent_layout:
-            project, project_base = agent, agent_base
-        else:
-            project, project_base = stage_python(chosen, profile / "project-python")
+        python_paths = ()
+        mapping = []
+        if not git_query:
+            copy_private_tree(self.runtime, runtime)
+            agent, agent_base = stage_python(self._agent_layout, profile / "agent-python")
+            if chosen == self._agent_layout:
+                project, project_base = agent, agent_base
+            else:
+                project, project_base = stage_python(chosen, profile / "project-python")
+            python_paths = (project.parent, project_base)
+            mapping = [
+                (
+                    chosen.root,
+                    project.parent.parent
+                    if chosen.executable.parent.name.lower() == "scripts"
+                    else project.parent,
+                ),
+                (
+                    self._agent_layout.root,
+                    agent.parent.parent
+                    if self._agent_layout.executable.parent.name.lower() == "scripts"
+                    else agent.parent,
+                ),
+            ]
         control = self.windows_state_root / "calls" / isolation.lease.identity
         snapshot = WindowsCallSnapshot(
             self.workspace,
@@ -189,12 +235,12 @@ print(json.dumps(checks))
         )
         completed = False
         try:
-            git_paths = self._stage_git(profile, snapshot.workspace, call)
+            git_paths = self._stage_git(profile, snapshot.workspace, call) if git_query else ()
             environment = {
                 "SystemRoot": str(self.system_directory.parent),
                 "WINDIR": str(self.system_directory.parent),
                 "PATH": os.pathsep.join(
-                    map(str, (project.parent, project_base, *git_paths, self.system_directory))
+                    map(str, (*python_paths, *git_paths, self.system_directory))
                 ),
                 "TEMP": str(scratch),
                 "TMP": str(scratch),
@@ -208,24 +254,25 @@ print(json.dumps(checks))
                 "GIT_CONFIG_NOSYSTEM": "1",
                 "GIT_CONFIG_GLOBAL": "NUL",
                 "GIT_OPTIONAL_LOCKS": "0",
+                "GIT_NO_LAZY_FETCH": "1",
+                "GIT_NO_REPLACE_OBJECTS": "1",
+                "GIT_CONFIG_COUNT": "4",
+                "GIT_CONFIG_KEY_0": "safe.directory",
+                "GIT_CONFIG_VALUE_0": "*",
+                "GIT_CONFIG_KEY_1": "core.longpaths",
+                "GIT_CONFIG_VALUE_1": "true",
+                "GIT_CONFIG_KEY_2": "protocol.allow",
+                "GIT_CONFIG_VALUE_2": "never",
+                "GIT_CONFIG_KEY_3": "core.hooksPath",
+                "GIT_CONFIG_VALUE_3": "NUL",
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_LITERAL_PATHSPECS": "1",
             }
-            mapping = [
-                (
-                    chosen.root,
-                    project.parent.parent
-                    if chosen.executable.parent.name.lower() == "scripts"
-                    else project.parent,
-                ),
-                (
-                    self._agent_layout.root,
-                    agent.parent.parent
-                    if self._agent_layout.executable.parent.name.lower() == "scripts"
-                    else agent.parent,
-                ),
-                (self.workspace, snapshot.workspace),
-            ]
+            mapping.append((self.workspace, snapshot.workspace))
             cwd = snapshot.workspace / Path(call.cwd).relative_to(self.workspace)
-            if call.request is not None:
+            if git_query:
+                command = (str(git_paths[0] / "git.exe"), *call.command[1:])
+            elif call.request is not None:
                 request = deepcopy(call.request)
                 context = request.get("execution_context", {})
                 context.setdefault("python_environments", {})["project"] = str(project)
@@ -246,7 +293,7 @@ print(json.dumps(checks))
             # The profile root itself must not permit deleting/replacing read-only
             # runtime children. Only workspace and scratch receive writable ACLs.
             self.security.seal_tree(profile, sid)
-            self.security.seal_tree(snapshot.workspace, sid, writable=True)
+            self.security.seal_tree(snapshot.workspace, sid, writable=not git_query)
             for metadata in snapshot.workspace.rglob(".git"):
                 self.security.seal_tree(metadata, sid)
             self.security.seal_tree(scratch, sid, writable=True)
@@ -257,7 +304,7 @@ print(json.dumps(checks))
                     + "；恢复记录："
                     + str(control)
                 )
-            yield WindowsLaunch(command, cwd, environment)
+            yield WindowsLaunch(command, cwd, environment, git_query, snapshot.workspace)
             execution = isolation.execution
             if (
                 execution is None
@@ -268,7 +315,7 @@ print(json.dumps(checks))
             if not self._checking_isolation:
                 with defer_cancellation():
                     try:
-                        changed = snapshot.publish()
+                        changed = [] if git_query else snapshot.publish()
                     except BaseException as error:
                         isolation.retain(
                             "回写未完成；项目副本："
@@ -325,7 +372,7 @@ print(json.dumps(checks))
         return tuple(values)
 
     def _stage_git(self, profile, workspace, call):
-        if self._checking_isolation:
+        if self._checking_isolation or not call.git_read:
             return ()
         git = find_windows_executable("git", exclude=(self.workspace, self.directory))
         if not git:
@@ -342,14 +389,9 @@ print(json.dumps(checks))
                 raise ValueError("Windows native requires the standard Git for Windows layout")
             return ()
         target = profile / "git-runtime"
-        copy_private_tree(
-            root,
-            target,
-            allowed=lambda name: name.split("/")[0].lower() in {"cmd", "mingw64", "usr"},
-        )
+        copy_git_runtime(root / "mingw64/bin", target / "bin")
         if call.git_read:
-            requested = (call.request or {}).get("arguments", {}).get("cwd", ".")
-            cwd = (self.workspace / requested).resolve(strict=True)
+            cwd = Path(call.cwd).resolve(strict=True)
             if not cwd.is_relative_to(self.workspace):
                 raise ValueError("Git cwd is outside the workspace")
             while True:
@@ -389,4 +431,4 @@ print(json.dumps(checks))
                 if cwd == self.workspace:
                     break
                 cwd = cwd.parent
-        return (target / "cmd", target / "mingw64/bin", target / "usr/bin")
+        return (target / "bin",)

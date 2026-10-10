@@ -17,7 +17,7 @@ repo-agent --max-steps 12 --max-output-tokens 8192 # 临时覆盖任务轮数和
 
 项目根目录默认为调用时的当前目录；`--root` 同时选择工作目录和项目 `.env`，不会切换到 Agent 安装目录。用户配置由各项目共用，项目 `.env` 可覆盖用户设置，完整优先级见[配置参考](configuration.md)。
 
-未登记安装模式时，macOS/Linux 默认 native，Windows 默认 local；已有安装沿用其记录，可用 `repo-agent --sandbox native` 显式选择，在 macOS / Linux 原生沙箱内运行本机工具并直接修改项目；见[原生沙箱说明](native-sandbox.md)。Linux 需要 bubblewrap、libseccomp 和可用的非特权 user namespace；Windows 若需 native，应通过 WSL2 运行 Linux 后端；原生 Windows 可使用 local 或 Docker Desktop 的 Linux 容器。`--sandbox local` 提供文件/Git 和不启动子进程的基础环境查询，不提供命令、Shell、Python 或语言服务器工具。可选 Web 工具在主进程独立注册。需要工作副本及受控回写时，显式使用 `repo-agent --sandbox docker`。Docker/native 失败均不会自动切换为未隔离执行。
+未登记安装模式时，macOS/Linux 默认 native，Windows 默认 local；已有安装沿用其记录，可用 `repo-agent --sandbox native` 显式选择，在 macOS / Linux 原生沙箱内运行本机工具并直接修改项目；见[原生沙箱说明](native-sandbox.md)。Linux 需要 bubblewrap、libseccomp 和可用的非特权 user namespace；原生 Windows 可显式选择 LPAC/Job native，在私有副本执行并逐调用回写，要求与验收见 [Windows native](windows-native-isolation.md)；也可使用 local、Docker Desktop 的 Linux 容器或 WSL2 的 Linux 后端。`--sandbox local` 提供文件/Git 和不启动子进程的基础环境查询，不提供命令、Shell、Python 或语言服务器工具。可选 Web 工具在主进程独立注册。需要工作副本及受控回写时，显式使用 `repo-agent --sandbox docker`。Docker/native 失败均不会自动切换为未隔离执行。
 
 Apple Silicon macOS native 的 `auto` 默认启用 Metal，并在沙箱内编译、执行真实 GPU kernel。
 `--sandbox-profile metal` 明确要求 Metal，`--sandbox-profile standard` 关闭 GPU。

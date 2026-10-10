@@ -17,6 +17,38 @@ from tools._internal.file_access import FileAccess
 windows = pytest.mark.skipif(os.name != "nt", reason="Requires Windows kernel APIs")
 
 
+@pytest.mark.parametrize("reparse", [False, True])
+def test_trusted_runtime_reader_is_readonly_and_rechecks_open_handle(
+    tmp_path, monkeypatch, reparse
+):
+    source = tmp_path / "runtime.dll"
+    source.write_bytes(b"MZdata")
+    os.link(source, tmp_path / "hardlink.dll")
+    opened = []
+
+    class API:
+        def open(self, name, parent, access, *, metadata):
+            assert name == "runtime.dll" and parent == 123 and access == 1 and metadata
+            fd = os.open(source, os.O_RDONLY)
+            opened.append(fd)
+            return fd
+
+        def attributes(self, fd):
+            return SimpleNamespace(FileAttributes=0x400 if reparse else 0)
+
+    monkeypatch.setattr(win, "_api", lambda: API())
+    if reparse:
+        with pytest.raises(PermissionError, match="reparse"):
+            win.open_trusted_runtime_file("runtime.dll", dir_fd=123)
+        with pytest.raises(OSError):
+            os.fstat(opened[0])
+    else:
+        fd = win.open_trusted_runtime_file("runtime.dll", dir_fd=123)
+        with os.fdopen(fd, "rb") as stream:
+            assert stream.read() == b"MZdata"
+    assert source.stat().st_nlink == 2
+
+
 @pytest.mark.parametrize(
     "name",
     [

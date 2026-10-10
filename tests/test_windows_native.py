@@ -11,9 +11,219 @@ from host_support.processes import ProcessResult
 from host_support.windows_recovery import RecoveryLease, recover_profiles
 from host_support.windows_security import PrivateWindowsSecurity
 from sandbox.native_execution import NativeCall, NativeCleanupError
+from sandbox.windows_git import GitQueryProcess, copy_git_runtime, validate_git_query
 from sandbox.windows_native import WindowsNativeBackend
 from sandbox.windows_python import inspect_python, stage_python
 from sandbox.windows_workspace import WindowsCallSnapshot, copy_private_tree
+
+
+def test_git_runtime_copies_hardlinks_by_value_without_optional_helpers(tmp_path):
+    source = tmp_path / "git-bin"
+    source.mkdir()
+    original = tmp_path / "original"
+    original.write_bytes(b"MZshared")
+    os.link(original, source / "git.exe")
+    os.link(original, source / "dependency.dll")
+    (source / "git-lfs.exe").write_text("unneeded")
+    before = original.stat()
+    target = tmp_path / "private"
+    copy_git_runtime(source, target)
+    assert set(p.name for p in target.iterdir()) == {"git.exe", "dependency.dll"}
+    for file in target.iterdir():
+        assert file.read_bytes() == b"MZshared"
+        assert file.stat().st_nlink == 1 and not os.path.samefile(file, original)
+        file.write_bytes(b"private edit")
+    assert original.read_bytes() == b"MZshared"
+    assert original.stat().st_mode == before.st_mode and original.stat().st_nlink == 3
+    # The general copier still refuses the same hard-linked source.
+    with pytest.raises(ValueError, match="link or special"):
+        copy_private_tree(source, tmp_path / "strict")
+
+
+def test_git_runtime_rejects_reparse_source_and_honors_size_limit(tmp_path):
+    source = tmp_path / "bin"
+    source.mkdir()
+    (source / "git.exe").write_bytes(b"MZcontent")
+    with pytest.raises(ValueError, match="size limit"):
+        copy_git_runtime(source, tmp_path / "small", limit=2)
+    try:
+        (source / "bad.dll").symlink_to(source / "git.exe")
+    except OSError:
+        pytest.skip("Creating symlinks requires Windows Developer Mode")
+    with pytest.raises(ValueError, match="link or special"):
+        copy_git_runtime(source, tmp_path / "linked")
+
+
+@pytest.mark.parametrize("system_packages", [False, True])
+def test_venv_base_packages_follow_config_and_own_packages_are_preserved(tmp_path, system_packages):
+    root = tmp_path / "project"
+    root.mkdir()
+    base_python = python_install(tmp_path / "base")
+    (base_python.parent / "Lib/site-packages").mkdir()
+    (base_python.parent / "Lib/site-packages/base_only.py").write_text("VALUE=1")
+    venv = root / ".venv"
+    (venv / "Scripts").mkdir(parents=True)
+    (venv / "Scripts/python.exe").write_bytes(b"MZredirector")
+    (venv / "Lib/site-packages").mkdir(parents=True)
+    (venv / "Lib/site-packages/own.py").write_text("VALUE=2")
+    config = f"home = {base_python.parent}\ninclude-system-site-packages = {system_packages}\n"
+    (venv / "pyvenv.cfg").write_text(config)
+    layout = inspect_python(venv / "Scripts/python.exe", "explicit", root)
+    relocated, base = stage_python(layout, tmp_path / "staged")
+    assert (base / "Lib/site-packages/base_only.py").exists() is system_packages
+    assert (base / "Lib/encodings").is_dir()
+    assert (relocated.parent.parent / "Lib/site-packages/own.py").is_file()
+    assert (venv / "pyvenv.cfg").read_text() == config
+    # A directly selected base Python still carries its installed packages.
+    direct = inspect_python(base_python, "base", root)
+    _, direct_base = stage_python(direct, tmp_path / "direct")
+    assert (direct_base / "Lib/site-packages/base_only.py").exists()
+
+
+@pytest.mark.parametrize("name", ["git_status", "git_diff", "git_log", "git_show"])
+def test_git_queries_use_host_validation_and_isolated_direct_runner(tmp_path, name):
+    from host_support.processes import ProcessStartError
+
+    backend = object.__new__(WindowsNativeBackend)
+    backend.workspace = tmp_path
+    backend.healthy = True
+    backend._prepare_workspace = lambda: None
+    calls = []
+
+    def run(command, **options):
+        calls.append((command, options))
+        raise ProcessStartError(FileNotFoundError("test Git unavailable"))
+
+    backend._run = run
+    assert not backend._execute(tmp_path, name, {"cwd": "../"}).success
+    assert not calls  # Validation precedes any launch.
+    assert not backend._execute(tmp_path, name, {}).success
+    command, options = calls[0]
+    assert command[0] == "git" and command[-2:] == ["rev-parse", "--show-toplevel"]
+    assert options["git_read"] is True and "request" not in options
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["git", "checkout", "main"],
+        ["git", "config", "core.hooksPath", "bad"],
+        ["git", "-c"],
+        ["python", "-c", "pass"],
+    ],
+)
+def test_git_compatibility_rejects_non_query_commands(command):
+    with pytest.raises(ValueError):
+        validate_git_query(command)
+
+
+def test_arbitrary_git_command_does_not_request_compatibility_policy(tmp_path):
+    from host_support.processes import ProcessStartError
+    from tools.execute import RunCommandTool
+
+    backend = object.__new__(WindowsNativeBackend)
+    backend.workspace = tmp_path
+    backend.healthy = True
+    backend._prepare_workspace = lambda: None
+    backend._tool_catalog = lambda: {
+        "run_command": RunCommandTool(tmp_path, execution_allowed=True)
+    }
+    calls = []
+
+    def run(command, **options):
+        calls.append(options)
+        raise ProcessStartError(FileNotFoundError("Git is not in standard runtime"))
+
+    backend._run = run
+    assert not backend._execute(tmp_path, "run_command", {"command": ["git", "status"]}).success
+    assert len(calls) == 1 and not calls[0].get("git_read", False)
+
+
+def test_git_discovery_maps_only_private_repository_root(tmp_path):
+    private = tmp_path / "private"
+    workspace = tmp_path / "original"
+    result = ProcessResult(0, str(private / "nested") + "\n", "", False, None, 1, False, False)
+    process = SimpleNamespace(last_cleanup_status="confirmed", run=lambda **kw: result)
+    call = NativeCall(("git", "rev-parse", "--show-toplevel"), None, workspace, True, False, 100)
+    mapped = GitQueryProcess(process, call, private, workspace).run(timeout_seconds=1)
+    assert mapped.stdout == str(workspace / "nested") + "\n"
+    other = NativeCall(("git", "log"), None, workspace, True, False, 100)
+    assert GitQueryProcess(process, other, private, workspace).run(timeout_seconds=1) == result
+
+
+def test_git_launch_is_direct_readonly_and_does_not_stage_python(tmp_path, monkeypatch):
+    backend = object.__new__(WindowsNativeBackend)
+    backend.workspace = tmp_path / "project"
+    backend.workspace.mkdir()
+    metadata = backend.workspace / ".git"
+    (metadata / "objects/info").mkdir(parents=True)
+    (metadata / "HEAD").write_text("ref: refs/heads/main\n")
+    (metadata / "objects/info/alternates").write_text("C:/outside")
+    (metadata / "config").write_text('[filter "bad"]\nprocess=bad.exe\n')
+    (metadata / "hooks").mkdir()
+    (metadata / "hooks/pre-commit").write_text("bad.exe")
+    backend.directory = tmp_path / "backend"
+    backend.runtime = tmp_path / "unused-runtime"
+    backend._agent_layout = SimpleNamespace(read_paths=())
+    backend._project_layout = backend._agent_layout
+    backend.windows_state_root = tmp_path / "state"
+    backend.windows_state_root.mkdir()
+    backend.system_directory = tmp_path / "System32"
+    backend.protected_paths = ()
+    backend._checking_isolation = False
+    sealed = []
+    backend.security = SimpleNamespace(
+        sid_string=lambda sid: "test-SID",
+        seal_tree=lambda path, sid, **kw: sealed.append((path, kw)),
+    )
+    installed = tmp_path / "Git"
+    (installed / "mingw64/bin").mkdir(parents=True)
+    (installed / "mingw64/bin/git.exe").write_bytes(b"MZgit")
+    monkeypatch.setattr(
+        "sandbox.windows_native.find_windows_executable",
+        lambda *a, **kw: str(installed / "cmd/git.exe"),
+    )
+
+    def unexpected_python(*args):
+        pytest.fail("Git queries must not stage or launch Python")
+
+    monkeypatch.setattr("sandbox.windows_native.stage_python", unexpected_python)
+    monkeypatch.setattr(WindowsCallSnapshot, "publish", unexpected_python)
+    lease = RecoveryLease(backend.windows_state_root)
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    scope = SimpleNamespace(
+        profile=SimpleNamespace(directory=profile, sid=1),
+        lease=lease,
+        execution=None,
+        retention_reason=None,
+        retain=lease.retain,
+    )
+    call = NativeCall(
+        ("git", "rev-parse", "--show-toplevel"), None, backend.workspace, True, False, 100
+    )
+    try:
+        with backend._prepare_windows_call(scope, call) as launch:
+            assert launch.git_query and launch.command[0] == str(
+                profile / "git-runtime/bin/git.exe"
+            )
+            assert not (profile / "agent-python").exists() and not (profile / "runtime").exists()
+            private_metadata = launch.cwd / ".git"
+            assert (private_metadata / "HEAD").read_text().startswith("ref:")
+            assert "bad.exe" not in (private_metadata / "config").read_text()
+            assert not (private_metadata / "hooks").exists()
+            assert not (private_metadata / "objects/info/alternates").exists()
+            assert (launch.cwd, {"writable": False}) in sealed
+            assert launch.environment["GIT_LITERAL_PATHSPECS"] == "1"
+            assert launch.environment["GIT_CONFIG_VALUE_2"] == "never"
+            scope.execution = SimpleNamespace(
+                result=object(), last_cleanup_status="confirmed", started=True
+            )
+        assert not lease.record["retain"]
+        assert backend.last_writeback["files"] == []
+        assert "bad.exe" in (metadata / "config").read_text()
+    finally:
+        lease.finish(released=False)
 
 
 @pytest.mark.parametrize(
@@ -363,7 +573,10 @@ def test_runtime_copy_rejects_hardlinks_and_filters_secrets(tmp_path):
 
 
 @pytest.mark.parametrize("outcome", ["success", "conflict", "cancel", "unknown", "startup_failure"])
-def test_prepared_windows_call_publishes_after_confirmed_cleanup(tmp_path, monkeypatch, outcome):
+@pytest.mark.parametrize("kind", ["command", "probe", "worker"])
+def test_prepared_windows_call_publishes_after_confirmed_cleanup(
+    tmp_path, monkeypatch, outcome, kind
+):
     backend = object.__new__(WindowsNativeBackend)
     backend.workspace = tmp_path / "project"
     backend.workspace.mkdir()
@@ -385,7 +598,11 @@ def test_prepared_windows_call_publishes_after_confirmed_cleanup(tmp_path, monke
         sid_string=lambda sid: "test-SID",
         seal_tree=lambda path, sid, **kw: sealed.append((path, kw)),
     )
-    monkeypatch.setattr(backend, "_stage_git", lambda *args: ())
+
+    def unexpected_git(*args):
+        pytest.fail("Python, interpreter probes and LSP workers must not stage Git")
+
+    monkeypatch.setattr(backend, "_stage_git", unexpected_git)
     lease = RecoveryLease(backend.windows_state_root)
     profile = tmp_path / "profile"
     profile.mkdir()
@@ -402,13 +619,19 @@ def test_prepared_windows_call_publishes_after_confirmed_cleanup(tmp_path, monke
 
     scope.retain = retain
     call = NativeCall(
-        (str(backend.python), "-c", "pass"), None, backend.workspace, False, True, 100
+        (str(backend.python), "-c", "pass") if kind != "worker" else None,
+        {"name": "get_symbols", "arguments": {"path": "file.txt"}} if kind == "worker" else None,
+        backend.workspace,
+        False,
+        kind != "probe",
+        100,
     )
     try:
 
         def run():
             with backend._prepare_windows_call(scope, call) as launch:
                 assert str(profile) in launch.command[0]
+                assert not launch.git_query
                 assert launch.environment["HOME"] == str(profile / "scratch")
                 (launch.cwd / "file.txt").write_text("command result")
                 if outcome == "conflict":

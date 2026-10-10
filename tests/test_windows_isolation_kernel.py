@@ -86,7 +86,8 @@ def assert_dead(pid, *, wait_ms=0):
         kernel.CloseHandle(handle)
 
 
-def test_real_token_file_network_isolation_and_profile_release(probe_exe, tmp_path):
+@pytest.mark.parametrize("git_query", [False, True])
+def test_real_token_file_network_isolation_and_profile_release(probe_exe, tmp_path, git_query):
     secret = tmp_path / "secret.txt"
     secret.write_text("host-only")
     all_packages = tmp_path / "all-packages.txt"
@@ -113,6 +114,7 @@ def test_real_token_file_network_isolation_and_profile_release(probe_exe, tmp_pa
                 ],
                 cwd=directory,
                 environment=environment,
+                git_query=git_query,
             ).run(timeout_seconds=20)
             assert result.exit_code == 0, result
             report = json.loads(result.stdout)
@@ -129,6 +131,18 @@ def test_real_token_file_network_isolation_and_profile_release(probe_exe, tmp_pa
             assert result.cleanup_status == "confirmed"
             assert not (tmp_path / "outside.txt").exists()
         assert not directory.exists()
+
+
+def test_git_profile_refuses_child_creation(probe_exe):
+    with staged_probe(probe_exe) as (scope, executable, environment):
+        result = scope.process(
+            [str(executable), "no-children"],
+            cwd=scope.profile.directory,
+            environment=environment,
+            git_query=True,
+        ).run(timeout_seconds=20)
+        assert result.exit_code == 0 and result.cleanup_status == "confirmed", result
+        assert json.loads(result.stdout)["child_error"] == 367  # ERROR_CHILD_PROCESS_BLOCKED
 
 
 @pytest.mark.parametrize("mode", ["tree", "breakaway", "flood"])

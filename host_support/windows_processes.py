@@ -91,10 +91,11 @@ class WindowsIsolation:
         if self.lease:
             self.lease.retain(reason)
 
-    def process(self, command, *, cwd, environment, max_output_bytes=32 * 1024):
+    def process(self, command, *, cwd, environment, max_output_bytes=32 * 1024, git_query=False):
         if self.profile is None or self.closed or self.execution is not None:
             raise RuntimeError("Windows isolation requires a fresh, open scope")
         self.execution = WindowsNativeProcess(self, command, cwd, environment, max_output_bytes)
+        self.execution.git_query = git_query
         return self.execution
 
     def __exit__(self, exc_type, exc, traceback):
@@ -150,6 +151,7 @@ class WindowsNativeProcess:
         if type(max_output_bytes) is not int or max_output_bytes <= 0:
             raise ValueError("max_output_bytes must be positive")
         self.scope, self.api = scope, scope.api
+        self.git_query = False
         self.command, self.cwd = tuple(command), _absolute_local_path(cwd)
         snapshot = ProcessRunner._validate_environment(environment)
         # AppContainer creation fails with ERROR_ENVVAR_NOT_FOUND (203) if the
@@ -208,6 +210,7 @@ class WindowsNativeProcess:
                 self.cwd,
                 self.environment,
                 own,
+                **({"git_query": True} if self.git_query else {}),
             )
             for handle in (input_read, output_write, error_write):
                 close(handle)

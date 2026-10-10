@@ -4,7 +4,7 @@
 
 ## 快速开始
 
-安装器默认准备独立 Python，无需预装。macOS / Linux 首次默认 native 模式，使用 Seatbelt 或 Bubblewrap + seccomp，不需要 Docker；Linux 需预先安装 bubblewrap 和 libseccomp，并允许非特权 user namespace。Windows x86_64 已提供 ZIP 安装、local 文件/Git 模式和 Docker 适配，首次默认 local；尚无 Windows 原生沙箱，实机验证要求见[平台适配边界](docs/platform-adaptation.md)。
+安装器默认准备独立 Python，无需预装。macOS / Linux 首次默认 native 模式，使用 Seatbelt 或 Bubblewrap + seccomp，不需要 Docker；Linux 需预先安装 bubblewrap 和 libseccomp，并允许非特权 user namespace。Windows x86_64 已提供 ZIP 安装、local 文件/Git 模式和 Docker 适配，首次默认 local；可显式选择 LPAC/Job native，在私有副本执行并逐调用回写，实机验证要求见 [Windows native](docs/windows-native-isolation.md)。
 
 普通用户选择对应系统和架构的平台完整包：macOS/Linux 解压 `.tar.gz` 后运行 `./install-release.sh`；Windows 解压 ZIP 后按[Windows 安装说明](docs/installation.md#windows-x86_64-zip-安装)运行 `install_release.ps1`。运行环境保存在用户数据目录，安装后可删除下载目录。构建默认覆盖五个平台目标，产物位于 `dist/<版本>/<平台>/`，详见[构建与分发](docs/distribution.md)。
 

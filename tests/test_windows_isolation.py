@@ -266,7 +266,8 @@ def test_x64_sdk_layouts_have_windows_integer_widths():
     assert ctypes.sizeof(SecurityCapabilities) == 24
 
 
-def test_win32_launch_attributes_are_atomic_restricted_and_explicit(monkeypatch):
+@pytest.mark.parametrize("git_query", [False, True])
+def test_win32_launch_attributes_are_atomic_restricted_and_explicit(monkeypatch, git_query):
     from host_support import windows_isolation as win
 
     captured = {}
@@ -318,6 +319,7 @@ def test_win32_launch_attributes_are_atomic_restricted_and_explicit(monkeypatch)
         "C:/private",
         "KEY=value\x00\x00",
         owned.append,
+        git_query=git_query,
     )
     capabilities = win.SecurityCapabilities.from_buffer_copy(captured[win.SECURITY_CAPABILITIES])
     assert capabilities.sid == 123 and capabilities.count == 1
@@ -325,7 +327,12 @@ def test_win32_launch_attributes_are_atomic_restricted_and_explicit(monkeypatch)
     assert list((win.HANDLE * 3).from_buffer_copy(captured[win.HANDLE_LIST])) == [1, 2, 3]
     assert list((win.HANDLE * 1).from_buffer_copy(captured[win.JOB_LIST])) == [99]
     assert win.DWORD.from_buffer_copy(captured[win.ALL_APPLICATION_PACKAGES_POLICY]).value == 1
-    assert ctypes.c_uint64.from_buffer_copy(captured[win.MITIGATION_POLICY]).value & (1 << 28)
+    mitigations = ctypes.c_uint64.from_buffer_copy(captured[win.MITIGATION_POLICY]).value
+    assert mitigations == ((0 if git_query else 1 << 28) | (1 << 32))
+    if git_query:
+        assert win.DWORD.from_buffer_copy(captured[0x2000E]).value == 1
+    else:
+        assert 0x2000E not in captured
     assert owned == [100, 101] and captured["released"]
 
 

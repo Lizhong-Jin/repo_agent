@@ -17,6 +17,7 @@ class WindowsPythonLayout:
     root: Path
     base: Path
     source: str
+    system_site_packages: bool = False
 
     @property
     def read_paths(self):
@@ -68,7 +69,13 @@ def inspect_python(executable, source, workspace, *, trusted_base=None):
         raise ValueError("Windows Python needs a complete standard installation (Lib/encodings)")
     if venv and trusted_base is not None and base.resolve() != Path(trusted_base).resolve():
         raise ValueError("Agent venv points to an unexpected base interpreter")
-    return WindowsPythonLayout(executable, root, base, source)
+    return WindowsPythonLayout(
+        executable,
+        root,
+        base,
+        source,
+        venv and configuration.get("include-system-site-packages", "false").lower() == "true",
+    )
 
 
 def select_project(workspace, explicit, agent_python, *, isolated_workspace=False):
@@ -110,9 +117,22 @@ def stage_python(layout, directory):
     copy_private_tree(layout.root, root, allowed=allowed)
     if layout.base != layout.root:
         base = directory / "base"
-        copy_private_tree(layout.base, base, allowed=allowed)
+
+        def base_allowed(relative):
+            # An isolated venv cannot import these packages. Do not copy large,
+            # unrelated host installations (or encounter their optional links).
+            name = relative.lower()
+            if not layout.system_site_packages and (
+                name == "lib/site-packages" or name.startswith("lib/site-packages/")
+            ):
+                return False
+            return allowed(relative)
+
+        copy_private_tree(layout.base, base, allowed=base_allowed)
         (root / "pyvenv.cfg").write_text(
-            f"home = {base}\ninclude-system-site-packages = false\n", encoding="utf-8"
+            f"home = {base}\n"
+            f"include-system-site-packages = {str(layout.system_site_packages).lower()}\n",
+            encoding="utf-8",
         )
     else:
         base = root

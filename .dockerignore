@@ -256,6 +256,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !sandbox/session.py
 !sandbox/triton_smoke_kernel.py
 !sandbox/windows_execution.py
+!sandbox/windows_git.py
 !sandbox/windows_native.py
 !sandbox/windows_python.py
 !sandbox/windows_workspace.py

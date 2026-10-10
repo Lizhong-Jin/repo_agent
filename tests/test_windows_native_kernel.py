@@ -20,42 +20,85 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_native_startup_python_worker_git_and_publication(tmp_path, monkeypatch):
+@pytest.mark.parametrize("stage", ["python", "git", "lsp", "all"])
+def test_native_startup_python_worker_git_and_publication(tmp_path, monkeypatch, stage):
     state = tmp_path / "state"
     monkeypatch.setattr("sandbox.windows_native.app_directory", lambda _: state)
     root = tmp_path / "project"
     root.mkdir()
     (root / ".env").write_text("secret")
     (root / "sample.py").write_text("def answer():\n    return 42\n")
-    subprocess.run(["git", "init", str(root)], check=True, capture_output=True)
+    if stage in {"git", "all"}:
+
+        def git(*args):
+            subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+        git("init")
+        git("add", "sample.py")
+        git(
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "initial",
+        )
+        git("config", "core.fsmonitor", "should-never-run.exe")
+        git("config", "filter.trap.process", "should-never-run.exe")
+        git("config", "diff.trap.command", "should-never-run.exe")
+        (root / ".gitattributes").write_text("sample.py filter=trap diff=trap\n")
+        (root / "sample.py").write_text("def answer():\n    return 43\n")
+    else:
+
+        def unexpected_git(*args, **kwargs):
+            pytest.fail("Python and LSP must work without Git installed")
+
+        monkeypatch.setattr("sandbox.windows_native.find_windows_executable", unexpected_git)
     backend = create_native_backend(root, profile="standard")
     try:
         assert backend.preflight_metrics["isolation_verified"]
-        result = backend.execute(
-            root,
-            "run_python",
-            {
-                "code": (
-                    "import pathlib, json, os; "
-                    "p=pathlib.Path('.'); "
-                    "assert not (p/'.env').exists(); "
-                    "(p/'result.txt').write_text('published'); "
-                    "print(json.dumps({'cwd':str(p.resolve())}))"
-                )
-            },
-        )
-        assert result.success, result
-        assert (root / "result.txt").read_text() == "published"
-        assert (root / ".env").read_text() == "secret"
-        assert json.loads(result.data["stdout"])["cwd"] != str(root)
-        assert backend.execution_context()["last_writeback"]["files"] == ["result.txt"]
-        report = backend.execute(root, "get_execution_environment", {})
-        assert report.success, report
-        assert report.data["execution"]["writeback_mode"] == "per_call_after_cleanup"
-        git = backend.execute(root, "git_status", {})
-        assert git.success, git
-        symbols = backend.execute(root, "get_symbols", {"path": "sample.py"})
-        assert symbols.success and "answer" in str(symbols.data), symbols
+        if stage in {"python", "all"}:
+            result = backend.execute(
+                root,
+                "run_python",
+                {
+                    "code": (
+                        "import pathlib, json, os; "
+                        "p=pathlib.Path('.'); "
+                        "assert not (p/'.env').exists(); "
+                        "(p/'result.txt').write_text('published'); "
+                        "print(json.dumps({'cwd':str(p.resolve())}))"
+                    )
+                },
+            )
+            assert result.success, result
+            assert (root / "result.txt").read_text() == "published"
+            assert (root / ".env").read_text() == "secret"
+            assert json.loads(result.data["stdout"])["cwd"] != str(root)
+            assert backend.execution_context()["last_writeback"]["files"] == ["result.txt"]
+            report = backend.execute(root, "get_execution_environment", {})
+            assert report.success, report
+            assert report.data["execution"]["writeback_mode"] == "per_call_after_cleanup"
+        if stage in {"git", "all"}:
+            index_before = (root / ".git/index").read_bytes()
+            for name, arguments in (
+                ("git_status", {}),
+                ("git_diff", {}),
+                ("git_log", {}),
+                ("git_show", {"path": "sample.py"}),
+            ):
+                query = backend.execute(root, name, arguments)
+                assert query.success, (name, query)
+                if name == "git_show":
+                    assert "return 42" in str(query.data)
+                if name == "git_diff":
+                    assert "return 43" in str(query.data)
+            assert (root / ".git/index").read_bytes() == index_before
+            assert (root / "sample.py").read_text().endswith("return 43\n")
+        if stage in {"lsp", "all"}:
+            symbols = backend.execute(root, "get_symbols", {"path": "sample.py"})
+            assert symbols.success and "answer" in str(symbols.data), symbols
         assert backend.healthy
         assert not list(backend.windows_state_root.glob("*.json"))
     finally:

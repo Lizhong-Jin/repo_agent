@@ -112,6 +112,18 @@ int wmain(int argc, wchar_t **argv) {
         printf("{\"breakaway_error\":%lu}\n", GetLastError());
         return 0;
     }
+    if (!wcscmp(argv[1], L"no-children")) {
+        PROCESS_INFORMATION pi = {0};
+        if (child(L"sleep", 0, &pi)) {
+            TerminateProcess(pi.hProcess, 1);
+            WaitForSingleObject(pi.hProcess, 5000);
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            return 98;
+        }
+        printf("{\"child_error\":%lu}\n", GetLastError());
+        return 0;
+    }
     if (!wcscmp(argv[1], L"flood")) {
         for (int i = 0; i < 100000; ++i) {
             fputs("stdout-payload\n", stdout);

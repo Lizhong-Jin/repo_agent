@@ -369,6 +369,23 @@ def stat_at(name, *, dir_fd):
         os.close(fd)
 
 
+def open_trusted_runtime_file(name, *, dir_fd):
+    """Read installed runtime bytes, allowing hard links but never reparse points.
+
+    This is deliberately separate from workspace I/O. The caller must copy into
+    a new private file; it must never grant ACLs on or modify this source handle.
+    """
+    api = _api()
+    fd = api.open(validate_component(os.fspath(name)), dir_fd, 1, metadata=True)
+    try:
+        if api.attributes(fd).FileAttributes & 0x400 or not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise PermissionError("Expected a regular runtime file without reparse points")
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def list_directory(fd):
     api, buffer, ios = _api(), C.create_string_buffer(65536), _IOStatus()
     result, restart = [], True

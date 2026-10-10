@@ -363,7 +363,8 @@ class WindowsIsolationAPI:
         # Neither BREAKAWAY_OK nor SILENT_BREAKAWAY_OK is allowed.
         self.check(self.kernel.SetInformationJobObject(job, 9, C.byref(limits), C.sizeof(limits)))
         # Job UI limits are incompatible with nested Jobs (common in CI/hosts).
-        # Win32k lockdown is instead mandatory on every process creation below.
+        # Win32k lockdown is applied at creation, except for the dedicated Git
+        # query profile which also prohibits child process creation.
         return job
 
     def create_pipe(self, own, *, child_reads=False):
@@ -376,7 +377,9 @@ class WindowsIsolationAPI:
         self.check(self.kernel.SetHandleInformation(parent, 1, 0))
         return read.value, write.value
 
-    def create_suspended(self, profile, job, stdio, command, cwd, environment, own):
+    def create_suspended(
+        self, profile, job, stdio, command, cwd, environment, own, *, git_query=False
+    ):
         allowed = (SidAndAttributes * 1)(
             SidAndAttributes(C.addressof(self.registry_read_sid), 4)  # SE_GROUP_ENABLED
         )
@@ -384,7 +387,9 @@ class WindowsIsolationAPI:
         handles = (HANDLE * 3)(*stdio)
         jobs = (HANDLE * 1)(job)
         lpac = DWORD(1)
-        mitigations = C.c_uint64((1 << 28) | (1 << 32))  # win32k and extension points disabled
+        # Git for Windows imports USER32. Only trusted direct query launches may
+        # omit Win32k lockdown; arbitrary commands/Python retain both mitigations.
+        mitigations = C.c_uint64((0 if git_query else 1 << 28) | (1 << 32))
         attributes = [
             (SECURITY_CAPABILITIES, capabilities),
             (HANDLE_LIST, handles),
@@ -392,6 +397,10 @@ class WindowsIsolationAPI:
             (ALL_APPLICATION_PACKAGES_POLICY, lpac),
             (MITIGATION_POLICY, mitigations),
         ]
+        if git_query:
+            # PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY, CHILD_PROCESS_RESTRICTED.
+            # Enforced by the kernel: even compromised Git cannot spawn helpers.
+            attributes.append((0x2000E, DWORD(1)))
         size = SIZE_T()
         self.kernel.InitializeProcThreadAttributeList(None, len(attributes), 0, C.byref(size))
         if C.get_last_error() != 122 or not size.value:
