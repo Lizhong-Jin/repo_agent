@@ -88,6 +88,11 @@ def stage_python(layout, directory):
 
     # Grant only conventional runtime contents, not arbitrary siblings of Python.
     def allowed(relative):
+        # setup-python adds a python3.exe symlink beside the real interpreter.
+        # Commands already map this optional alias to the private python.exe;
+        # omit it before the no-follow checks, including aliases in a venv.
+        if relative.lower() in {"python3.exe", "scripts/python3.exe"}:
+            return False
         first = relative.split("/", 1)[0].lower()
         return (
             first in {"lib", "dlls", "scripts", "library", "include", "libs", "tcl"}

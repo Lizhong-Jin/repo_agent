@@ -166,6 +166,54 @@ def test_python_rejects_broad_or_invalid_layouts(tmp_path):
         inspect_python(root / "wrapper.exe", "explicit", tmp_path / "other/project")
 
 
+@pytest.mark.parametrize("use_venv", [False, True])
+@pytest.mark.parametrize("link_kind", ["hardlink", "symlink"])
+def test_python_relocation_omits_optional_python3_links(tmp_path, use_venv, link_kind):
+    outside = tmp_path / "outside.exe"
+    outside.write_bytes(b"must not be read or copied")
+
+    def alias(path):
+        if link_kind == "hardlink":
+            os.link(outside, path)
+        else:
+            try:
+                path.symlink_to("python.exe")
+            except OSError as error:
+                if getattr(error, "winerror", None) == 1314:
+                    pytest.skip(
+                        "Creating symbolic links requires Windows developer mode or privilege"
+                    )
+                raise
+
+    base = tmp_path / "runtimes/python"
+    executable = python_install(base)
+    alias(base / "python3.exe")
+    if use_venv:
+        environment = tmp_path / "project/.venv"
+        (environment / "Scripts").mkdir(parents=True)
+        executable = environment / "Scripts/python.exe"
+        executable.write_bytes(b"MZredirector")
+        alias(environment / "Scripts/python3.exe")
+        (environment / "pyvenv.cfg").write_text(f"home = {base}\n")
+    layout = inspect_python(executable, "explicit", tmp_path / "project")
+    relocated, relocated_base = stage_python(layout, tmp_path / "stage")
+    assert relocated.read_bytes() == executable.read_bytes()
+    assert not os.path.lexists(relocated.parent / "python3.exe")
+    assert not os.path.lexists(relocated_base / "python3.exe")
+    assert (base / "python3.exe").exists()
+    assert outside.read_bytes() == b"must not be read or copied"
+
+
+@pytest.mark.parametrize("relative", ["python.exe", "Lib/encodings/__init__.py"])
+def test_python_relocation_still_rejects_required_runtime_links(tmp_path, relative):
+    base = tmp_path / "runtimes/python"
+    executable = python_install(base)
+    layout = inspect_python(executable, "explicit", tmp_path / "project")
+    os.link(base / relative, tmp_path / "outside-link")
+    with pytest.raises(ValueError, match="link"):
+        stage_python(layout, tmp_path / "stage")
+
+
 def test_runtime_copy_rejects_hardlinks_and_filters_secrets(tmp_path):
     root = tmp_path / "source"
     root.mkdir()

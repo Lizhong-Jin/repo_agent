@@ -198,6 +198,24 @@ def test_real_api_is_available():
     assert WindowsIsolationAPI().windows_directory()
 
 
+def test_real_minimal_environment_gets_private_localappdata():
+    with WindowsIsolation() as scope:
+        directory = scope.profile.directory
+        executable = directory / "cmd.exe"
+        shutil.copyfile(Path(scope.api.windows_directory()) / "System32/cmd.exe", executable)
+        result = scope.process(
+            [str(executable), "/d", "/c", "echo %LOCALAPPDATA%"],
+            cwd=directory,
+            environment={"SystemRoot": scope.api.windows_directory()},
+        ).run(timeout_seconds=10)
+        assert result.exit_code == 0 and result.cleanup_status == "confirmed", result
+        # Windows may append Packages/<profile>/AC while constructing the child
+        # environment. The resulting location must remain inside this scope.
+        assert Path(result.stdout.strip()).is_relative_to(directory)
+        assert_dead(result.pid)
+    assert not directory.exists()
+
+
 def test_real_supervisor_death_kills_entire_job(probe_exe, tmp_path):
     log = tmp_path / "supervisor.jsonl"
     # The helper host is deliberately killed without finally blocks. Each line is
@@ -244,9 +262,9 @@ with open(sys.argv[2], "w", encoding="utf-8", buffering=1) as log:
                     continue
                 if any("ready" in row for row in rows):
                     break
-            assert supervisor.poll() is None, supervisor.communicate(timeout=2)
+            assert supervisor.poll() is None, "Supervisor exited before readiness"
             time.sleep(0.02)
-        assert any("ready" in row for row in rows), rows
+        assert any("ready" in row for row in rows), f"Supervisor did not become ready: {rows}"
         supervisor.kill()
         supervisor.communicate(timeout=5)
         # Job termination is asynchronous after the last host handle closes.
@@ -262,11 +280,35 @@ with open(sys.argv[2], "w", encoding="utf-8", buffering=1) as log:
                     raise
                 time.sleep(0.02)
     finally:
-        if supervisor.poll() is None:
-            supervisor.kill()
-        supervisor.communicate(timeout=5)
-        log.unlink(missing_ok=True)
-        report = recover_profiles(tmp_path, WindowsIsolationAPI())
-        expected = [row["profile"] for row in rows if "profile" in row]
-        assert report["removed"] == expected and not report["failed"], report
-        assert not list(tmp_path.glob("*.json"))
+        failure = sys.exception()
+        cleanup_errors = []
+        try:
+            if supervisor.poll() is None:
+                supervisor.kill()
+            stdout, stderr = supervisor.communicate(timeout=5)
+            if failure is not None:
+                failure.add_note(
+                    f"Supervisor exit={supervisor.returncode}; stdout={stdout!r}; stderr={stderr!r}"
+                )
+        except Exception as error:
+            cleanup_errors.append(("Supervisor shutdown", error))
+        try:
+            report = recover_profiles(tmp_path, WindowsIsolationAPI())
+            assert not report["failed"], report
+            assert not list(tmp_path.glob("*.json")), report
+        except Exception as error:
+            cleanup_errors.append(("Profile recovery", error))
+        try:
+            log.unlink(missing_ok=True)
+        except OSError as error:
+            cleanup_errors.append(("Supervisor log removal", error))
+        if cleanup_errors:
+            primary = failure if failure is not None else cleanup_errors[0][1]
+            for stage, error in cleanup_errors:
+                primary.add_note(f"{stage}: {type(error).__name__}: {error}")
+            if failure is None:
+                raise primary
+    # Only a completed kill/death check requires crash recovery. An early startup
+    # failure can already have deleted its profile through normal scope cleanup.
+    expected = [row["profile"] for row in rows if "profile" in row]
+    assert report["removed"] == expected, report

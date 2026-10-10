@@ -235,6 +235,28 @@ def test_environment_is_explicit_sorted_and_rejects_case_collisions():
         environment_block({"Path": "safe", "PATH": "unsafe"})
 
 
+@pytest.mark.parametrize("key", [None, "LOCALAPPDATA", "LocalAppData"])
+def test_launch_supplies_private_localappdata_without_inheriting_or_mutating(api, monkeypatch, key):
+    monkeypatch.setenv("LOCALAPPDATA", "C:/host/private")
+    monkeypatch.setenv("REPO_AGENT_TEST_SECRET", "must-not-inherit")
+    environment = {"SystemRoot": "C:/Windows"}
+    if key:
+        environment[key] = "C:/private/scratch"
+    original = dict(environment)
+    with WindowsIsolation() as scope:
+        execution = scope.process(
+            ["C:/private/tool.exe"], cwd="C:/private", environment=environment
+        )
+        execution.run(timeout_seconds=1)
+        expected = environment[key] if key else str(scope.profile.directory)
+    entries = dict(item.split("=", 1) for item in api.launch["environment"].split("\x00") if item)
+    assert {name.upper(): value for name, value in entries.items()} == {
+        "SYSTEMROOT": "C:/Windows",
+        "LOCALAPPDATA": expected,
+    }
+    assert environment == original
+
+
 def test_x64_sdk_layouts_have_windows_integer_widths():
     if ctypes.sizeof(ctypes.c_void_p) != 8:
         pytest.skip("x64 ABI check")

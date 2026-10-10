@@ -50,6 +50,7 @@ class WindowsIsolation:
     Use as a context manager, stage authorized files under profile.directory,
     then call process(...).run(...). User/tool input must not create scopes or
     supply environment/ACL policies directly. No network capabilities are added.
+    Missing LOCALAPPDATA is derived from this scope's private profile directory.
     """
 
     def __init__(self, *, recovery_root=None):
@@ -150,7 +151,13 @@ class WindowsNativeProcess:
             raise ValueError("max_output_bytes must be positive")
         self.scope, self.api = scope, scope.api
         self.command, self.cwd = tuple(command), _absolute_local_path(cwd)
-        self.environment = environment_block(environment)
+        snapshot = ProcessRunner._validate_environment(environment)
+        # AppContainer creation fails with ERROR_ENVVAR_NOT_FOUND (203) if the
+        # explicit child environment omits LOCALAPPDATA. Never inherit the host
+        # value; retain an explicitly configured private scratch path instead.
+        if not any(key.upper() == "LOCALAPPDATA" for key in snapshot):
+            snapshot["LOCALAPPDATA"] = _absolute_local_path(scope.profile.directory)
+        self.environment = environment_block(snapshot)
         self.max_output_bytes = max_output_bytes
         self.last_cleanup_status = "not_needed"
         self.diagnostics = []
