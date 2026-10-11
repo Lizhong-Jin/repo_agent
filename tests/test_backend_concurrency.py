@@ -168,7 +168,7 @@ def test_docker_failure_is_sticky_and_waiting_call_cannot_start(tmp_path, monkey
         assert release.wait(3)
         return ProcessResult(0, '{"success":true}', "", False, None, 1, False, False)
 
-    backend.runner = SimpleNamespace(run=run)
+    backend.runner = SimpleNamespace(run=run, last_cleanup_status="confirmed")
     monkeypatch.setattr(
         "sandbox.docker.subprocess.run",
         lambda *a, **kw: SimpleNamespace(returncode=1, stderr=b"cleanup refused"),

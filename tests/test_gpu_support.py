@@ -12,7 +12,7 @@ from sandbox import SandboxPolicy, SandboxSession, compute_probe, operator_smoke
 from sandbox.docker import DockerBackend
 from tools import create_default_tools
 from tools._internal.lsp_config import default_lsp_registry
-from tools._internal.process_runner import ProcessRunner
+from tools._internal.process_runner import ProcessResult, ProcessRunner
 
 
 def test_cuda_routes_and_python_frameworks():
@@ -72,11 +72,16 @@ def test_gpu_flags_and_worker_limits_are_host_owned(tmp_path, monkeypatch):
             "command_timeout_seconds": 900,
             "python_timeout_seconds": 900,
         }
-        return SimpleNamespace(
+        return ProcessResult(
             timed_out=False,
             exit_code=0,
             stdout_truncated=False,
             stdout='{"success": true, "data": {}}',
+            stderr="",
+            stderr_truncated=False,
+            cleanup_error=None,
+            duration_ms=1,
+            cleanup_status="confirmed",
         )
 
     monkeypatch.setattr(backend.runner, "run", run)

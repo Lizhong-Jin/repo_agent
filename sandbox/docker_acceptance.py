@@ -62,7 +62,10 @@ class Acceptance:
 
     @contextmanager
     def project(self):
-        directory = Path(tempfile.mkdtemp(prefix="repo-agent-acceptance-"))
+        # Windows TEMP can contain an 8.3 alias (e.g. RUNNER~1). Canonicalize
+        # this host-created directory before relocating the session into it;
+        # file services must continue rejecting aliases supplied to them.
+        directory = Path(tempfile.mkdtemp(prefix="repo-agent-acceptance-")).resolve(strict=True)
         root = directory / "项目 space,中文"
         root.mkdir()
         session = None
@@ -151,6 +154,33 @@ class Acceptance:
         )
         return data
 
+    def compiled_tools(self):
+        """Compile and run in the disposable workspace; keep /tmp non-executable."""
+        self.command(
+            "run_shell",
+            {
+                "script": "set -eu\n"
+                "node -e 'if (6*7 !== 42) process.exit(1)'\n"
+                # /tmp remains noexec. Build in the disposable workspace,
+                # including Go's intermediate files and cache, then remove
+                # artifacts so they cannot enter later writeback checks.
+                'build_dir="$(mktemp -d ./acceptance-build.XXXXXX)"\n'
+                "trap 'rm -rf -- \"$build_dir\"' EXIT\n"
+                "printf 'int main(void){return 0;}' > \"$build_dir/check.c\"\n"
+                'cc "$build_dir/check.c" -o "$build_dir/check-c"\n'
+                '"$build_dir/check-c"\n'
+                'c++ "$build_dir/check.c" -o "$build_dir/check-cpp"\n'
+                '"$build_dir/check-cpp"\n'
+                "printf 'package main\\nfunc main() {}\\n' > \"$build_dir/check.go\"\n"
+                'mkdir "$build_dir/go-tmp" "$build_dir/go-cache"\n'
+                'export GOTMPDIR="$PWD/$build_dir/go-tmp"\n'
+                'export GOCACHE="$PWD/$build_dir/go-cache"\n'
+                'go build -o "$build_dir/check-go" "$build_dir/check.go"\n'
+                '"$build_dir/check-go"',
+                "timeout_seconds": 120,
+            },
+        )
+
     def toolchain(self):
         with self.project():
             data = self.call("get_execution_environment", {"sections": ["execution", "system"]})
@@ -219,24 +249,13 @@ class Acceptance:
             self.call("delete_file", {"path": "files/moved.txt"})
             require(not (self.session.workspace / "files/moved.txt").exists(), "Delete")
             self.command("run_command", {"command": ["python", "-c", "assert 6 * 7 == 42"]})
-            self.command(
-                "run_shell",
-                {
-                    "script": "set -eu\n"
-                    "node -e 'if (6*7 !== 42) process.exit(1)'\n"
-                    "printf 'int main(void){return 0;}' > /tmp/check.c\n"
-                    "cc /tmp/check.c -o /tmp/check-c && /tmp/check-c\n"
-                    "c++ /tmp/check.c -o /tmp/check-cpp && /tmp/check-cpp\n"
-                    "printf 'package main\\nfunc main() {}\\n' > /tmp/check.go\n"
-                    "go build -o /tmp/check-go /tmp/check.go && /tmp/check-go",
-                    "timeout_seconds": 120,
-                },
-            )
+            self.compiled_tools()
             self.command(
                 "run_python",
                 {
                     "code": "import os, socket\nfrom pathlib import Path\n"
                     "assert os.getuid() != 0\nassert not Path('/workspace/.env').exists()\n"
+                    "assert os.statvfs('/tmp').f_flag & os.ST_NOEXEC\n"
                     f"assert not Path({str(self.session.root)!r}).exists()\n"
                     "assert not Path('/var/run/docker.sock').exists()\n"
                     "assert 'ACCEPTANCE_SECRET' not in os.environ\n"

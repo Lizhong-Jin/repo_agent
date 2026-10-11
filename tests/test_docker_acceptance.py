@@ -5,6 +5,7 @@ Passing contracts on macOS/Linux is not Windows Desktop acceptance evidence.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -20,7 +21,10 @@ from tools._internal.base import ToolResult
 from tools.factory import create_file_tools
 
 
-def test_writeback_acceptance_uses_real_host_files_without_engine(tmp_path, monkeypatch):
+@pytest.mark.parametrize("temporary_path", ["default", "alias"])
+def test_writeback_acceptance_uses_real_host_files_without_engine(
+    tmp_path, monkeypatch, temporary_path
+):
     """Exercises Windows handles too when this contract runs on Windows CI."""
     from sandbox import session
 
@@ -38,11 +42,106 @@ def test_writeback_acceptance_uses_real_host_files_without_engine(tmp_path, monk
             return tool.execute(arguments)
 
     monkeypatch.setattr(session, "DockerBackend", FilesOnly)
+    if temporary_path == "alias":
+        import tempfile
+
+        from host_support import filesystem
+
+        target = tmp_path / "acceptance temporary directory"
+        target.mkdir()
+        if os.name == "nt":
+            import ctypes as C
+
+            short_path = C.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+            short_path.argtypes = [C.c_wchar_p, C.c_wchar_p, C.c_uint32]
+            short_path.restype = C.c_uint32
+            buffer = C.create_unicode_buffer(32768)
+            size = short_path(str(target), buffer, len(buffer))
+            assert 0 < size < len(buffer)
+            alias = Path(buffer.value)
+            if str(alias).casefold() == str(target).casefold():
+                pytest.skip("This Windows volume does not create 8.3 aliases")
+        else:
+            alias = tmp_path / "temporary-alias"
+            alias.symlink_to(target, target_is_directory=True)
+        original = tempfile.mkdtemp
+        created = []
+
+        def mkdtemp(*args, **kwargs):
+            if kwargs.get("prefix") == "repo-agent-acceptance-":
+                kwargs["dir"] = alias
+                path = original(*args, **kwargs)
+                assert Path(path) != Path(path).resolve(strict=True)
+                created.append(path)
+                if os.name == "nt":
+                    # Canonicalizing a trusted TEMP path must NOT relax the
+                    # low-level service's rejection of short aliases.
+                    with pytest.raises(PermissionError, match="short-name aliases"):
+                        filesystem.open_directory(path)
+                return path
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(tempfile, "mkdtemp", mkdtemp)
     acceptance = Acceptance()
     monkeypatch.setattr(acceptance, "assert_removed", lambda: None)
     acceptance.writeback()
     assert acceptance.report["retained_directories"] == []
     assert not acceptance.session.directory.exists()
+    if temporary_path == "alias":
+        assert len(created) == 1
+        assert acceptance.session.directory.parent.parent == target.resolve(strict=True)
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or not all(shutil.which(name) for name in ("bash", "node", "cc", "c++", "go")),
+    reason="Requires a local POSIX C/C++/Go/Node toolchain; Docker CI covers the Linux image",
+)
+@pytest.mark.parametrize("compiler_failure", [False, True])
+def test_compiler_acceptance_executes_and_removes_workspace_artifacts(tmp_path, compiler_failure):
+    """Execute the real smoke script, including quoting and the EXIT cleanup."""
+    workspace = tmp_path / "workspace 中文, with spaces"
+    workspace.mkdir()
+    # Leave an unrelated sentinel: only this call's build directory may be removed.
+    (workspace / "sentinel").write_text("keep")
+    acceptance = Acceptance()
+    acceptance.called = set()
+    calls = []
+    environment = {
+        **os.environ,
+        "GOENV": "off",
+        "GOTOOLCHAIN": "local",
+        "GOWORK": "off",
+        "GOPROXY": "off",
+        "GOSUMDB": "off",
+    }
+    if compiler_failure:
+        binaries = tmp_path / "broken-compiler"
+        binaries.mkdir()
+        compiler = binaries / "cc"
+        compiler.write_text("#!/bin/sh\nexit 19\n")
+        compiler.chmod(0o755)
+        environment["PATH"] = str(binaries) + os.pathsep + os.environ["PATH"]
+
+    def execute(arguments):
+        completed = subprocess.run(
+            [shutil.which("bash"), "-c", arguments["script"]],
+            cwd=workspace,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=arguments["timeout_seconds"],
+        )
+        calls.append(completed)
+        return ToolResult(True, {"exit_code": completed.returncode, "stderr": completed.stderr})
+
+    acceptance.tools = {"run_shell": SimpleNamespace(execute=execute)}
+    if compiler_failure:
+        with pytest.raises(RuntimeError, match="exit_code.*19"):
+            acceptance.compiled_tools()
+    else:
+        acceptance.compiled_tools()
+    assert len(calls) == 1
+    assert [p.name for p in workspace.iterdir()] == ["sentinel"]
 
 
 @pytest.mark.parametrize("remaining,daemon_ok", [("repo-agent-owned\n", True), ("", False)])

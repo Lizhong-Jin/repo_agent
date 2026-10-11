@@ -156,6 +156,76 @@ def test_active_job_timeout_cannot_be_reported_as_confirmed(fake_streams, monkey
     assert api.events[-1] == "close_job"
 
 
+@pytest.mark.parametrize("outcome", ["delayed_exit", "never_exits", "poll_error"])
+def test_empty_job_waits_for_leader_signal_without_assuming_success(
+    fake_streams, monkeypatch, outcome
+):
+    from host_support import windows_job
+
+    api = FakeAPI()
+    process = launch(api)
+    clock = SimpleNamespace(now=0.0)
+    polls, drains = [], []
+
+    def poll(handle):
+        assert api.events[-1] != "close_job"
+        assert not api.running  # Job already empty, but leader not signaled yet.
+        polls.append(clock.now)
+        if outcome == "poll_error":
+            raise OSError("leader query failed")
+        if outcome == "delayed_exit" and len(polls) == 3:
+            return 1
+        return None
+
+    def sleep(seconds):
+        clock.now += 0.5
+
+    monkeypatch.setattr(api, "poll", poll)
+    monkeypatch.setattr(
+        windows_job, "time", SimpleNamespace(monotonic=lambda: clock.now, sleep=sleep)
+    )
+    error = process.cleanup(lambda: drains.append(clock.now))
+    assert bool(error) == (outcome != "delayed_exit")
+    assert api.events[-1] == "close_job"
+    assert clock.now <= 2
+    if outcome == "delayed_exit":
+        assert len(polls) == 3 and len(drains) == 2
+        assert process.returncode == 1
+    elif outcome == "never_exits":
+        assert clock.now == 2
+        assert "leader exit" in process.diagnostics[0]["error"]
+    else:
+        assert "leader query failed" in process.diagnostics[0]["error"]
+    assert process.cleanup(lambda: pytest.fail("already closed")) == error
+
+
+def test_job_and_leader_wait_share_one_deadline(fake_streams, monkeypatch):
+    from host_support import windows_job
+
+    api = FakeAPI()
+    process = launch(api)
+    clock = SimpleNamespace(now=0.0)
+    polls = []
+
+    def sleep(seconds):
+        clock.now += 0.5
+
+    def poll(handle):
+        polls.append(clock.now)
+        # Would succeed within a fresh 2 s leader timeout, but not the single
+        # total cleanup budget after waiting 1.5 s for the Job to become empty.
+        return 1 if clock.now >= 2.5 else None
+
+    monkeypatch.setattr(api, "active_processes", lambda job: int(clock.now < 1.5))
+    monkeypatch.setattr(api, "poll", poll)
+    monkeypatch.setattr(
+        windows_job, "time", SimpleNamespace(monotonic=lambda: clock.now, sleep=sleep)
+    )
+    assert process.cleanup(lambda: None)
+    assert polls == [1.5, 2.0]
+    assert clock.now == 2 and api.events[-1] == "close_job"
+
+
 def test_runner_does_not_fallback_after_windows_job_start_failure(tmp_path, monkeypatch):
     from host_support import processes
 
@@ -181,6 +251,13 @@ def test_runner_propagates_windows_job_cleanup(tmp_path, monkeypatch, fake_strea
 
     api = FakeAPI()
     context = CancellationContext()
+    leader_polls = []
+
+    def delayed_leader(handle):
+        leader_polls.append(handle)
+        return 1 if len(leader_polls) >= 3 else None
+
+    monkeypatch.setattr(api, "poll", delayed_leader)
     runner = ProcessRunner(supervise_tree=True)
     monkeypatch.setattr(processes, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr("host_support.windows_job.WindowsJobProcess", lambda *a, **k: launch(api))
@@ -258,7 +335,7 @@ def test_real_windows_job_cleans_detached_descendants(tmp_path, mode):
                     timeout_seconds=15,
                     cancellation=context,
                 )
-            assert error.value.report["cleanup_status"] == "confirmed"
+            assert error.value.report["cleanup_status"] == "confirmed", error.value.report
         else:
             result = runner.run([sys.executable, "-c", parent], cwd=tmp_path, timeout_seconds=5)
             assert result.cleanup_status == "confirmed", result

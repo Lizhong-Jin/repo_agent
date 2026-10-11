@@ -101,8 +101,14 @@ class WindowsJobProcess:
                         raise OSError("Windows client Job still has active processes")
                     drain()
                     time.sleep(0.01)
-                if self.information is not None and self.poll() is None:
-                    raise OSError("Windows client leader exit could not be confirmed")
+                # Job accounting can reach zero before the process handle is
+                # signaled. Wait for both under the same cleanup deadline;
+                # successful termination alone never proves clean exit.
+                while self.information is not None and self.poll() is None:
+                    if time.monotonic() >= deadline:
+                        raise OSError("Windows client leader exit could not be confirmed")
+                    drain()
+                    time.sleep(0.01)
         except Exception as error:
             self.diagnostics.append({"stage": "job_cleanup", "error": str(error)})
         finally:
