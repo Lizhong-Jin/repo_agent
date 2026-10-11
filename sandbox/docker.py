@@ -69,7 +69,11 @@ def _failure(result, code: str, message: str) -> ToolResult:
         "timed_out": result.timed_out,
         "output_kind": "worker_protocol",
         "output_complete": False,
-        "cleanup_status": "confirmed",
+        "cleanup_status": (
+            "unknown" if result.cleanup_error or result.cleanup_status == "unknown" else "confirmed"
+        ),
+        "cleanup_error": result.cleanup_error,
+        "cleanup_diagnostics": result.cleanup_diagnostics,
     }
     for channel in ("stdout", "stderr"):
         value = getattr(result, channel, "")
@@ -100,7 +104,9 @@ class DockerBackend:
             raise ValueError(f"Docker 镜像不可用；请先构建 {policy.image}。")
         self.image = check.stdout.strip()  # Pin this session to the inspected image ID.
         self.container_user = _container_user(self.executable)
-        self.runner = ProcessRunner(max_output_bytes=4 * 1024 * 1024)
+        self.runner = ProcessRunner(
+            max_output_bytes=4 * 1024 * 1024, supervise_tree=sys.platform == "win32"
+        )
 
     def execution_context(self) -> dict:
         """Only report policy actually used by this backend; never host totals."""
@@ -205,6 +211,8 @@ class DockerBackend:
             finally:
                 # Killing the Docker client alone does not terminate its container.
                 context = current_cancellation()
+                if self.runner.last_cleanup_status == "unknown":
+                    self.healthy = False
                 try:
                     cleanup = subprocess.run(
                         [self.executable, "rm", "-f", container],
@@ -225,6 +233,13 @@ class DockerBackend:
                     raise
                 if context is not None:
                     context.record_cleanup("confirmed", container=container)
+            if result.cleanup_error or result.cleanup_status == "unknown":
+                self.healthy = False
+                return _failure(
+                    result,
+                    "SANDBOX_CLEANUP_FAILED",
+                    "Docker 宿主客户端进程清理未确认；停止会话，请检查进程清理诊断。",
+                )
             if result.timed_out or result.exit_code != 0 or result.stdout_truncated:
                 return _failure(
                     result,

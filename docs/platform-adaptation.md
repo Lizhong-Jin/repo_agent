@@ -77,6 +77,9 @@ Windows native 为实验性支持，已接入工厂和能力标记：LPAC + Job 
 
 ## Windows 文件服务
 
+Docker Desktop 的完整自动检查、真实终端 Ctrl+C、CI 与默认模式发布门槛见
+[Windows Docker 测试与实机验收](windows-docker-acceptance.md)。
+
 目标为 Windows 10 1809+ / Windows 11 x86_64、Python 3.11+，优先在本地 NTFS 项目和用户私有状态目录验收。API 或文件系统不能提供所需保证时直接报错，不回退到不安全的路径操作。
 
 - `NtCreateFile` 逐个打开路径组件，使用 `FILE_OPEN_REPARSE_POINT`，拒绝符号链接、junction 和其他重解析点；内容访问拒绝多硬链接文件。目录枚举、删除与重命名基于已打开的句柄，防止检查后的路径替换重定向操作。
@@ -92,9 +95,9 @@ Windows native 为实验性支持，已接入工厂和能力标记：LPAC + Job 
 python -m pytest -q tests/test_host_file_contracts.py tests/test_windows_files.py
 ```
 
-`.github/workflows/host-files.yml` 配置了 Windows/macOS/Linux × Python 3.11/3.13 的六组契约测试，运行 `test_architecture_boundaries.py`、`test_host_file_contracts.py`、`test_windows_files.py`、`test_windows_release.py`、`test_cancellation.py`、`test_task_queue.py`、`test_continue.py`、`test_execution_ledger.py`、`test_task_reports.py`、`test_verification_plan.py`、`test_tui_reports.py`、`test_workspaces.py`、`test_review_mode.py` 共 13 份模块。另有 Windows Python 3.13 作业构建 ZIP、设置归档变量后执行真实安装生命周期，并上传测试产物。Windows 文件测试包含 junction 场景、只读文件原子替换和全部 local 文件工具；非 Windows 环境跳过 Windows 内核用例。
+`.github/workflows/host-files.yml` 配置了 Windows/macOS/Linux × Python 3.11/3.13 的六组契约测试，运行 `test_architecture_boundaries.py`、`test_host_file_contracts.py`、`test_windows_files.py`、`test_windows_release.py`、`test_docker_acceptance.py`、`test_cancellation.py`、`test_task_queue.py`、`test_continue.py`、`test_execution_ledger.py`、`test_task_reports.py`、`test_verification_plan.py`、`test_tui_reports.py`、`test_workspaces.py`、`test_review_mode.py` 共 14 份模块。另有 Windows Python 3.13 作业构建 ZIP、设置归档变量后执行真实安装生命周期，并上传测试产物。Windows 文件测试包含 junction 场景、只读文件原子替换和全部 local 文件工具；非 Windows 环境跳过 Windows 内核用例。
 
-工作流还配置了 Linux/macOS × Python 3.11/3.13 的四组默认全量回归，准备仓库 `.venv` 和安装入口后运行整个 `tests/` 目录。默认全量仍按平台、依赖和开关跳过真实环境用例；Windows 另有独立 LPAC/Job 和完整 native 的真实内核测试作业。另有独立 Ruff 检查与格式检查作业；lint 和默认回归安装锁定的开发依赖。CI 未配置真实 Docker Desktop 回写测试，Windows Docker 回写需下面的独立开关与镜像。另有 `.github/workflows/docker.yml` 在 Ubuntu / Python 3.12 构建 standard 镜像，执行容器 smoke 和 Docker/回写/多语言测试；它不覆盖 Windows Docker Desktop 或 GPU。
+工作流还配置了 Linux/macOS × Python 3.11/3.13 的四组默认全量回归，准备仓库 `.venv` 和安装入口后运行整个 `tests/` 目录。默认全量仍按平台、依赖和开关跳过真实环境用例；Windows 另有独立 LPAC/Job 和完整 native 的真实内核测试作业。另有独立 Ruff 检查与格式检查作业；lint 和默认回归安装锁定的开发依赖。`.github/workflows/windows-docker.yml` 提供手动触发的真实 Docker Desktop 验收，需要专用 Windows 自托管 runner，不能用普通 Windows 契约作业替代。另有 `.github/workflows/docker.yml` 在 Ubuntu / Python 3.12 构建 standard 镜像，执行容器 smoke、完整工具链、回写、超时、取消和 TUI 检查，并保存 JSON 报告；它不覆盖 Windows Docker Desktop 或 GPU。真实终端按键仍需人工验收。
 
 可选扫描器还有 `.github/workflows/policy-scan-rust.yml`：Linux/macOS × Python 3.11/3.13，检查 Rust 格式、Clippy 和单元测试，构建并导入扩展后运行 Python/Rust 差分与策略集成契约。覆盖 Linux 策略扫描、两平台文件系统/目录批量协议及 native 文件工具。macOS 还使用 Rust 做自身工作区硬链接预检，内核隔离规则仍由 Seatbelt 提供；该作业不提供 Windows Rust 后端，未开启真实隔离开关的用例仍跳过。
 

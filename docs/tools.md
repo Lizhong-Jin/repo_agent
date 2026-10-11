@@ -346,7 +346,7 @@ else:
 
 `ProcessRunner` 是受信任应用代码使用的底层接口，不直接暴露给模型，不应用文件保护策略。`RunCommandTool` / `RunPythonTool` / `RunShellTool` 默认返回 `SANDBOX_REQUIRED`；只有受信任的隔离执行调用方显式启用 `execution_allowed=True`。该参数不在模型工具 schema 中，CLI 不提供本地绕过开关。`create_default_tools()` 默认不注册命令工具；Docker worker 显式启用；native 主进程复用命令工具的参数和路径校验，但将 runner 替换为始终通过平台沙箱（Seatbelt 或 Bubblewrap/seccomp）启动的执行器。这个开关本身不创建隔离环境。
 
-超时覆盖运行和输出收集，不因持续输出自动续期，清理通常额外耗时最多约 3 秒；`cleanup_error` 表示清理未完成或无法确认，Windows 后代进程清理仍为尽力处理。native 使用 `supervise_tree=True`，由 `host_support/supervision.py` 在外层跟踪 PID 与内核启动时间、观察后代并执行 TERM → KILL → 核验，避免依赖沙箱 worker 内部的进程组探测。该选项支持 macOS/Linux，属于采样式监督，不能保证发现采样间迅速脱离的所有后代；不向模型暴露任意 PID 终止接口。native 仅在清理无法确认时暂停执行与写入，正常超时清理成功后继续工作，详见 [原生沙箱](native-sandbox.md#超时结果与恢复)。
+超时覆盖运行和输出收集，不因持续输出自动续期，清理通常额外耗时最多约 3 秒；`cleanup_error` 表示清理未完成或无法确认，未启用监督的 Windows 宿主命令仍为尽力处理。Windows Docker 客户端启用 Job 监督，以活动进程数归零确认宿主清理，并另外删除容器，详见 [Windows Docker 验收](windows-docker-acceptance.md)。macOS/Linux native 使用 `supervise_tree=True`，由 `host_support/supervision.py` 在外层跟踪 PID 与内核启动时间、观察后代并执行 TERM → KILL → 核验，避免依赖沙箱 worker 内部的进程组探测。该选项支持 macOS/Linux，属于采样式监督，不能保证发现采样间迅速脱离的所有后代；不向模型暴露任意 PID 终止接口。native 仅在清理无法确认时暂停执行与写入，正常超时清理成功后继续工作，详见 [原生沙箱](native-sandbox.md#超时结果与恢复)。
 
 Linux 的进程身份来自 `/proc/<pid>/stat`，按字节解析以容忍任意进程名。支持时使用 pidfd 绑定目标，在打开句柄后再次核验身份，再发送 TERM/KILL，最终关闭句柄；缺少 Python API 或内核返回 `ENOSYS` 时回退到 PID 信号。权限拒绝不会触发这个回退。诊断记录 `via=pidfd/pid`，以及 `pidfd_open` / `pidfd_send_signal` 等失败阶段。可移植单元测试位于 `tests/test_linux_process_supervisor.py`，真实 namespace、超时和取消测试位于 `tests/test_linux_native.py`；Linux native 已有独立 PID namespace 作为进程生命周期边界，pidfd 本身不提供资源配额或沙箱隔离。
 

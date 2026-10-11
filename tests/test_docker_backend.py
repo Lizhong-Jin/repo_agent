@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from host_support.cancellation import CancellationContext, RunCancelled, cancellation_scope
 from host_support.processes import ProcessResult
 from sandbox.docker import DockerBackend, _container_user
 from sandbox.policy import SandboxPolicy
@@ -40,6 +41,60 @@ def result(**values):
         stderr_truncated=False,
     )
     return ProcessResult(**(fields | values))
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_windows_docker_client_uses_job_supervision(monkeypatch, platform):
+    monkeypatch.setattr("sandbox.docker.sys.platform", platform)
+    monkeypatch.setattr("sandbox.docker.shutil.which", lambda _: "docker")
+    monkeypatch.setattr("sandbox.docker._container_user", lambda _: "65534:65534")
+    monkeypatch.setattr(
+        "sandbox.docker.subprocess.run",
+        lambda *a, **k: SimpleNamespace(returncode=0, stdout="sha256:test"),
+    )
+    assert DockerBackend(SandboxPolicy()).runner.supervise_tree == (platform == "win32")
+
+
+@pytest.mark.parametrize("timed_out", [False, True])
+def test_host_cleanup_failure_is_not_hidden_by_container_removal(
+    backend, tmp_path, monkeypatch, timed_out
+):
+    monkeypatch.setattr(
+        backend.runner,
+        "run",
+        lambda *a, **k: result(
+            timed_out=timed_out,
+            cleanup_status="unknown",
+            cleanup_error="Job query failed",
+            cleanup_diagnostics=[{"stage": "job_cleanup", "error": "query failed"}],
+        ),
+    )
+    outcome = backend.execute(tmp_path, "git_status", {})
+    assert not outcome.success and outcome.error_code == "SANDBOX_CLEANUP_FAILED"
+    assert outcome.data["cleanup_status"] == "unknown"
+    assert outcome.data["cleanup_error"] == "Job query failed"
+    assert outcome.data["cleanup_diagnostics"][0]["stage"] == "job_cleanup"
+    assert not backend.healthy
+    with pytest.raises(OSError, match="清理未确认"):
+        backend.execute(tmp_path, "git_status", {})
+
+
+@pytest.mark.parametrize("status", ["confirmed", "unknown"])
+def test_cancelled_client_cleanup_controls_backend_reuse(backend, tmp_path, monkeypatch, status):
+    context = CancellationContext()
+
+    def cancel(*a, **k):
+        backend.runner.last_cleanup_status = status
+        context.record_cleanup(status, pid=123)
+        context.cancel()
+        context.check()
+
+    monkeypatch.setattr(backend.runner, "run", cancel)
+    with cancellation_scope(context), pytest.raises(RunCancelled) as error:
+        backend.execute(tmp_path, "git_status", {})
+    assert error.value.report["cleanup_status"] == status
+    assert any(x.get("container") and x["status"] == "confirmed" for x in context.cleanups)
+    assert backend.healthy == (status == "confirmed")
 
 
 @pytest.mark.parametrize(

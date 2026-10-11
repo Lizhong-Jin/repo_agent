@@ -125,6 +125,8 @@ def test_container_security_and_cleanup(monkeypatch, tmp_path, interrupt):
             raise KeyboardInterrupt
         return SimpleNamespace(
             timed_out=False,
+            cleanup_error=None,
+            cleanup_status="not_needed",
             exit_code=0,
             stdout_truncated=False,
             stdout=json.dumps({"success": True, "data": {}}),

@@ -497,7 +497,7 @@ def test_docker_cancellation_waits_for_container_removal(tmp_path, monkeypatch, 
             raise subprocess.TimeoutExpired(command, 15)
         return SimpleNamespace(returncode=0)
 
-    backend.runner = SimpleNamespace(run=execute)
+    backend.runner = SimpleNamespace(run=execute, last_cleanup_status="not_needed")
     monkeypatch.setattr("sandbox.docker.subprocess.run", remove)
     with cancellation_scope(context), pytest.raises(RunCancelled) as error:
         backend.execute(tmp_path, "run_command", {"command": ["test"]})

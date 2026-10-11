@@ -2,6 +2,8 @@
 
 [文档首页](../docs/index.md) · [项目首页](../README.md) · [会话管理](../docs/sessions.md)
 
+容器引擎迁移、运行包分发和宿主依赖兼容性见 [Podman 分发与项目依赖评估](../docs/container-runtime-options.md)。
+
 CLI 首次在 macOS/Linux 默认 native，Windows 默认 local；本文描述显式选择 `--sandbox docker` 的行为。macOS / Linux 也支持直接修改原项目的 [native 后端](../docs/native-sandbox.md)。Docker 模式下，宿主机运行模型循环、管理密钥/会话/日志/容器，并提供技能加载、历史回查、执行结果回读及可选 Web 工具；文件、命令、Python 和 Git 工具均在容器中执行。Python 库直接调用 `create_default_tools` 提供本地文件、Git 和不启动探测子进程的基础环境查询；需要命令执行和隔离时使用 `SandboxSession(root).tools()`。
 
 ## 准备与使用
@@ -145,6 +147,9 @@ CUDA 配置挂载 GPU，增加编译所需的内存、临时空间和执行时�
 完整构建与验证流程见 [GPU 算子开发指南](../docs/gpu-operators.md)。
 
 ## 不同系统上的 Docker 模式
+
+完整工具链、回写恢复、超时、Ctrl+C 与 Windows 默认模式的发布门槛见
+[Windows Docker 测试与实机验收](../docs/windows-docker-acceptance.md)。
 
 ### Windows native 兼容性问题的容器路线
 

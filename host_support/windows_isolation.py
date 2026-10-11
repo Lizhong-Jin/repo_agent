@@ -402,6 +402,36 @@ class WindowsIsolationAPI:
             # PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY, CHILD_PROCESS_RESTRICTED.
             # Enforced by the kernel: even compromised Git cannot spawn helpers.
             attributes.append((0x2000E, DWORD(1)))
+        return self._launch_suspended(
+            attributes,
+            stdio,
+            command,
+            cwd,
+            environment,
+            own,
+            detached=git_query,
+        )
+
+    def create_trusted_suspended(self, job, stdio, command, cwd, environment, own):
+        """Lifecycle containment for trusted host clients; NOT an LPAC sandbox.
+
+        Docker needs the caller's daemon access. Only its process lifetime is
+        restricted here; untrusted tools must still execute in the container.
+        """
+        handles = (HANDLE * 3)(*stdio)
+        jobs = (HANDLE * 1)(job)
+        return self._launch_suspended(
+            [(HANDLE_LIST, handles), (JOB_LIST, jobs)],
+            stdio,
+            command,
+            cwd,
+            environment,
+            own,
+        )
+
+    def _launch_suspended(
+        self, attributes, stdio, command, cwd, environment, own, *, detached=False
+    ):
         size = SIZE_T()
         self.kernel.InitializeProcThreadAttributeList(None, len(attributes), 0, C.byref(size))
         if C.get_last_error() != 122 or not size.value:
@@ -431,7 +461,7 @@ class WindowsIsolationAPI:
                 | EXTENDED_STARTUPINFO_PRESENT
                 # Hidden console initialization conflicts with the no-child
                 # policy. Git uses only inherited pipes and needs no console.
-                | (DETACHED_PROCESS if git_query else CREATE_NO_WINDOW)
+                | (DETACHED_PROCESS if detached else CREATE_NO_WINDOW)
             )
             # JOB_LIST binds the job atomically: even host death immediately after
             # CreateProcess cannot leave an unassigned suspended child behind.

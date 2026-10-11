@@ -1,0 +1,49 @@
+name: Windows Docker Desktop acceptance (manual dispatch)
+
+# Requires a dedicated Windows Desktop machine with Docker running in the
+# runner user's session. Never dispatch untrusted PR code onto this machine.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-docker-desktop-acceptance
+  cancel-in-progress: false
+
+jobs:
+  desktop:
+    runs-on: [self-hosted, Windows, X64, docker-desktop]
+    timeout-minutes: 40
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Prepare isolated test environment
+        shell: powershell
+        run: |
+          python -m venv .venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\.venv\Scripts\python.exe -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build and run real Desktop acceptance
+        shell: powershell
+        run: |
+          .\scripts\verify-windows-docker.ps1 -Build -Image "repo-agent-acceptance:windows-$env:GITHUB_RUN_ID" -Report artifacts/windows-docker.json
+      - name: Preserve report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-docker-acceptance
+          path: artifacts/*.json
+      - name: Inspect remaining task containers
+        if: always()
+        shell: powershell
+        run: docker ps -a --filter name=repo-agent- --format '{{.Names}} {{.Status}}'

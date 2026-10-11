@@ -157,6 +157,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !host_support/windows_files.py
 !host_support/windows_install.py
 !host_support/windows_isolation.py
+!host_support/windows_job.py
 !host_support/windows_processes.py
 !host_support/windows_recovery.py
 !host_support/windows_security.py
@@ -230,6 +231,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !sandbox/compute_probe.py
 !sandbox/concurrency.py
 !sandbox/docker.py
+!sandbox/docker_acceptance.py
 !sandbox/docker_smoke.py
 !sandbox/environment.py
 !sandbox/linux_exec.py

@@ -158,6 +158,7 @@ class ProcessRunner:
         stdout_capture = _BoundedCapture(self.max_output_bytes)
         stderr_capture = _BoundedCapture(self.max_output_bytes)
         start_time = time.monotonic()
+        supervisor = None
         try:
             popen_kwargs: dict[str, Any] = {
                 "cwd": str(cwd),
@@ -167,17 +168,28 @@ class ProcessRunner:
                 "env": self.base_env,
                 "shell": False,
             }
-            process = start_process(command, **popen_kwargs)
+            if os.name == "nt" and self.supervise_tree:
+                from .windows_job import WindowsJobProcess
+
+                process = WindowsJobProcess(command, cwd=str(cwd), environment=self.base_env)
+                supervisor = process
+            else:
+                process = start_process(command, **popen_kwargs)
         except (OSError, RuntimeError) as error:
+            if os.name == "nt" and self.supervise_tree:
+                # A partially started Job may have failed cleanup. Do not
+                # silently fall back to an unsupervised Windows process.
+                self.last_cleanup_status = "unknown"
+                if cancellation is not None:
+                    cancellation.record_cleanup("unknown", error=str(error))
             raise ProcessStartError(error) from error
 
         streams = {process.stdout: stdout_capture, process.stderr: stderr_capture}
         cleanup_error = None
         diagnostics = []
-        supervisor = None
         self.last_cleanup_status = "unknown"
         try:
-            if self.supervise_tree:
+            if self.supervise_tree and supervisor is None:
                 from .supervision import ProcessSupervisor
 
                 supervisor = ProcessSupervisor(process)
