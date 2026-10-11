@@ -38,7 +38,7 @@ repo-agent --sandbox-review /absolute/session-directory --apply
 
 会话目录位于系统临时目录，包含宿主机维护的 `state.json` 和 `workspace/`。会话目录中只挂载 `workspace/`，不暴露 `state.json` 或备份；每次调用另行挂载只读请求文件，并创建容器临时文件系统。临时目录可能被系统清理，需要长期保存时应备份整个沙箱目录。自动恢复依赖快照中记录的原路径；移动目录不会自动更新该路径，移动后可用 `--sandbox-review` 显式查看新位置。无需保留时手动删除该会话目录。不要编辑 `state.json`。
 
-默认 native 通过原生沙箱直接编辑原项目；也可显式使用 `--sandbox local`：文件和 Git 工具在宿主机运行，不具有 Docker 隔离；通用命令与 Python 工具不注册；Git 子进程仍会运行，但拒绝外部 clean/process 过滤器配置，见 [Git 执行边界](../docs/tools.md#git-工具的执行边界)。需要执行测试或脚本时使用 Docker 或 macOS / Linux native 模式。Docker 缺失、镜像缺失、启动失败均不会自动转为 local。
+macOS/Linux native 直接编辑选定的执行工作区；Windows native 的私有副本和逐调用回写见 [Windows 说明](../docs/windows-native-isolation.md)。也可显式使用 `--sandbox local`：文件和 Git 工具在宿主机运行，不具有 Docker 隔离；通用命令与 Python 工具不注册；Git 子进程仍会运行，但拒绝外部 clean/process 过滤器配置，见 [Git 执行边界](../docs/tools.md#git-工具的执行边界)。需要执行测试或脚本时使用 Docker 或可用的 native 后端；Windows native 的命令和依赖支持范围有限。Docker 缺失、镜像缺失、启动失败均不会自动转为 local。
 
 更新工具保护规则后，请重新构建镜像，让容器使用同一版本：`repo-agent-build-sandbox`。凭据及元数据保护规则共用 `tools/_internal/file_policy.py`，额外的缓存和依赖排除规则位于 `sandbox/policy.py`。
 
@@ -50,7 +50,7 @@ repo-agent --sandbox-review /absolute/session-directory --apply
 AGENT_SANDBOX_WRITEBACK=on-success
 ```
 
-未配置时内置默认值及当前首次安装模板均为 `manual`；用 `repo-agent config show` 确认实际值。`repo-agent` 自动读取配置；优先级为 `--sandbox-writeback` 参数 > 已有非空环境变量 > 项目 `.env` > 用户配置 > 默认值。local/native 忽略配置中的回写策略；显式传入 `--sandbox-writeback on-success` 会报错，避免把本地直接写入误认为受控回写。
+未配置时内置默认值及当前首次安装模板均为 `manual`；用 `repo-agent config show` 确认实际值。`repo-agent` 自动读取配置；优先级为 `--sandbox-writeback` 参数 > 已有非空环境变量 > 项目 `.env` > 用户配置 > 默认值。local/native 忽略配置中的回写策略；显式传入 `--sandbox-writeback on-success` 会报错，该选项只控制 Docker 会话回写，不控制 POSIX native 的直接写入或 Windows native 的逐调用回写。
 
 自动回写发生在**每条用户任务正常结束后**，交互和单次任务模式均支持，不在每次工具调用后同步。决策读取实际工具结果，不依赖模型回答中的“成功”：
 

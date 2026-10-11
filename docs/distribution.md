@@ -59,26 +59,26 @@ macOS/Linux 发行包仅提供顶层 `install-release.sh`，安装、恢复和�
 
 Windows ZIP 同样使用 schema 4（旧版为 schema 3），记录 `windows-x86_64` 目标并仅提供顶层 `install_release.ps1`；同一脚本通过 `--uninstall`、`--check`、`--recover` 完成维护，不附带另一份卸载入口或 POSIX Shell 安装脚本。共用 Python 安装事务、配置保留和归属检查。
 
-默认输出到 `dist/<版本>/<平台>/`；`--output` 仅替换 `dist` 这一层，版本来自 `pyproject.toml`。以下以源码当前版本 0.1.4 演示目录，不表示已有产物与未提交修改同步：
+默认输出到 `dist/<版本>/<平台>/`；`--output` 仅替换 `dist` 这一层，版本来自 `pyproject.toml`。以下以源码当前版本 0.1.5 演示目录，不表示已有产物与未提交修改同步：
 
 ```text
 dist/
-└── 0.1.4/
+└── 0.1.5/
     ├── macos-arm64/
-    │   ├── repo-agent-0.1.4-macos-arm64.tar.gz
-    │   └── repo-agent-0.1.4-macos-arm64.tar.gz.sha256
+    │   ├── repo-agent-0.1.5-macos-arm64.tar.gz
+    │   └── repo-agent-0.1.5-macos-arm64.tar.gz.sha256
     ├── macos-x86_64/
-    │   ├── repo-agent-0.1.4-macos-x86_64.tar.gz
-    │   └── repo-agent-0.1.4-macos-x86_64.tar.gz.sha256
+    │   ├── repo-agent-0.1.5-macos-x86_64.tar.gz
+    │   └── repo-agent-0.1.5-macos-x86_64.tar.gz.sha256
     ├── linux-arm64/
-    │   ├── repo-agent-0.1.4-linux-arm64.tar.gz
-    │   └── repo-agent-0.1.4-linux-arm64.tar.gz.sha256
+    │   ├── repo-agent-0.1.5-linux-arm64.tar.gz
+    │   └── repo-agent-0.1.5-linux-arm64.tar.gz.sha256
     ├── linux-x86_64/
-    │   ├── repo-agent-0.1.4-linux-x86_64.tar.gz
-    │   └── repo-agent-0.1.4-linux-x86_64.tar.gz.sha256
+    │   ├── repo-agent-0.1.5-linux-x86_64.tar.gz
+    │   └── repo-agent-0.1.5-linux-x86_64.tar.gz.sha256
     └── windows-x86_64/
-        ├── repo-agent-0.1.4-windows-x86_64.zip
-        └── repo-agent-0.1.4-windows-x86_64.zip.sha256
+        ├── repo-agent-0.1.5-windows-x86_64.zip
+        └── repo-agent-0.1.5-windows-x86_64.zip.sha256
 ```
 
 Agent 的 `py3-none-any` wheel 作为包内组件放在 `wheels/`，不再单独输出到发布目录。每个压缩包只有一个 `repo-agent-<版本>-<平台>/` 顶层文件夹，内含运行时锁文件、平台标记和 `wheelhouse/`。macOS/Linux 内含固定的 `runtime/python.tar.gz`；Windows 上游 tar.gz 经固定 SHA256 校验后在构建阶段展开为 `runtime/python/python.exe` 等文件，避免安装引导依赖系统 Python 或 tar。当前构建器会移除有对应源码的 `.pyc`，遇到无源码字节码则拒绝构建；Windows 维护入口也校验和清理运行时缓存，具体边界见[安装说明](installation.md#windows-x86_64-zip-安装)。Windows 只收集核心依赖，并按 Windows 目标评估锁文件的平台条件，不携带 native 语言服务依赖；选择 Windows native 安装时须联网补齐。完整包不包含项目的 PyTorch/CUDA 依赖、系统工具链或开发用 pytest/Ruff；后者通过源码开发材料准备。
@@ -170,14 +170,14 @@ Rust 源码统一位于 `rust/`。手工编译使用 `python scripts/build_rust.
 真实安装验收选择与当前机器匹配的完整包。以下示例使用临时用户目录和受管 Python 离线安装，删除下载目录后检查启动、配置恢复、doctor、Docker 构建上下文和卸载；Docker 入口使用模拟程序，不构建真实镜像、不调用模型 API：
 
 ```bash
-REPO_AGENT_TEST_ARCHIVE="$PWD/dist/0.1.4/macos-arm64/repo-agent-0.1.4-macos-arm64.tar.gz" \
+REPO_AGENT_TEST_ARCHIVE="$PWD/dist/0.1.5/macos-arm64/repo-agent-0.1.5-macos-arm64.tar.gz" \
   .venv/bin/python -m pytest -q tests/test_release_distribution.py
 ```
 
 Windows 在真实 Windows 主机上执行以下验收，覆盖 PowerShell 5.1 引导、离线安装、删除下载目录后运行 `.exe`、重装保留配置、恢复与卸载：
 
 ```powershell
-$env:REPO_AGENT_WINDOWS_ARCHIVE = (Resolve-Path 'dist/0.1.4/windows-x86_64/repo-agent-0.1.4-windows-x86_64.zip').Path
+$env:REPO_AGENT_WINDOWS_ARCHIVE = (Resolve-Path 'dist/0.1.5/windows-x86_64/repo-agent-0.1.5-windows-x86_64.zip').Path
 python -m pytest -q tests/test_windows_release.py
 ```
 

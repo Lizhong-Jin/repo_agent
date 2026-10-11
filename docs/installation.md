@@ -10,11 +10,11 @@
 
 维护者的构建产物位于 `dist/<版本>/<平台>/`，每个压缩包旁有对应的 `.sha256` 文件；构建器默认生成全部平台，只提供完整包。构建命令与目录结构见[构建与分发](distribution.md)。
 
-发行压缩包自带与文件名对应的顶层文件夹，直接解压即可，无需预先创建空目录。以下以源码当前版本 0.1.4 的 macOS ARM64 包名演示路径，实际操作须替换为所下载的版本与平台；示例不表示现有归档已包含工作区的未发布修改：
+发行压缩包自带与文件名对应的顶层文件夹，直接解压即可，无需预先创建空目录。以下以源码当前版本 0.1.5 的 macOS ARM64 包名演示路径，实际操作须替换为所下载的版本与平台；示例不表示现有归档已包含工作区的未发布修改：
 
 ```bash
-tar -xzf repo-agent-0.1.4-macos-arm64.tar.gz
-cd repo-agent-0.1.4-macos-arm64
+tar -xzf repo-agent-0.1.5-macos-arm64.tar.gz
+cd repo-agent-0.1.5-macos-arm64
 ./install-release.sh
 ./install-release.sh --check
 ```
@@ -24,9 +24,9 @@ cd repo-agent-0.1.4-macos-arm64
 已有源码时，也可以直接安装构建好的压缩包；更新后的安装器兼容新格式和旧版平铺格式：
 
 ```bash
-./install-release.sh --archive dist/0.1.4/macos-arm64/repo-agent-0.1.4-macos-arm64.tar.gz
+./install-release.sh --archive dist/0.1.5/macos-arm64/repo-agent-0.1.5-macos-arm64.tar.gz
 # 使用从可信发布来源取得的 SHA256 做整个压缩包校验
-./install-release.sh --archive dist/0.1.4/macos-arm64/repo-agent-0.1.4-macos-arm64.tar.gz --sha256 <SHA256>
+./install-release.sh --archive dist/0.1.5/macos-arm64/repo-agent-0.1.5-macos-arm64.tar.gz --sha256 <SHA256>
 ```
 
 默认位置：
@@ -74,8 +74,8 @@ repo-agent uninstall
 支持 Windows 10 1809+ / Windows 11 x86_64、Windows PowerShell 5.1+。ZIP 内置锁定的 Python 3.13、pip、venv 和 Windows 离线 wheels，不需要预装 Python 或管理员权限。只提供一个安装脚本 `install_release.ps1`，卸载、检查和恢复均由它的参数完成。
 
 ```powershell
-Expand-Archive .\repo-agent-0.1.4-windows-x86_64.zip -DestinationPath .
-Set-Location .\repo-agent-0.1.4-windows-x86_64
+Expand-Archive .\repo-agent-0.1.5-windows-x86_64.zip -DestinationPath .
+Set-Location .\repo-agent-0.1.5-windows-x86_64
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --check
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --offline
 ```
@@ -91,7 +91,7 @@ Windows 新构建包的运行时缓存按上游版本和发行清单区分，升
 卸载前退出该版本的所有 Agent 进程，在已安装版本目录（默认如下）运行同一个脚本：
 
 ```powershell
-Set-Location "$HOME/.local/share/repo-agent/versions/0.1.4"
+Set-Location "$HOME/.local/share/repo-agent/versions/0.1.5"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --recover
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --uninstall --dry-run
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_release.ps1 --uninstall
@@ -282,7 +282,6 @@ python3 -B cli/doctor.py --skip-docker
 ```
 
 安装、卸载和配置写入使用进程锁；锁文件会保留，但进程退出后锁自动释放。不要在操作仍运行时删除锁文件。复制项目时应排除 `.venv` 和 `.repo-agent-install-transaction`；恢复记录属于原目录时会拒绝恢复。
-
 
 ## 模式与依赖
 

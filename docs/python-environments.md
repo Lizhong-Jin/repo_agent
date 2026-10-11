@@ -4,20 +4,20 @@
 
 ## 两套 Python 的职责
 
-Agent 使用固定的解释器和依赖，用户项目继续使用已有的 venv/Conda。二者可采用不同 Python 版本。
+Agent 使用固定的解释器和依赖，macOS/Linux direct 工作区可使用已有的 venv/Conda。Windows native 只支持符合完整标准安装布局的 Python 或对应 venv；独立 worktree 的环境选择也另有限制，见下文。二者可采用不同 Python 版本。
 
 | 组件 | Python 来源 |
 | --- | --- |
 | Agent、文件/Web 工具、可信 worker、Python 语言服务器 | 安装目录的 Agent `.venv` |
 | 可选 `rust-backend` 扩展 | Agent `.venv` 中的平台 wheel；装到项目 venv/Conda 不会使 Agent 自动获得扩展 |
-| Linux seccomp 启动器、CUDA 驱动 kernel 自检 | Agent Python；不依赖 PyTorch |
+| Linux seccomp 启动器、CUDA / Metal kernel 自检 | Agent Python；不依赖 PyTorch |
 | native `run_python`、项目命令中的 `python`/`python3` | 自动发现或显式指定的项目 Python |
 | 项目 PyTorch/Triton 探测 | 项目 Python |
 | Python 语义分析 | Agent 启动 pylsp，配置 Jedi 使用项目解释器 |
 | Docker 工具 | 镜像内的 Python，不读取宿主项目环境 |
 | local | 不启用通用 Python/命令执行 |
 
-项目解释器不需要安装 repo-agent。Git 和语言服务器的控制进程保持 Agent 的 PATH；仅项目命令的 PATH 使用每次调用生成的 Python 入口，再接项目环境的 `bin`；`python`、`python3` 均转发到选定解释器，即使该环境只有其中一个名称。不把用户激活环境中的所有变量带入沙箱，尤其不继承 API Key、代理、PYTHONPATH 或任意启动脚本。
+项目解释器不需要安装 repo-agent。以下 PATH 入口说明针对 macOS/Linux；Windows native 使用私有运行时与环境代理，见 [Windows Python 授权](windows-native-isolation.md)。Git 和语言服务器的控制进程保持 Agent 的 PATH；仅项目命令的 PATH 使用每次调用生成的 Python 入口，再接项目环境的 `bin`；`python`、`python3` 均转发到选定解释器，即使该环境只有其中一个名称。不把用户激活环境中的所有变量带入沙箱，尤其不继承 API Key、代理、PYTHONPATH 或任意启动脚本。
 
 ## 受管运行时
 
@@ -43,17 +43,17 @@ Windows 的检查、恢复和卸载默认直接使用解压目录或已安装版
 
 ## 项目 Python 自动选择
 
-native 每次建立会话时按以下顺序选择，并打印最终路径和来源：
+direct 工作区的 native 每次建立会话时按以下顺序发现解释器，再按平台规则校验，启动会打印最终路径和来源：
 
 1. `--project-python`，其次 `AGENT_PROJECT_PYTHON`。
 2. 启动 Agent 时有效的 `VIRTUAL_ENV`，其次 `CONDA_PREFIX`。
-3. 工作区 `.venv/bin/python`。
+3. 工作区 `.venv/bin/python`；Windows 为 `.venv/Scripts/python.exe`。
 4. 启动时 PATH 中的 `python`，其次 `python3`。
 5. 没有其他可用环境时使用 Agent Python，来源显示为 `agent fallback`。
 
 `AGENT_PROJECT_PYTHON` 只从启动进程的环境变量读取，不从项目或用户 `.env` 加载，避免项目配置自行增加宿主环境的读取范围。
 
-自动发现排除 Agent 自己的环境，避免把它误认为已激活的项目环境。显式指定的解释器无效时失败，不换用其他解释器。相对路径相对于工作区解析；使用常规的 `bin/python` 布局，pyenv/asdf 等 shim 请改为其背后的真实环境路径。
+自动发现排除 Agent 自己的环境，避免把它误认为已激活的项目环境。显式指定的解释器无效时失败，不换用其他解释器。相对路径相对于工作区解析；macOS/Linux 使用常规 `bin/python` 布局，pyenv/asdf 等 shim 请改为其背后的真实环境路径。Windows native 校验完整标准库及原生 `python.exe`，不承诺 Conda、shim 或任意外置依赖布局可用。
 
 ```bash
 conda activate my-project
@@ -63,6 +63,8 @@ repo-agent --project-python /path/to/project/.venv/bin/python
 ```
 
 选定路径在本次会话中固定；想切换解释器，应退出后重新启动。自动发现不会自动创建项目环境或安装项目依赖。
+
+独立 worktree 不继承激活环境、PATH Python 或 `AGENT_PROJECT_PYTHON`；优先使用 worktree 自身 `.venv`，否则回退到 Agent Python。显式 `--project-python` 必须位于工作区内，详见[工作区环境](workspaces.md#python-与当前边界)。下面的挂载说明针对 macOS/Linux；Windows native 将获准运行时复制到私有目录，按 ACL 授权，不直接套用 POSIX 挂载规则。
 
 宿主只检查文件路径和 pyvenv.cfg，项目解释器的运行探测在 OS 沙箱内进行。项目目录、基础解释器目录按需只读挂载：项目命令、Python、环境探测和语言分析需要这些路径；Git、Agent 自检和轻量文件工具不因此增加一整套项目环境。现有系统读取范围（例如 Linux 的 `/usr`）仍存在，环境分离并不自动消除全部系统扫描。
 

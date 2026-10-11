@@ -2,7 +2,7 @@
 
 [平台适配](platform-adaptation.md#原生后端) · [原生沙箱](native-sandbox.md)
 
-Windows x86_64 native 已接入工厂、能力报告、安装器与 CLI。执行使用 LPAC + Job Object；文件工具由宿主机上的可信文件服务操作原项目；进程工具在过滤后的私有项目副本中执行，确认进程树清理后逐调用回写。macOS/Linux 保持原有直接修改项目的行为。Windows 安装仍默认 local；本机启动必须通过真实隔离自检，失败不降级。
+Windows x86_64 native 为实验性支持，已接入工厂、能力报告、安装器与 CLI。执行使用 LPAC + Job Object；文件工具由宿主机上的可信文件服务操作原项目；进程工具在过滤后的私有项目副本中执行，确认进程树清理后逐调用回写。macOS/Linux 保持原有直接修改项目的行为。Windows 安装仍默认 local；本机启动必须通过真实隔离自检，失败不降级。
 
 **Windows native 当前为实验性支持。** 隔离自检通过只说明该主机满足启动所需的隔离检查，
 不代表 Git、语言服务器或任意 Python 包都兼容 LPAC。需要完整 Git/LSP 工具链时，建议显式
@@ -156,13 +156,11 @@ CI 遇到非预期能力结果会直接输出完整的有界 JSON 诊断，避�
 stderr 和清理状态。准备阶段失败还包含异常类型。未知失败继续导致作业失败；首次失败后
 停止该组耗时验收，便于尽快取得 Windows runner 上的实际证据。
 
-GitHub Windows Server 2025 / Git for Windows 2.55.0 的实际探针还报告过
+Git 能力探针对已知 LPAC 空设备访问拒绝采用严格匹配：
 `could not open '/dev/null' for reading and writing: Permission denied`。只有 Git 探针退出
 128、stdout 为空、完整 stderr 精确匹配该错误且清理确认时，才按已知 LPAC 兼容性拒绝处理。
 其他路径的 Permission denied、不同退出码、超时或截断输出仍为未知失败。
 
 CI 提供 Windows x64 × Python 3.11/3.13 独立作业；缺 SDK/API 时失败，不能以跳过冒充通过。macOS/Linux 跳过真实 Windows 内核用例；配置 CI 和跨平台单测通过不等于完成 Windows 实机验收。
-
-2026-10-11 接入能力门控前的本地 Windows/Python 3.12 验收记录：真实隔离内核测试 11 项通过；接入固定环境代理后，完整后端测试由 2 通过、4 失败改善为 3 通过、3 失败。Python/环境查询、venv 和恢复通过，Git、LSP 及组合用例仍失败。LPAC 内的 DOS 卷名解析被拒绝，导致 LSP 工具的 `Path.resolve(strict=True)` 和 Git 的工作目录解析失败。另有独立探针确认本机 ctypes 和 WMI 查询的兼容问题，后者还会在第三方语言服务器导入时导致原生异常退出。能力门控将已识别的问题转为可解释的拒绝，不修复这些第三方兼容性。当前没有为此修改系统对象 ACL、增加 capability 或关闭普通 worker 的 Win32k 限制，不能将此后端视为已完成完整工具链验收。有关 DOS 路径解析的同类报告见 [Microsoft mxc #694](https://github.com/microsoft/mxc/issues/694)；该 issue 已关闭并不代表此兼容性问题已修复。
 
 实现依据 Microsoft 的 [AppContainer/LPAC](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer)、[进程创建属性](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute)、[Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects) 和 [profile 删除](https://learn.microsoft.com/en-us/windows/win32/api/userenv/nf-userenv-deleteappcontainerprofile)契约。

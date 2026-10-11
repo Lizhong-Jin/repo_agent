@@ -1,11 +1,13 @@
-# 只读审查模式（第一版）
+# 只读审查模式
+
+[文档首页](index.md) · [独立工作区](workspaces.md) · [使用说明](usage.md)
 
 ```sh
 repo-agent --root /path/to/project --new-session --mode review
 repo-agent --root /path/to/project --new-session --mode review "检查异常处理和恢复流程"
 ```
 
-审查模式保留受控的文件读取、搜索、目录查询和 Git 状态、差异、历史查询。禁止文件写入、补丁、移动、删除、通用命令、Shell、Python、语言服务器和测试执行。第一版也不注册 Web 工具；模型 API 请求继续正常联网。
+审查模式保留受控的文件读取、搜索、目录查询和 Git 状态、差异、历史查询。禁止文件写入、补丁、移动、删除、通用命令、Shell、Python、语言服务器和测试执行。当前不注册 Web 工具；模型 API 请求继续正常联网。
 
 无需初始化 Git，也可以审查未提交的修改。非 Git 目录可以读取文件，Git 查询会返回不适用。已有凭据和受保护路径规则继续生效。Git 查询拒绝项目目录中的同名可执行文件，并禁止隐式下载对象；部分克隆暂不支持。
 
@@ -34,7 +36,7 @@ repo-agent --root /path/to/project --new-session --mode develop
 
 ## 与独立工作区配合
 
-第一版审查任务不创建 worktree、不初始化仓库、不合并或回写。`--workspace worktree` 与审查模式不能同时使用。
+审查任务不创建 worktree、不初始化仓库、不合并或回写。`--workspace worktree` 与审查模式不能同时使用。
 
 审查已有独立工作区时，将它的实际路径作为项目根目录，建立独立的审查会话：
 

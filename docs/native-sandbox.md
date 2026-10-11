@@ -1,6 +1,6 @@
 # macOS / Linux 原生沙箱
 
-Windows x86_64 使用 LPAC/Job 和私有工作副本、逐调用回写，见 [Windows native](windows-native-isolation.md)。本文下面的直接修改项目、POSIX 工具链和信号清理说明针对 macOS/Linux。
+Windows x86_64 使用 LPAC/Job 和私有工作副本、逐调用回写，见 [Windows native](windows-native-isolation.md)。本文下面的直接修改项目、POSIX 工具链和信号清理说明针对 macOS/Linux。选择 `--workspace worktree` 时，本文的工作区指独立目录，而非原项目；受控 Git 查询的特殊路径见[工作区边界](workspaces.md#python-与当前边界)。
 
 [文档首页](index.md) · [项目首页](../README.md) · [Docker 沙箱](../sandbox/README.md)
 

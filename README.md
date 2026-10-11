@@ -1,6 +1,6 @@
 # Repo Agent
 
-在终端中读取、修改和验证代码的 Coding Agent。支持多家模型 API、按项目保存会话、工具调用、native / Docker sandbox。
+在终端中读取、修改和验证代码的 Coding Agent。
 
 ## 快速开始
 
@@ -29,7 +29,7 @@ repo-agent
 
 首次启动缺少模型或 API Key 时，终端会引导配置。也可以先运行 `repo-agent config model`。不需要为每个项目复制启动文件或初始化配置；默认使用当前目录，`--root` 可指定其他项目。
 
-**macOS / Linux 首次安装默认 native，Windows 首次安装默认 local；启动沿用已记录的安装模式。** native 直接修改当前项目并支持隔离命令、Python 和语言服务器；local 不执行通用命令。需要 Docker 工作副本时先准备镜像，再显式选择 Docker。Windows 还需 Git for Windows 和 Docker Desktop 的 Linux 容器模式：
+**macOS / Linux 首次安装默认 native，Windows 首次安装默认 local；启动沿用已记录的安装模式。** macOS/Linux native 在选定工作区执行并直接修改文件；Windows native 为实验性支持，进程在私有副本执行，清理确认后逐调用回写。local 不执行通用命令。需要 Docker 工作副本时先准备镜像，再显式选择 Docker。Windows 还需 Git for Windows 和 Docker Desktop 的 Linux 容器模式：
 
 ```bash
 repo-agent --sandbox native                      # macOS / Linux 原生沙箱
@@ -41,7 +41,7 @@ repo-agent-build-sandbox                         # Docker 模式首次使用前�
 repo-agent --sandbox docker --sandbox-writeback manual
 ```
 
-Docker 会话可使用 `/diff` 查看副本变更、`/apply` 回写原项目；local/native 默认直接修改原目录，也可通过 `--workspace worktree` 使用[独立 Git 工作区](docs/workspaces.md)，审查后再显式快进合并。非 Git 项目可先用 `workspaces init` 预览并初始化。旧配置的自动回写设置只作用于 Docker。原生后端权限及限制见 [macOS / Linux 原生沙箱](docs/native-sandbox.md)，安装与升级见[安装说明](docs/installation.md)。
+Docker 会话可使用 `/diff` 查看副本变更、`/apply` 回写原项目；local/native 默认以原项目作为执行工作区，也可通过 `--workspace worktree` 使用[独立 Git 工作区](docs/workspaces.md)，审查后再显式快进合并。非 Git 项目可先用 `workspaces init` 预览并初始化。旧配置的自动回写设置只作用于 Docker。原生后端权限及限制见 [macOS / Linux 原生沙箱](docs/native-sandbox.md)，安装与升级见[安装说明](docs/installation.md)。
 
 只需要分析和建议时，使用[只读审查模式](docs/review-mode.md)。它仅开放受控读取和 Git 查询，不启动命令后端；会话恢复和任务续跑会保持审查权限。
 
@@ -56,11 +56,12 @@ Docker 会话可使用 `/diff` 查看副本变更、`/apply` 回写原项目；l
 | 工具并发 | 相邻且允许并发的调用滚动调度，默认最多 4 个；写入、进程和 Docker 代理保持串行，见[调度策略](docs/tools.md#并发调度策略) |
 | 上下文管理 | `/compact` 手动/自动压缩、独立思考策略、有限精简与格式修复、失败诊断、原始消息归档及只读历史回查；[使用说明](docs/context-compaction.md) |
 | 文件与检索 | 文件读写、局部编辑、多文件严格补丁、目录操作、文件查找、内容搜索、Git 状态、差异与提交历史 |
-| 隔离执行 | macOS / Linux 原生沙箱直接运行本机工具；Docker 使用工作副本，支持回写、冲突检查与备份恢复 |
+| 审查与工作区 | [只读审查](docs/review-mode.md)限制项目写入和命令执行；[独立 Git 工作区](docs/workspaces.md)支持审查后显式合并 |
+| 隔离执行 | macOS/Linux native、实验性 Windows native；Docker 工作副本支持回写、冲突检查与备份恢复 |
 | 代码语义 | Python、JS/TS、Go、C/C++、CUDA 文件的符号、定义、引用、诊断、悬浮信息和工作区符号查询；具体能力取决于语言服务器 |
 | 环境查询 | `get_execution_environment` 报告实际执行模式、工具链、权限、超时与可选 GPU 状态 |
 | Skills | 内置 `coding`、`debug-and-fix`、`gpu-kernel-development`；通用系统提示词配合按需加载的专业技能，支持项目 `skills/` 目录 |
-| GPU 开发 | Docker、Linux / WSL2 native 默认自动检测 NVIDIA GPU；CUDA / Triton 环境自检 |
+| GPU 开发 | Docker、Linux / WSL2 native 检测 NVIDIA GPU；Apple Silicon native 支持 [Metal / MPS](docs/metal-validation.md) |
 | 诊断与追踪 | 配置校验及恢复、安装诊断、对话日志、模型和工具调用记录 |
 | Web 搜索 | 可选 Brave Search API，支持批量查询、域名过滤及逐项错误；由主进程联网，命令沙箱保持断网，见 [Web 搜索](docs/web-search.md) |
 | 网页读取 | 公开 HTML、纯文本和 JSON 的受控抓取、正文提取、缓存分页与 `web_find` 快照内查找；不需要搜索密钥，见 [Web 页面读取](docs/web-fetch.md) |
@@ -92,7 +93,8 @@ repo-agent doctor                               # 按安装模式诊断依赖和
 | `/ledger` | 查看近期工具执行证据及已保存结果引用 |
 | `/report [任务编号] [--diff]` | 查看任务交付报告：文件变化、工具操作差异、验证清单与实际执行证据 |
 | `/queue` | 查看和管理持久化串行队列，见[任务队列](docs/task-queue.md) |
-| `/new [名称]` | 新建会话，保留当前文件和沙箱副本 |
+| `/workspace` | 查看当前权限、执行路径和工作区状态 |
+| `/new [名称]` | 新建会话，保留当前文件和沙箱副本；worktree 会话需退出后新建 |
 | `/switch 序号或名称` | 保存当前会话，恢复指定会话的上下文和用量 |
 | `/rename 名称` 或 F2 | 修改当前会话名称 |
 | `/sessions`、`/logs --tail 100` | 查看会话列表、日志 |
@@ -110,9 +112,12 @@ repo-agent doctor                               # 按安装模式诊断依赖和
 
 | 模式 | 操作位置 | 命令、Python、代码符号工具 | 文件如何生效 |
 | --- | --- | --- | --- |
-| `--sandbox local` | 原项目 | 不注册 | 直接修改原项目 |
-| `--sandbox native`（默认，macOS / Linux） | 原项目 | 可用，平台原生隔离，工具断网 | 直接修改原项目，无回写备份 |
+| `--sandbox local` | 原项目或独立 worktree | 不注册 | 直接修改执行工作区 |
+| `--sandbox native`（macOS / Linux） | 原项目或独立 worktree | 可用，平台原生隔离，工具断网 | 直接修改执行工作区，无回写备份 |
+| `--sandbox native`（Windows，实验性） | 文件工具访问执行工作区；进程使用私有副本 | Python/命令受限可用，Git/LSP 按实际探针判定 | 进程清理确认后检查冲突并逐调用回写 |
 | `--sandbox docker` | 项目工作副本 | 可用，工具运行时断网 | 手动或按配置自动回写 |
+
+`--mode review` 是独立的只读权限设置；`--workspace worktree` 是代码工作目录设置。两者与 `--sandbox` 的执行后端选择不同，组合限制见各自文档。
 
 Docker 失败不会自动切换为 local。每次工具调用使用独立容器：工作副本文件保留，进程和 `/tmp` 不跨调用保留。Docker GPU 模式需要可用的 NVIDIA 驱动和 NVIDIA Container Toolkit；Linux / WSL2 native GPU 使用本机驱动及已准备的框架/Toolkit，无需 Docker。两者均需在实际执行环境核验依赖，详见[GPU 算子开发](docs/gpu-operators.md)。
 
@@ -128,7 +133,7 @@ local 的 Git 工具仍会启动 Git 子进程；发现外部 clean/process 过�
 
 - 开始使用：[安装与升级](docs/installation.md)、[命令与快捷键](docs/usage.md)、[配置参考](docs/configuration.md)。
 - 管理对话：[会话恢复](docs/sessions.md)、[任务队列](docs/task-queue.md)、[执行账本](docs/execution-ledger.md)、[任务交付报告](docs/task-reports.md)、[上下文压缩](docs/context-compaction.md)、[思考设置](docs/thinking.md)、[日志](docs/logging.md)。
-- 执行任务：[原生沙箱](docs/native-sandbox.md)、[Docker 与回写](sandbox/README.md)、[GPU 开发](docs/gpu-operators.md)、[Skills](docs/skills.md)、[Web 搜索](docs/web-search.md)、[网页读取](docs/web-fetch.md)。
+- 执行任务：[只读审查](docs/review-mode.md)、[独立工作区](docs/workspaces.md)、[验证与验收](docs/verification.md)、[原生沙箱](docs/native-sandbox.md)、[Docker 与回写](sandbox/README.md)、[GPU 开发](docs/gpu-operators.md)、[Skills](docs/skills.md)、[Web 搜索](docs/web-search.md)、[网页读取](docs/web-fetch.md)。
 - 参与开发：[项目架构](Project_Architecture.md)、[开发与验证](docs/development.md)、[工具开发](docs/tools.md)、[模型接口](docs/llm.md)、[模型目录](docs/model-catalog.md)、[构建与分发](docs/distribution.md)。
 
 默认测试使用模拟模型响应。真实 native、Docker、多语言、GPU 和发行安装验证需要相应环境及显式开关，见[验证矩阵](docs/development.md#开发环境与验证)。

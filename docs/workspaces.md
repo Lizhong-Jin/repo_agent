@@ -1,10 +1,12 @@
-# 独立 Git 工作区（第一版）
+# 独立 Git 工作区
+
+[文档首页](index.md) · [只读审查](review-mode.md) · [任务报告](task-reports.md)
 
 local/native 可以选择在独立 worktree 中开发。文件工具、native 命令、项目技能和任务报告使用同一执行目录；会话、任务队列和执行账本仍归属于原项目。运行结束不会自动合并或删除工作区。
 
 ## 开始执行
 
-已有 Git 仓库应有初始提交，且启动时工作目录和暂存区干净；第一版不携带未提交修改。请从仓库根目录启动：
+已有 Git 仓库应有初始提交，且启动时工作目录和暂存区干净；当前不携带未提交修改。请从仓库根目录启动：
 
 ```sh
 repo-agent --root /path/to/project --new-session --sandbox native --workspace worktree
@@ -14,9 +16,9 @@ repo-agent --root /path/to/project --new-session --sandbox local --workspace wor
 
 `--workspace direct` 保持原目录执行。省略该参数时，新会话使用原目录，已有会话恢复自己的选择。独立工作区丢失、身份变化或进程状态未确认时会拒绝启动，不会回退到原目录。
 
-同一会话的串行队列、重试和 `/continue` 复用同一工作区，每项任务仍有独立报告。`/workspace` 显示路径与状态；`/report` 或 TUI 的 F3 查看任务证据。第一版在独立工作区会话中禁用原地 `/new`，需要退出后通过 `--new-session --workspace worktree` 建立新的开发会话。`/switch` 恢复目标会话自己的绑定。
+同一会话的串行队列、重试和 `/continue` 复用同一工作区，每项任务仍有独立报告。`/workspace` 显示路径与状态；`/report` 或 TUI 的 F3 查看任务证据。当前在独立工作区会话中禁用原地 `/new`，需要退出后通过 `--new-session --workspace worktree` 建立新的开发会话。`/switch` 恢复目标会话自己的绑定。
 
-worktree 是代码工作目录隔离，不是安全沙箱。local 仍不能执行任意命令、Python 或语言服务器，不能据此声称测试通过。native 继续使用现有 OS 沙箱，只允许修改执行工作区；四个受控 Git 读取工具由宿主提供，不把原仓库共享 Git 元数据开放给任意命令。
+worktree 是代码工作目录隔离，不是安全沙箱。local 仍不能执行任意命令、Python 或语言服务器，不能据此声称测试通过。native 继续使用 OS 沙箱，目标目录为执行工作区。macOS/Linux native worktree 的四个受控 Git 读取工具由宿主提供，不把共享 Git 元数据开放给任意命令。Windows native 不使用这条宿主 Git 通道；其隔离 Git 不支持指向工作区外共享元数据的 linked worktree，不能据此承诺 worktree 中的 Git 查询可用。
 
 ## 没有 Git 的项目
 
@@ -35,7 +37,7 @@ repo-agent workspaces init --root /path/to/project --yes
 
 ## 审查与接收修改
 
-先退出 Agent 并等待进程收尾。工作区管理与运行中的会话使用同一个项目锁，第一版不支持同项目并发管理或多任务并行。
+先退出 Agent 并等待进程收尾。工作区管理与运行中的会话使用同一个项目锁，当前不支持同项目并发管理或多任务并行。
 
 ```sh
 repo-agent workspaces list --root /path/to/project
@@ -62,7 +64,7 @@ repo-agent workspaces discard --root /path/to/project --session 1 --yes
 repo-agent workspaces recover --root /path/to/project --session 1
 ```
 
-**第一版的 discard 是原地归档放弃，不删除目录或分支，也不释放磁盘空间。** 未跟踪文件、被忽略的文件和环境目录完整保留，原项目不被修改。后续可在核实进程停止后恢复；清理磁盘及归档导出留待后续版本，不自动调用 `worktree remove --force`。
+**当前 discard 是原地归档放弃，不删除目录或分支，也不释放磁盘空间。** 未跟踪文件、被忽略的文件和环境目录完整保留，原项目不被修改。后续可在核实进程停止后恢复；清理磁盘及归档导出留待后续版本，不自动调用 `worktree remove --force`。
 
 创建和合并中断时，`recover` 检查实际 Git 状态，不会自动重放模型任务。运行中崩溃、清理结果不确定以及恢复已归档工作区，需要用户先核实遗留进程已停止，再明确执行：
 
@@ -75,11 +77,13 @@ repo-agent --root /path/to/project --session 1 --sandbox native
 
 工作区状态与任务结果分别保存。`ready` 仅表示当前没有未确认执行，可以审查/继续，并不表示任务或测试成功。状态包括 `creating`、`ready`、`running`、`blocked`、`merging`、`merged`、`archived`。状态文件位于项目会话目录的 `workspaces/`，执行目录位于会话根目录旁的 `workspaces/<project-key>/<session-id>/`，正常退出不会删除。
 
-## Python 与第一版边界
+## Python 与当前边界
+
+<a id="python-与第一版边界"></a>
 
 native worktree 不继承启动终端的 venv、Conda、PATH Python 或 `AGENT_PROJECT_PYTHON`，优先发现执行工作区自己的 `.venv`，否则使用 Agent Python。显式 `--project-python` 必须是工作区内的环境入口。项目依赖需要在工作区准备；不要通过复用原项目的 editable 安装来验证另一份代码。日志和模型进程本身仍按现有宿主配置运行。
 
-第一版支持已有提交的普通 Git 仓库和显式初始化后的仓库，以及 local/native 两种执行方式。暂不支持 Docker worktree、非 Git 私有副本、子模块、已跟踪符号链接、文件实际使用的外部 Git clean/smudge/process 过滤器（包括 LFS）、稀疏/跳过工作区索引标记、目标前进后的自动整合。Git 操作关闭 hooks、自动维护和外部 diff/textconv。
+当前支持已有提交的普通 Git 仓库和显式初始化后的仓库，以及 local/native 两种执行方式。暂不支持 Docker worktree、非 Git 私有副本、子模块、已跟踪符号链接、文件实际使用的外部 Git clean/smudge/process 过滤器（包括 LFS）、稀疏/跳过工作区索引标记、目标前进后的自动整合。Git 操作关闭 hooks、自动维护和外部 diff/textconv。
 
 Windows 下，Git 操作会临时启用 `core.longpaths`，允许工作区内的文件路径超过 260 字符，不修改用户 Git 配置。但 Windows 启动进程仍限制工作目录长度：项目和独立工作区的绝对根路径最多为 258 个 UTF-16 单位（大部分字符占 1 个，部分字符如 emoji 占 2 个）。超限会在创建工作区分支和目录之前拒绝；请缩短项目路径，或将 `XDG_STATE_HOME` 设为较短的状态目录后建立新会话。已有超限工作区保留原状，不会自动移动或删除。
 

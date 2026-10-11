@@ -57,6 +57,8 @@ python3 -m venv .venv
 | 默认回归 | `.venv/bin/python -m pytest -q` | 模拟模型、文件/配置/会话、工具协议、构建产物；部分测试按依赖跳过 |
 | macOS native | [原生验证](native-sandbox.md#验证) | `RUN_SANDBOX_NATIVE_TESTS=1`；可用 Seatbelt，外层环境允许启动 |
 | Linux native | [原生验证](native-sandbox.md#验证) | `RUN_SANDBOX_LINUX_TESTS=1`；Bubblewrap、libseccomp、可用 namespaces |
+| Windows native（实验性） | [内核与能力验收](windows-native-isolation.md) | `RUN_WINDOWS_ISOLATION_TESTS=1`；Windows x64、SDK 与真实 LPAC/Job；完整工具成功另设 `REQUIRE_WINDOWS_NATIVE_FULL_TOOLS=1` |
+| Apple Silicon Metal/MPS | [Metal 验证](metal-validation.md#验证方法与范围) | `RUN_NATIVE_METAL_TESTS=1`；实际 GPU；MPS 另需项目 Python 与 PyTorch |
 | Docker 与多语言 | 下方命令 | `RUN_SANDBOX_DOCKER_TESTS=1`；已构建镜像及可用 daemon |
 | GPU | [算子验证](gpu-operators.md#验证边界) | Docker / native 各有开关，必须有实际 NVIDIA GPU 和所需依赖 |
 | 发行安装 | [安装验收](distribution.md#校验失败处理与安装验收) | 显式提供当前平台完整包，使用受管 Python 离线安装；测试以模拟 Docker 验证构建入口 |
@@ -72,7 +74,7 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py t
 
 开关只选择测试，不能补齐依赖；缺少目标平台或硬件时的跳过不计为通过。真实模型 API 的可用性、参数和计费需要另行验证，不属于默认套件的结论。
 
-原生 Windows 开发测试需另行准备 Python 和开发依赖，虚拟环境入口为 `.venv\Scripts\python.exe`；发行 ZIP 不安装 pytest/Ruff。当前 Windows CI 运行架构边界、共享文件、Windows 文件、发行安装、取消协议、任务队列、任务续接和执行账本八份测试模块，没有声明整个默认套件已适配 Windows。工作流范围见[平台验证说明](platform-adaptation.md#扩展与验证)。
+原生 Windows 开发测试需另行准备 Python 和开发依赖，虚拟环境入口为 `.venv\Scripts\python.exe`；发行 ZIP 不安装 pytest/Ruff。当前 Windows 契约 CI 运行 13 份模块，覆盖架构、文件、发行、取消、队列、续接、账本、报告、验证清单、TUI 报告、工作区和只读审查；另有独立 Windows native 内核验收。它们不表示整个默认套件均已适配 Windows。工作流范围见[平台验证说明](platform-adaptation.md#扩展与验证)。
 
 ### 调度、恢复与新增查询的定向回归
 
@@ -84,6 +86,14 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py t
 ```
 
 前一组检查滚动补位、串行屏障、取消收尾、回执落盘、队列和结果回读；后一组检查 Git 历史的路径/进程边界、工具可见性、网页缓存定位及主进程装配。这些仍是本地契约和模拟环境测试，不替代 native、Docker、Windows 或真实在线服务验收。
+
+以下新增能力也有独立契约测试，可在修改对应模块后运行：
+
+```bash
+.venv/bin/python -m pytest -q tests/test_task_reports.py tests/test_verification_plan.py tests/test_tui_reports.py tests/test_workspaces.py tests/test_review_mode.py
+```
+
+报告实机及性能测量见[任务报告](task-reports.md#实机验收与性能测量)。默认测试中的 Windows 预检模拟会临时监听回环端口；外层环境禁止监听时应记录环境阻塞，在允许本机监听的开发环境复核，不能按隔离功能失败推断。
 
 ## 离线开发环境
 

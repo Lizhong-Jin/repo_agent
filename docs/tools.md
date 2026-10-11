@@ -202,6 +202,8 @@ runtime = AgentRuntime(
 
 ## 按需加载工具组
 
+`plan_verification` 是接入执行账本时注册的 `HOST_CONTROL` / `SERIAL` 工具，只登记计划，不执行命令或设置结果。参数、证据匹配和人工验收见[验证清单与验收](verification.md)。
+
 CLI 默认开启按需加载。工厂和 sandbox worker 仍提供当前执行环境允许的完整工具集合，Runtime 单独管理“哪些定义发给模型、哪些调用现在允许执行”。加载器在宿主 Runtime 中运行；加载后的文件、Git、命令及语义工具仍通过原有 local/native/Docker 工具实例或代理执行，不改变隔离边界。
 
 ### 当前划分
@@ -209,11 +211,11 @@ CLI 默认开启按需加载。工厂和 sandbox worker 仍提供当前执行环
 | 类别 | 工具 | 启用时机 |
 | --- | --- | --- |
 | 通用工作区工具 | `get_execution_environment`、`read_file`、`list_files`、`find_files`、`search_files`、`get_path_info` | 初始可见 |
-| 通用辅助能力 | `load_tool_group`、已注册的技能加载、历史搜索/读取、`read_tool_result`、Web 搜索/读取/缓存定位 | 初始可见；Web 仍取决于配置 |
+| 通用辅助能力 | `load_tool_group`、已注册的技能加载、历史搜索/读取、`read_tool_result`、`plan_verification`、Web 搜索/读取/缓存定位 | 初始可见；Web 仍取决于配置 |
 | `file_editing` | `write_file`、`edit_file`、`apply_patch`、`make_directory`、`delete_file`、`move_file` | 按需加载；也适用于非代码文件修改 |
 | `coding` | `git_status`、`git_diff`、`git_log`、`git_show`、`run_command`、`run_shell`、`run_python`、`get_symbols`、`go_to_definition`、`find_references`、`get_diagnostics`、`get_hover`、`search_workspace_symbols` | 按需加载；local 只提供其中的 Git 工具 |
 
-标准 CLI 初始发送 11 个工具定义，配置 Web 后至多 14 个。`load_tool_group` 的描述包含组目录、用途和当前环境可用的工具名称，不预先塞入专用工具的完整参数定义。
+标准开发 CLI 接入执行账本后初始发送 12 个工具定义，配置 Web 后至多 15 个；自定义 Runtime 的数量取决于实际注册。审查模式不注册 Web 或写入/进程工具。`load_tool_group` 的描述包含组目录、用途和当前环境可用的工具名称，不预先塞入专用工具的完整参数定义。
 
 模型调用示例：
 
@@ -403,10 +405,10 @@ no_match = tool_error("NO_MATCH", "old_text does not occur in the file.")
 | Windows 宿主 + Linux Docker | 两个工具均在 Linux 容器执行，脚本使用 Bash 语法；宿主注册 schema 时不检查 Windows shell |
 | WSL2 中的 Linux native | 按 Linux 处理，仍需满足现有原生沙箱依赖 |
 | Windows local | 不注册 `run_command`、`run_shell`、`run_python`；加载 `coding` 不会授予执行权限 |
-| Windows native | 现有 native 后端拒绝启动，不回退到未隔离执行 |
+| Windows native（实验性） | `run_command` / `run_python` 使用授权解释器或可执行文件，在 LPAC/Job 私有副本中执行；`run_shell` 返回不支持 |
 | 受信任代码在 Windows 直接启用工具类 | `run_shell` 返回 `SHELL_UNSUPPORTED_PLATFORM`，不启动进程、不自动使用 Git Bash、PowerShell 或 cmd；`run_command` 保持现有 argv 执行行为 |
 
-两个工具的名称和参数独立，同时注册没有冲突。Windows 的 `run_command` 不是 Linux 命令兼容层：程序必须在执行环境中存在，shell 内置命令需要显式调用解释器；`.bat`/`.cmd` 可能由系统 shell 解释，不能假定所有 argv 都按字面传递。底层 Windows 后代清理仍为尽力处理，本次不新增 Windows 原生沙箱。
+两个工具的名称和参数独立，同时注册没有冲突。Windows 的 `run_command` 不是 Linux 命令兼容层：程序必须在执行环境中存在，shell 内置命令需要显式调用解释器；`.bat`/`.cmd` 可能由系统 shell 解释，不能假定所有 argv 都按字面传递。普通宿主进程服务不等同于安全沙箱；Windows native 使用专门的 LPAC/Job 执行路径和清理判定，详见 [Windows native](windows-native-isolation.md)。
 
 `get_execution_environment` 的 execution 节增加 `shell_execution_allowed` 和 `shell`（方言、系统路径、可用状态及原因），描述实际执行器。local/退化状态不启动 Bash 探测。
 
@@ -561,7 +563,6 @@ C/C++ 编译数据库中的路径必须适用于容器内的 `/workspace`，不�
 `find_references`、`get_diagnostics`、`get_hover` 和 `search_workspace_symbols`；各工具按服务器
 能力查询，不意味着每个服务器都支持所有功能。服务器缺失、超时、能力不足、输出过大或
 文件在分析期间改变时返回明确错误；工作区符号查询的文档符号回退见下节。
-
 
 native 复用同一工具与语言注册表，但使用本机工具链、真实工作区路径和每次调用的私有临时目录；
 不需要镜像，安装及实际查询验证见[原生沙箱](native-sandbox.md)。

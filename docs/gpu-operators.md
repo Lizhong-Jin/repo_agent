@@ -1,10 +1,9 @@
-# CUDA、Triton 与 PyTorch 算子开发
+# GPU 算子开发：CUDA、Triton 与 Metal
 
 Apple Silicon macOS native 已支持 Metal：默认 auto 启用，`--sandbox-profile metal` 显式要求，
 `standard` 关闭。项目 PyTorch 使用 MPS，环境工具的 `gpu.metal` 和 `gpu.mps` 分别报告基础
 GPU 与框架验证。基础支持无需 Rust / Xcode / PyTorch；详见 [Metal 支持与验证](metal-validation.md)。
 下文 CUDA / Triton / nvcc 的组合自检仍专用于 NVIDIA 路径，不作为 Metal 的就绪条件。
-
 
 [文档首页](index.md) · [项目首页](../README.md) · [Sandbox](../sandbox/README.md)
 
@@ -14,12 +13,14 @@ GPU 与框架验证。基础支持无需 Rust / Xcode / PyTorch；详见 [Metal 
 
 ## 先选择执行模式
 
+表中的执行工作区可以是原项目或独立 worktree。Windows native 当前不支持 GPU；Windows 使用 NVIDIA GPU 需另行配置 Linux Docker 或 WSL2 路线。Intel Mac 不在 Metal 支持范围。
+
 | 模式 | GPU 与依赖来源 | 路径与文件生效 | 资源及缓存 |
 | --- | --- | --- | --- |
-| Linux / WSL2 native | 本机 NVIDIA 驱动、项目 Python 环境中的框架和可访问的系统 Toolkit；不需要 Docker 或 NVIDIA Container Toolkit | 原项目真实路径，直接修改，无 `/apply` 或回写备份 | 无 CPU/内存/显存配额，也不保证独占 GPU；默认缓存按工具调用清理 |
-| macOS native | 本项目不提供 NVIDIA CUDA GPU 接入 | 原项目真实路径，直接修改 | 可做允许范围内的代码编辑和检查，不能据此声明 CUDA 实测通过 |
+| Linux / WSL2 native | 本机 NVIDIA 驱动、项目 Python 环境中的框架和可访问的系统 Toolkit；不需要 Docker 或 NVIDIA Container Toolkit | 当前执行工作区，直接修改，无 `/apply` 或回写备份 | 无 CPU/内存/显存配额，也不保证独占 GPU；默认缓存按工具调用清理 |
+| Apple Silicon macOS native | 系统 Metal；项目 Python 可选 PyTorch MPS，不提供 NVIDIA CUDA | 当前执行工作区，直接修改 | 无 GPU 配额；Metal kernel 与 MPS 分别验证 |
 | Docker cuda | Docker 主机驱动、NVIDIA Container Toolkit、CUDA 镜像内框架及 Toolkit | 容器 `/workspace`，副本变更按回写策略生效 | 有容器 CPU/内存配额，无显存配额；默认 `/tmp` 缓存不跨调用保留 |
-| local | 不提供命令、Python 或 GPU 探测子进程 | 直接修改原项目 | GPU 查询为 unknown；不执行编译或 benchmark |
+| local | 不提供命令、Python 或 GPU 探测子进程 | 直接修改执行工作区 | GPU 查询为 unknown；不执行编译或 benchmark |
 
 ### Linux / WSL2 native
 

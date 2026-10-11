@@ -92,9 +92,9 @@ Windows native 为实验性支持，已接入工厂和能力标记：LPAC + Job 
 python -m pytest -q tests/test_host_file_contracts.py tests/test_windows_files.py
 ```
 
-`.github/workflows/host-files.yml` 配置了 Windows/macOS/Linux × Python 3.11/3.13 的六组契约测试，运行 `test_architecture_boundaries.py`、`test_host_file_contracts.py`、`test_windows_files.py`、`test_windows_release.py`、`test_cancellation.py`、`test_task_queue.py`、`test_continue.py`、`test_execution_ledger.py` 八份模块。另有 Windows Python 3.13 作业构建 ZIP、设置归档变量后执行真实安装生命周期，并上传测试产物。Windows 文件测试包含 junction 场景、只读文件原子替换和全部 local 文件工具；非 Windows 环境跳过 Windows 内核用例。
+`.github/workflows/host-files.yml` 配置了 Windows/macOS/Linux × Python 3.11/3.13 的六组契约测试，运行 `test_architecture_boundaries.py`、`test_host_file_contracts.py`、`test_windows_files.py`、`test_windows_release.py`、`test_cancellation.py`、`test_task_queue.py`、`test_continue.py`、`test_execution_ledger.py`、`test_task_reports.py`、`test_verification_plan.py`、`test_tui_reports.py`、`test_workspaces.py`、`test_review_mode.py` 共 13 份模块。另有 Windows Python 3.13 作业构建 ZIP、设置归档变量后执行真实安装生命周期，并上传测试产物。Windows 文件测试包含 junction 场景、只读文件原子替换和全部 local 文件工具；非 Windows 环境跳过 Windows 内核用例。
 
-工作流还配置了 Linux/macOS × Python 3.11/3.13 的四组默认全量回归，准备仓库 `.venv` 和安装入口后运行整个 `tests/` 目录。默认全量仍按平台、依赖和开关跳过真实环境用例；Windows 另有独立 LPAC/Job 和完整 native 的真实内核测试作业。另有独立 Ruff 检查与格式检查作业；lint 和默认回归安装锁定的开发依赖。CI 未配置真实 Docker Desktop 回写测试，Windows Docker 回写需下面的独立开关与镜像。
+工作流还配置了 Linux/macOS × Python 3.11/3.13 的四组默认全量回归，准备仓库 `.venv` 和安装入口后运行整个 `tests/` 目录。默认全量仍按平台、依赖和开关跳过真实环境用例；Windows 另有独立 LPAC/Job 和完整 native 的真实内核测试作业。另有独立 Ruff 检查与格式检查作业；lint 和默认回归安装锁定的开发依赖。CI 未配置真实 Docker Desktop 回写测试，Windows Docker 回写需下面的独立开关与镜像。另有 `.github/workflows/docker.yml` 在 Ubuntu / Python 3.12 构建 standard 镜像，执行容器 smoke 和 Docker/回写/多语言测试；它不覆盖 Windows Docker Desktop 或 GPU。
 
 可选扫描器还有 `.github/workflows/policy-scan-rust.yml`：Linux/macOS × Python 3.11/3.13，检查 Rust 格式、Clippy 和单元测试，构建并导入扩展后运行 Python/Rust 差分与策略集成契约。覆盖 Linux 策略扫描、两平台文件系统/目录批量协议及 native 文件工具。macOS 还使用 Rust 做自身工作区硬链接预检，内核隔离规则仍由 Seatbelt 提供；该作业不提供 Windows Rust 后端，未开启真实隔离开关的用例仍跳过。
 

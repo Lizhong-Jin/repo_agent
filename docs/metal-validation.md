@@ -1,5 +1,7 @@
 # macOS native Metal 支持与验证
 
+[文档首页](index.md) · [原生沙箱](native-sandbox.md) · [GPU 开发](gpu-operators.md)
+
 Apple Silicon macOS native 已接入 Metal。默认 `auto` 将 Apple Silicon 视为 GPU 候选，
 在真实沙箱内执行运算自检；`metal` 显式要求启用，`standard` 关闭 GPU。
 Intel/AMD Mac 或 x86_64 Python 的 auto 使用 standard，显式 metal 则报错。
@@ -46,7 +48,7 @@ Rust、Xcode 或第三方 Python 桥接库。验证创建并清理临时工作�
 宿主缓存目录或 `file-issue-extension` 权限。现有文件保护规则保持原样；验证进程的
 HOME 和临时目录继续由 native 后端放在每次调用的私有目录内。
 
-这些是**当前探针在已测试机器上的最小增量权限**，不是所有 Metal / MPS / MLX
+这些是**当前实现显式授予的增量权限**，不是所有 Metal / MPS / MLX
 程序或 macOS 版本的完整权限清单。使用系统 GPU 驱动和编译服务也不提供 GPU
 独占或资源配额。
 
@@ -70,16 +72,9 @@ HOME 和临时目录继续由 native 后端放在每次调用的私有目录内�
 
 宿主进程最后核对 canary 未被改动，成功时返回 `isolation_verified=true`。
 
-## 已验证范围与回归
+<a id="已验证范围与回归"></a>
 
-2026-10-08 在 Apple M4 / macOS 15.8.1 / arm64 上验证：
-
-| 增量权限 | 结果 |
-| --- | --- |
-| 无 | 无法创建 Metal 设备 |
-| 仅 AGXDeviceUserClient | 设备可创建，源码编译失败 |
-| 仅 MTLCompilerService | 无法创建 Metal 设备 |
-| 两者均启用 | 编译、GPU 运算和隔离检查通过 |
+## 验证方法与范围
 
 可复现的真实硬件测试（显式启用后，设备或权限不足会失败，不会静默跳过）：
 
@@ -89,7 +84,7 @@ RUN_NATIVE_METAL_TESTS=1 .venv/bin/python -m pytest -q tests/test_macos_metal.py
 
 测试同时覆盖 auto / metal / standard、工具和子进程执行，以及环境报告。未设置该变量时，
 只执行可移植测试，跳过硬件测试。可额外指定 `NATIVE_TEST_MPS_PYTHON=/绝对路径/python`
-验证选定项目环境中的真实 PyTorch MPS 运算。已在同一台 M4 上验证 PyTorch 2.14.1 / Python 3.13.15。
+验证选定项目环境中的真实 PyTorch MPS 运算。
 
 `python -m sandbox.compute_probe --require-mps` 可单独要求 MPS 矩阵运算通过；原有
 `--require-gpu` 和 `operator_environment_ready` 保留 CUDA / Triton / nvcc 组合条件。

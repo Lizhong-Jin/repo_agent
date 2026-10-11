@@ -11,8 +11,11 @@
 | [安装与卸载](installation.md) | macOS/Linux 源码或发行包、Windows ZIP、升级、诊断、恢复与卸载 |
 | [启动、交互与上下文](usage.md) | 启动参数、会话命令、快捷键、截断恢复与上下文估算 |
 | [配置参考](configuration.md) | 配置优先级、模板和内置默认值、备份恢复 |
+| [只读审查](review-mode.md) | 只读权限、受控查询、会话恢复与状态目录约束 |
+| [独立 Git 工作区](workspaces.md) | 创建、审查、显式快进合并、归档与恢复 |
 | [执行账本与崩溃恢复](execution-ledger.md) | 工具执行证据、结果引用回读、未知效果与多文件提交修复 |
-| [任务交付报告](task-reports.md) | TUI 报告页、任务差异、验证清单、执行证据、用户验收及实机验收脚本 |
+| [任务交付报告](task-reports.md) | TUI 报告页、任务差异、工具证据、保存与恢复 |
+| [验证清单与人工验收](verification.md) | 登记检查、匹配实际命令、判断有效性及记录人工意见 |
 | [任务队列](task-queue.md) | 串行排队、暂停取消、编辑排序、持久化及恢复边界 |
 | [会话管理](sessions.md) | 命名、重启恢复、检查点、保存位置与异常处理 |
 | [上下文压缩与历史回查](context-compaction.md) | 自动/手动压缩、独立请求、原文归档与恢复边界 |
@@ -25,6 +28,8 @@
 | --- | --- |
 | [Python 运行时与项目环境](python-environments.md) | 受管解释器、项目 Python 自动选择、隔离边界与离线材料 |
 | [macOS / Linux 原生沙箱](native-sandbox.md) | 本机依赖、文件与网络权限、进程清理、GPU 与真实验证 |
+| [Windows native（实验性）](windows-native-isolation.md) | LPAC/Job、私有副本、工具能力探测、回写与残留回收 |
+| [Apple Silicon Metal](metal-validation.md) | 默认设备、Metal/MPS 探测、权限与硬件验证方法 |
 | [Docker 沙箱与回写](../sandbox/README.md) | 工作副本、执行配额、冲突、自动回写和备份恢复 |
 | [GPU 算子开发](gpu-operators.md) | native / Docker 的差异、环境自检、正确性和性能验证 |
 | [Skills](skills.md) | 内置及项目技能、显式加载、发现规则与提示词分工 |
@@ -39,7 +44,6 @@
 | --- | --- |
 | [项目架构](../Project_Architecture.md) | 模块职责、任务流程与状态归属 |
 | [平台适配边界](platform-adaptation.md) | 公共宿主服务、Windows 文件/安装适配、原生后端分工和验证范围 |
-| [Windows 隔离执行与清理](windows-native-isolation.md) | LPAC/Job、私有工作区与 Python 授权、回写、异常恢复及 Windows 实机验收 |
 | [开发指南](development.md) | 开发环境、验证矩阵、最小 Runtime 与压缩集成 |
 | [工具开发参考](tools.md) | 工厂、并发与预算、结果回读、Git 历史、文件/进程工具及 LSP |
 | [统一模型接口](llm.md) | 同步/异步客户端、工具消息、协议、用量、错误与流式事件 |

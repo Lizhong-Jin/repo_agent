@@ -15,7 +15,7 @@ repo-agent --new-session --name "修复测试"          # 新会话
 repo-agent --max-steps 12 --max-output-tokens 8192 # 临时覆盖任务轮数和单次输出上限
 ```
 
-项目根目录默认为调用时的当前目录；`--root` 同时选择工作目录和项目 `.env`，不会切换到 Agent 安装目录。用户配置由各项目共用，项目 `.env` 可覆盖用户设置，完整优先级见[配置参考](configuration.md)。
+项目根目录默认为调用时的当前目录；`--root` 选择项目身份和项目 `.env`，默认也作为执行目录；选择 worktree 后工具改用独立执行目录，不会切换到 Agent 安装目录。用户配置由各项目共用，项目 `.env` 可覆盖用户设置，完整优先级见[配置参考](configuration.md)。
 
 未登记安装模式时，macOS/Linux 默认 native，Windows 默认 local；已有安装沿用其记录，可用 `repo-agent --sandbox native` 显式选择，在 macOS / Linux 原生沙箱内运行本机工具并直接修改项目；见[原生沙箱说明](native-sandbox.md)。Linux 需要 bubblewrap、libseccomp 和可用的非特权 user namespace；原生 Windows 可显式选择 LPAC/Job native，在私有副本执行并逐调用回写，要求与验收见 [Windows native](windows-native-isolation.md)；也可使用 local、Docker Desktop 的 Linux 容器或 WSL2 的 Linux 后端。`--sandbox local` 提供文件/Git 和不启动子进程的基础环境查询，不提供命令、Shell、Python 或语言服务器工具。可选 Web 工具在主进程独立注册。需要工作副本及受控回写时，显式使用 `repo-agent --sandbox docker`。Docker/native 失败均不会自动切换为未隔离执行。
 
@@ -31,19 +31,25 @@ local 的 Git 状态、差异和历史查询工具会拒绝文件实际使用外
 
 `git_log` / `git_show` 读取提交历史、补丁和历史文件；Docker 查询的是工作副本自身的历史，不能当作宿主完整历史。参数、敏感路径限制及部分克隆仓库限制见[Git 历史查询](tools.md#git-历史查询)。
 
-执行工具中，`run_command` 接收程序参数数组，`run_shell` 接收 Bash 脚本。Windows 使用 Linux Docker 时两者均在容器中执行；Windows local 不开放执行工具，native 需在 WSL2 中运行。详见 [Shell 工具与平台行为](tools.md#run_shell-工具与平台行为)。
+执行工具中，`run_command` 接收程序参数数组，`run_shell` 接收 Bash 脚本。Windows 使用 Linux Docker 时两者均在容器中执行；Windows local 不开放执行工具；实验性 Windows native 支持受授权范围限制的 `run_command` 和 `run_python`，不支持 Bash `run_shell`。WSL2 native 使用 Linux 后端。详见 [Shell 工具与平台行为](tools.md#run_shell-工具与平台行为)。
+
+## 权限、工作区与后端
+
+`--mode develop|review` 选择权限，`--workspace direct|worktree` 选择代码目录，`--sandbox local|native|docker` 选择执行后端。新会话默认 develop/direct；恢复时沿用会话的权限与工作区设置。review 不启动命令后端、不支持同时创建 worktree；Docker 也不支持 worktree。安装器的 `--mode native|local|docker` 是另一组参数，不能混用。详见[只读审查](review-mode.md)与[独立工作区](workspaces.md)。
+
+工具按需加载：初始提供环境查询、文件读取/检索、技能、历史回查、已保存工具结果读取、验证计划登记及已配置的 Web 能力。修改文件、Git、代码执行和语义查询由模型按任务调用 `load_tool_group` 加载，无需用户手动操作。已加载的组随会话保存，清空上下文或新建会话时重置；local 不能借此开启命令或语言服务器。分组清单与扩展方法见[工具组说明](tools.md#按需加载工具组)。
 
 ## 会话命令与快捷键
-
-工具按需加载：初始提供环境查询、文件读取/检索、技能、历史回查、已保存工具结果读取及已配置的 Web 能力。修改文件、Git、代码执行和语义查询由模型按任务调用 `load_tool_group` 加载，无需用户手动操作。已加载的组随会话保存，清空上下文或新建会话时重置；local 不能借此开启命令或语言服务器。分组清单与扩展方法见[工具组说明](tools.md#按需加载工具组)。
 
 | 输入 | 行为 |
 | --- | --- |
 | `/help` | 查看帮助 |
 | `/continue` | 继续最近达到调用上限的任务，再获得当前 `max_steps` 轮预算并优先执行 |
 | `/ledger` | 查看近期持久化工具执行证据，见[执行账本](execution-ledger.md) |
+| `/report [任务编号] [--diff]` | 查看任务报告；TUI 打开独立报告页，见[任务报告](task-reports.md) |
+| `/workspace` | 查看当前权限、执行路径和工作区状态 |
 | `/queue` | 查看队列；支持 add、pause、resume、edit、remove、move、clear、retry，见[任务队列](task-queue.md) |
-| `/new [名称]` | 保存旧会话、新建对话；重置用量，保留文件及当前沙箱 |
+| `/new [名称]` | 保存旧会话、新建对话；重置用量，保留文件及当前沙箱；worktree 会话需退出后新建 |
 | `/rename 名称` | 修改当前名称，立即保存 |
 | `/sessions` | 查看当前项目的会话列表 |
 | `/switch 序号或名称` | 保存当前会话并切换到本项目已有会话 |
@@ -65,6 +71,7 @@ local 的 Git 状态、差异和历史查询工具会拒绝文件实际使用外
 | Enter / Alt+Enter | Return / Esc → Return | 发送 / 换行 |
 | Tab | Tab | 补全命令 |
 | F2 | fn+F2 | 编辑会话名称；回车保存，Ctrl+C 取消，保留任务草稿 |
+| F3 | fn+F3 | 打开/关闭报告页，保留输入草稿；页面内操作见[任务报告](task-reports.md#tui-报告页) |
 | Shift+Tab | Shift+Tab | 按当前模型循环合法思考预设 |
 | Ctrl+T | Ctrl+T | 即时展开/折叠思考，保留草稿 |
 | PgUp / PgDn | fn+↑ / fn+↓ | 浏览历史 |

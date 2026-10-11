@@ -39,6 +39,9 @@
 | `config_command.py`、`models.py`、`model_picker.py` | 配置命令、模型选择流程与选择界面 |
 | `thinking_display.py`、`thinking_store.py` | 思考显示、偏好与 CLI 参数衔接 |
 | `sessions_command.py`、`doctor.py` | 会话/日志命令、诊断结果汇总 |
+| `review_mode.py`、`workspaces_command.py` | 审查权限与目录校验、独立工作区管理入口 |
+| `windows_native_command.py` | Windows native 租约与残留回收命令 |
+| `terminal/report_page.py` | TUI 报告浏览与人工验收表单，不触发模型请求 |
 | `formatting.py`、`shortcuts.py` | 文本格式与快捷键 |
 | `_bootstrap.py`、`__init__.py` | 直接脚本引导辅助、包标识 |
 
@@ -134,6 +137,10 @@ flowchart TD
 
 直接导入具体模块；`cli.live`、`cli.tui` 已移除。TUI 与公共执行/展示模块不得反向导入 `interactive` 或 `main`。这些规则、无终端运行和异常清理由 [会话解耦测试](../tests/test_session_decoupling.py) 验证。
 
+### 报告与独立工作区
+
+报告与工作区的领域状态保持在 Agent 层：`task_reports.py` 组合快照与账本，`verification.py` 校验检查计划并从回执恢复声明，`report_reviews.py` 独立保存人工意见；`workspaces.py` 协调工作区状态。`host_support/change_evidence.py` 提供有界文件观察，Git 底层机制由宿主服务实现。CLI 负责调用和展示，报告页面不能直接决定机器检查通过或代替用户合并。
+
 ## 扫描与文件系统接口
 
 Linux 隔离策略通过 `sandbox/policy_scan.py` 的 `PolicyScanner.scan(plan, request)` 批量调用。
@@ -159,7 +166,7 @@ ASCII 名称匹配在 Rust 执行，非 ASCII 名称通过当前解释器的文�
 
 Linux/macOS native 都在 `_platform_setup()` 中选择 `host_support/rust_filesystem.py` 后端，并通过公共 `_execute_file()` 注入 `FileAccess`，使用 `rust/src/filesystem/mod.rs` 的目录枚举和 fd 相对路径打开。macOS 工作区硬链接检查也使用此模块；Linux 工作区预检仍合并在 `policy_scan` 引擎中。`DirectoryReader.stat_many` 批量传递元数据与逐项错误，`rust/src/filesystem/metadata.rs` 提供相对 fstatat；Python 保留策略与实际读取校验。文本匹配仍由 Python 实现：搜索在目录作用域内复用已打开的父目录，并从同一打开文件获取内容与元数据；`tools/_internal/text_search.py` 逐行迭代，避免另建完整行列表。名称、路径保护、读取预算和结果语义仍由原工具负责，Rust 不改变 Seatbelt 规则，也不接管文本匹配。`FileAccess.walk/glob_entries` 和搜索在一次扫描内最多复用 32 个目录句柄，元数据按 128 项批量获取；`iterdir_entries/glob_entries` 向 list/find 传递已有元数据，避免重复打开和检查。写操作不共享扫描缓存。
 
-Rust 0.4.0 以 `directory_batch.rs` 复用目录名称块，`path_nodes.rs` 管理可回收的父节点/名称，
+Rust 后端以 `directory_batch.rs` 复用目录名称块，`path_nodes.rs` 管理可回收的父节点/名称，
 `scan_diagnostics.rs` 输出结构高水位；`allocation_profile.rs` 仅在开发 feature 中统计分配。
 文件工具可选 `scan_metadata` 七字段观察值，原 `stat_many` 保留完整 stat_result。
 详见 [内存布局与测量](../rust/docs/memory-layout.md)。
