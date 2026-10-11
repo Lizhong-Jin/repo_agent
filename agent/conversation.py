@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from copy import deepcopy
 from dataclasses import replace
 from threading import RLock
 from uuid import uuid4
@@ -12,6 +13,8 @@ from agent.session import validate_name
 from llm import Message
 from llm.providers import get_provider
 
+from .delivery import DEFAULT as DEFAULT_DELIVERY
+from .delivery import policy_prompt, validate_policy
 from .execution_ledger import ExecutionLedger
 from .task_queue import TaskQueue
 from .transcript import Transcript
@@ -42,9 +45,21 @@ class SavedConversation:
         execution_backend=None,
         compaction_settings=None,
         workspace=None,
+        delivery_policy=None,
     ):
         self.store, self.runtime, self.config, self.status = store, runtime, config, status
         self.access_mode = runtime.access_policy.mode
+        self.delivery_policy = validate_policy(
+            delivery_policy
+            if delivery_policy is not None
+            else (store.data or {}).get("delivery_policy", DEFAULT_DELIVERY)
+        )
+        if store.data and self.delivery_policy != store.data.get(
+            "delivery_policy", DEFAULT_DELIVERY
+        ):
+            raise ValueError("会话交付规则不能改变；请新建会话")
+        if prompt := policy_prompt(self.delivery_policy):
+            runtime.system_prompt += prompt
         if store.data and store.data.get("access_mode", "develop") != self.access_mode:
             raise ValueError("会话权限模式不能改变；请使用 --new-session")
         self.tracer = tracer
@@ -54,6 +69,15 @@ class SavedConversation:
         self.execution_root = workspace.root if workspace is not None else store.project
         self.mode = execution_mode or ("docker" if sandbox is not None else "local")
         self.execution_backend = execution_backend
+        if self.delivery_policy["mode"] == "strict":
+            if self.mode == "docker" or self.access_mode == "review":
+                raise ValueError("第一版严格交付仅支持 develop 的 local/native")
+            if workspace is not None:
+                pinned = workspace.data.get("delivery_policy")
+                if pinned is not None and pinned != self.delivery_policy:
+                    raise ValueError("工作区交付规则不匹配")
+                workspace.data["delivery_policy"] = deepcopy(self.delivery_policy)
+                workspace.save()
         self.history = ()
         self.transcript = Transcript()
         self.state_lock = RLock()
@@ -141,6 +165,8 @@ class SavedConversation:
 
         if self.access_mode == "review":
             self.notice += "；只读审查：不修改项目、不执行命令或测试"
+        if self.delivery_policy["mode"] == "strict":
+            self.notice += "；严格交付：必需检查通过或显式接受例外后才能推进队列/合并"
         if self.queue.pending:
             self.notice += f"；恢复 {len(self.queue.pending)} 项待执行任务，队列已暂停"
         if dropped_groups:
@@ -178,6 +204,7 @@ class SavedConversation:
             "task_number": self.runtime._task_number,
             "mode": self.mode,
             "access_mode": self.access_mode,
+            "delivery_policy": deepcopy(self.delivery_policy),
             "workspace_id": self.workspace.id if self.workspace is not None else None,
             "sandbox": str(self.sandbox.directory) if self.sandbox is not None else None,
             "pending_task": self.pending_task,

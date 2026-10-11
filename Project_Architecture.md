@@ -28,6 +28,7 @@
 | 任务队列 | [agent/task_queue.py](agent/task_queue.py)、[cli/task_controller.py](cli/task_controller.py) | 会话内单消费者调度、暂停、重试与续接；结果保存成功后推进下一项 |
 | 只读权限 | [tools/access_policy.py](tools/access_policy.py)、[cli/review_mode.py](cli/review_mode.py) | 持久化审查权限、可信读取白名单、状态与日志目录边界 |
 | 独立工作区 | [agent/workspaces.py](agent/workspaces.py)、[cli/workspaces_command.py](cli/workspaces_command.py) | 会话级 worktree、审查令牌、快进合并、归档与中断恢复 |
+| 交付规则 | [agent/delivery.py](agent/delivery.py)、[cli/delivery_command.py](cli/delivery_command.py) | 冻结必需检查、内容绑定判定、用户例外与合并限制；旧会话保持仅报告行为 |
 | 交付与验收 | [agent/task_reports.py](agent/task_reports.py)、[agent/verification.py](agent/verification.py)、[agent/report_reviews.py](agent/report_reviews.py) | 基线/结束快照、工具证据、验证计划匹配、独立人工意见 |
 | 执行证据与结果回读 | [agent/execution_ledger.py](agent/execution_ledger.py)、[agent/tool_results.py](agent/tool_results.py)、[agent/result_refs.py](agent/result_refs.py) | 工具意图、开始、回执持久化及崩溃核查；按会话引用读取已保存结果 |
 | Web 工具 | [tools/web_tools.py](tools/web_tools.py)、[tools/_internal/](tools/_internal/) | 主进程受控搜索、网页抓取、分页缓存和快照内关键词查找，按配置启用 |

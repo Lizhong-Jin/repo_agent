@@ -216,7 +216,8 @@ class AgentRuntime:
             if len(batch) < 500:
                 break
             before = batch[-1]["seq"]
-        return plans_from_rows(rows)
+        required = getattr(getattr(self, "task_reporter", None), "required_plans", [])
+        return [*required, *plans_from_rows(rows)]
 
     def _lookup_tool_result(self, reference):
         if self.execution_ledger is None:

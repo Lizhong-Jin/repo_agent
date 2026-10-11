@@ -33,6 +33,15 @@ def create_parser():
         "--session", metavar="会话", help="恢复本项目指定序号、完整 ID、名称或 latest 的会话"
     )
     parser.add_argument("--name", help="新会话名称；省略时使用项目内递增序号")
+    parser.add_argument(
+        "--delivery",
+        choices=["report-only", "strict"],
+        default=None,
+        help="交付模式；恢复时沿用会话规则",
+    )
+    parser.add_argument(
+        "--delivery-policy", help="显式信任并加载 JSON 必需检查；会话内冻结，隐含 strict"
+    )
     parser.add_argument("--root", default=".", help="项目根目录，默认当前目录")
     parser.add_argument(
         "--mode",

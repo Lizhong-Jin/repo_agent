@@ -356,6 +356,11 @@ class Acceptance:
                 require(value.data.get("timed_out"), f"Expected timeout: {value}")
                 require(value.success != outer, f"Wrong timeout layer: {value}")
                 require(value.data.get("cleanup_status") == "confirmed", f"Cleanup: {value}")
+                require(not value.data.get("cleanup_error"), f"Cleanup error: {value}")
+                require(
+                    value.data.get("output_complete") is False,
+                    f"Timeout must retain incomplete-output status: {value}",
+                )
                 self.outer_timeout = None
                 self.stopped()
 

@@ -5,9 +5,12 @@ Passing contracts on macOS/Linux is not Windows Desktop acceptance evidence.
 
 import json
 import os
+import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -15,10 +18,129 @@ from types import SimpleNamespace
 
 import pytest
 
-from host_support.cancellation import RunCancelled, current_cancellation
+from host_support.cancellation import (
+    CancellationContext,
+    RunCancelled,
+    cancellation_scope,
+    current_cancellation,
+)
 from sandbox.docker_acceptance import Acceptance
+from sandbox.worker import execute_request
 from tools._internal.base import ToolResult
 from tools.factory import create_file_tools
+
+
+def worker_arguments(name, code, timeout=1):
+    arguments = {"timeout_seconds": timeout}
+    if name == "run_command":
+        arguments["command"] = [sys.executable, "-u", "-c", code]
+    elif name == "run_python":
+        arguments["code"] = code
+    else:
+        arguments["script"] = "exec " + shlex.join([sys.executable, "-u", "-c", code])
+    return arguments
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Worker runs inside a Linux container")
+@pytest.mark.parametrize("name", ["run_command", "run_python", "run_shell"])
+@pytest.mark.parametrize("mode", ["timeout", "cancel", "completed"])
+def test_worker_cleans_detached_child_before_reporting(tmp_path, capsys, name, mode):
+    """Exercise the real worker factory/runner path, not a configured test runner."""
+    child = (
+        "import os,signal,time\nfrom pathlib import Path\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "Path('child.pid').write_text(str(os.getpid()))\n"
+        "while True:\n Path('heartbeat').write_text(str(time.time_ns()))\n time.sleep(.02)\n"
+    )
+    # In the completed case, a child must be reclaimed even without inherited
+    # output pipes keeping the collector alive. Other cases reproduce CI's pipes.
+    redirect = (
+        ", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL" if mode == "completed" else ""
+    )
+    code = (
+        "import subprocess,sys,time\nfrom pathlib import Path\n"
+        f"subprocess.Popen([sys.executable,'-c',{child!r}], start_new_session=True{redirect})\n"
+        "while not Path('heartbeat').exists(): time.sleep(.01)\n"
+        "print('ready', flush=True)\n"
+        f"time.sleep({0.3 if mode == 'completed' else 30})\n"
+    )
+    context = CancellationContext()
+    stop = threading.Event()
+
+    def cancel():
+        while not stop.wait(0.01):
+            if (tmp_path / "heartbeat").exists():
+                # Give the existing snapshot supervisor time to observe the child.
+                if not stop.wait(0.15):
+                    context.cancel()
+                return
+
+    watcher = threading.Thread(target=cancel, daemon=True)
+    if mode == "cancel":
+        watcher.start()
+    verified = False
+    try:
+        request = {
+            "name": name,
+            "arguments": worker_arguments(name, code, 10 if mode == "cancel" else 1),
+        }
+        with cancellation_scope(context):
+            if mode == "cancel":
+                with pytest.raises(RunCancelled) as error:
+                    execute_request(request, tmp_path)
+                assert error.value.report["cleanup_status"] == "confirmed"
+                assert capsys.readouterr().out == ""
+            else:
+                execute_request(request, tmp_path)
+                result = json.loads(capsys.readouterr().out)
+                data = result["data"]
+                assert result["success"]
+                assert data["timed_out"] == (mode == "timeout")
+                assert data["output_complete"] == (mode == "completed")
+                assert "ready" in data["stdout"]
+                assert data["cleanup_status"] == "confirmed", data
+                assert data["cleanup_error"] is None
+                assert any(d["signal"] == signal.SIGKILL for d in data["cleanup_diagnostics"])
+        heartbeat = tmp_path / "heartbeat"
+        before = heartbeat.read_bytes()
+        time.sleep(0.15)
+        assert heartbeat.read_bytes() == before
+        verified = True
+    finally:
+        stop.set()
+        if mode == "cancel":
+            watcher.join(timeout=2)
+        # Bound failures in this regression: never leave our test child running.
+        pid_file = tmp_path / "child.pid"
+        if not verified and pid_file.exists():
+            try:
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Worker runs inside a Linux container")
+@pytest.mark.parametrize("name", ["run_command", "run_python", "run_shell"])
+def test_worker_preserves_unknown_cleanup_when_process_inspection_fails(
+    tmp_path, capsys, monkeypatch, name
+):
+    from host_support.supervision import ProcessTable
+
+    def denied(self):
+        raise PermissionError("Process snapshot denied")
+
+    monkeypatch.setattr(ProcessTable, "snapshot", denied)
+    execute_request(
+        {"name": name, "arguments": worker_arguments(name, "import time; time.sleep(30)")},
+        tmp_path,
+    )
+    result = json.loads(capsys.readouterr().out)
+    data = result["data"]
+    assert data["timed_out"] and not data["output_complete"]
+    assert data["cleanup_status"] == "unknown"
+    assert data["cleanup_error"]
+    assert result["effects"]["status"] == "unknown"
+    assert any(d["stage"] == "process_snapshot" for d in data["cleanup_diagnostics"])
 
 
 @pytest.mark.parametrize("temporary_path", ["default", "alias"])

@@ -5,6 +5,11 @@ from sandbox import SandboxSession
 
 
 def dispatch_command(argv):
+    if argv[:1] == ["delivery"] or (argv[:1] == ["--root"] and argv[2:3] == ["delivery"]):
+        from .delivery_command import main as delivery_main
+
+        delivery_main(argv[1:] if argv[0] == "delivery" else ["--root", argv[1], *argv[3:]])
+        return True
     if argv[:1] == ["native-cleanup"]:
         from .windows_native_command import main as cleanup_main
 

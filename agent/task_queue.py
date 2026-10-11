@@ -63,6 +63,10 @@ def validate_queue(value):
             active += task["state"] == "running"
             ids.add(task["id"])
             numbers.add(task["number"])
+        if value.get("delivery_latest") is not None and not any(
+            t["id"] == value["delivery_latest"] and t["attempts"] for t in value["tasks"]
+        ):
+            raise ValueError
         if active > 1:
             raise ValueError
     except (KeyError, TypeError, ValueError):

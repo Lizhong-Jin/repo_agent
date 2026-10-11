@@ -39,6 +39,7 @@ def continuation_args(args, session):
     result.new_session, result.name = False, None
     result.workspace = None  # Restore the target session's own workspace binding.
     result.mode = None  # An explicit UI switch restores the target's permission policy.
+    result.delivery = result.delivery_policy = None  # Restore target delivery contract.
     thinking = session.thinking
     result.thinking = thinking.current["mode"]
     result.reasoning_effort = thinking.current["effort"]

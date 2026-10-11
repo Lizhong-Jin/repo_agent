@@ -74,7 +74,7 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py t
 
 开关只选择测试，不能补齐依赖；缺少目标平台或硬件时的跳过不计为通过。真实模型 API 的可用性、参数和计费需要另行验证，不属于默认套件的结论。
 
-原生 Windows 开发测试需另行准备 Python 和开发依赖，虚拟环境入口为 `.venv\Scripts\python.exe`；发行 ZIP 不安装 pytest/Ruff。当前 Windows 契约 CI 运行 13 份模块，覆盖架构、文件、发行、取消、队列、续接、账本、报告、验证清单、TUI 报告、工作区和只读审查；另有独立 Windows native 内核验收。它们不表示整个默认套件均已适配 Windows。工作流范围见[平台验证说明](platform-adaptation.md#扩展与验证)。
+原生 Windows 开发测试需另行准备 Python 和开发依赖，虚拟环境入口为 `.venv\Scripts\python.exe`；发行 ZIP 不安装 pytest/Ruff。当前 Windows 契约 CI 运行 17 份模块，覆盖架构、文件、发行、Docker、Windows Job、取消、队列、续接、账本、报告、验证清单、可信交付、TUI 报告、工作区和只读审查；另有独立 Windows native 内核验收。它们不表示整个默认套件均已适配 Windows。工作流范围见[平台验证说明](platform-adaptation.md#扩展与验证)。
 
 ### 调度、恢复与新增查询的定向回归
 
@@ -90,7 +90,7 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_sandbox.py t
 以下新增能力也有独立契约测试，可在修改对应模块后运行：
 
 ```bash
-.venv/bin/python -m pytest -q tests/test_task_reports.py tests/test_verification_plan.py tests/test_tui_reports.py tests/test_workspaces.py tests/test_review_mode.py
+.venv/bin/python -m pytest -q tests/test_task_reports.py tests/test_verification_plan.py tests/test_delivery.py tests/test_tui_reports.py tests/test_workspaces.py tests/test_review_mode.py
 ```
 
 报告实机及性能测量见[任务报告](task-reports.md#实机验收与性能测量)。默认测试中的 Windows 预检模拟会临时监听回环端口；外层环境禁止监听时应记录环境阻塞，在允许本机监听的开发环境复核，不能按隔离功能失败推断。
@@ -259,3 +259,5 @@ CLI 会话绑定 `ExecutionLedger` 后自动注册 `read_tool_result`，用于�
 见[统一分发清单](distribution.md#统一分发清单)。
 
 </details>
+
+可信交付回归 `tests/test_delivery.py` 使用固定模型和真实 Git/短命令验证：必需规则不可降级、报告/结论/会话保存中断、内容过期、人工意见与例外绑定、队列优先重验、重启和合并限制。它已纳入跨平台契约 CI；不替代 native 内核或真实模型任务效果验收。

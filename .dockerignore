@@ -57,6 +57,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !agent/compaction_diagnostics.py
 !agent/compaction_summary.py
 !agent/conversation.py
+!agent/delivery.py
 !agent/execution_ledger.py
 !agent/history.py
 !agent/prompt.py
@@ -91,6 +92,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !cli/commands.py
 !cli/config_command.py
 !cli/conversation_help.py
+!cli/delivery_command.py
 !cli/doctor.py
 !cli/execution_environment.py
 !cli/formatting.py

@@ -47,6 +47,7 @@ local 的 Git 状态、差异和历史查询工具会拒绝文件实际使用外
 | `/continue` | 继续最近达到调用上限的任务，再获得当前 `max_steps` 轮预算并优先执行 |
 | `/ledger` | 查看近期持久化工具执行证据，见[执行账本](execution-ledger.md) |
 | `/report [任务编号] [--diff]` | 查看任务报告；TUI 打开独立报告页，见[任务报告](task-reports.md) |
+| `/delivery` | 查看严格交付；refresh 重判、recheck 重验、repair 修复、accept-exception 接受例外，见[可信交付](delivery.md) |
 | `/workspace` | 查看当前权限、执行路径和工作区状态 |
 | `/queue` | 查看队列；支持 add、pause、resume、edit、remove、move、clear、retry，见[任务队列](task-queue.md) |
 | `/new [名称]` | 保存旧会话、新建对话；重置用量，保留文件及当前沙箱；worktree 会话需退出后新建 |

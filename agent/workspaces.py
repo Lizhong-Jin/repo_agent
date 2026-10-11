@@ -381,6 +381,9 @@ class Workspace:
         }
 
     def merge(self, token):
+        from .delivery import require_merge
+
+        require_merge(self)
         git = self.require_ready()
         review = self.data.get("review")
         if not review or review["token"] != token:
@@ -401,6 +404,8 @@ class Workspace:
         if source.branch() != self.data["target"] or source.head() != self.data["base"]:
             raise ValueError("目标分支在合并前发生变化；工作区已保留，请 recover 后重新核实")
         source.check_filters(commit)
+        if self.snapshot() != (commit, review["tree"]):
+            raise ValueError("提交后工作区内容发生变化；请 recover 并重新验证/审查")
         source.run("merge", "--ff-only", "--no-edit", "--no-stat", "--no-overwrite-ignore", commit)
         if source.head() != commit:
             raise ValueError("合并结果未确认，请检查后 recover")

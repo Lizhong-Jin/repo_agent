@@ -4,6 +4,7 @@ import subprocess
 from contextlib import ExitStack
 from pathlib import Path
 
+from agent.delivery import resolve_policy
 from agent.session import SessionStore
 from agent.workspaces import prepare_workspace
 from llm import LLMError
@@ -47,7 +48,7 @@ def run_single_task(args, session, sandbox):
         raise outcome.value
     if state != "completed":
         print(controller.queue.data["reason"])
-    return state == "completed"
+    return state == "completed" and controller.delivery_allowed()
 
 
 def run_application(args, capabilities, *, prepare_configuration=False):
@@ -72,6 +73,18 @@ def run_application(args, capabilities, *, prepare_configuration=False):
                 # Old models, callbacks and native tools are closed before switching IDs.
                 with ExitStack() as session_resources:
                     args.mode = resolve_mode(store, getattr(args, "mode", None))
+                    args.delivery_config = resolve_policy(
+                        store,
+                        getattr(args, "delivery", None),
+                        getattr(args, "delivery_policy", None),
+                    )
+                    if args.delivery_config["mode"] == "strict" and (
+                        args.mode == "review" or args.sandbox == "docker"
+                    ):
+                        raise ValueError(
+                            "第一版严格交付仅用于 develop 的 local/native；"
+                            "Docker 和只读审查使用 report-only"
+                        )
                     if args.mode != "review" and web is None:
                         web = WebBackend.from_environment()
                         if web is not None:
@@ -93,6 +106,13 @@ def run_application(args, capabilities, *, prepare_configuration=False):
                     ):
                         raise ValueError("审查已有 worktree 请以其目录作为 --root，新建审查会话")
                     workspace = prepare_workspace(store, getattr(args, "workspace", None))
+                    if workspace is not None:
+                        pinned = workspace.data.get("delivery_policy")
+                        if pinned is not None and pinned != args.delivery_config:
+                            raise ValueError("工作区交付规则不匹配，禁止降级")
+                        if pinned is None:
+                            workspace.data["delivery_policy"] = args.delivery_config
+                            workspace.save()
                     if workspace is not None and args.sandbox == "docker":
                         raise ValueError("独立工作区会话不能切换到 Docker；请使用 --new-session")
                     execution_root = workspace.root if workspace is not None else workspace_root
@@ -144,4 +164,5 @@ def run_application(args, capabilities, *, prepare_configuration=False):
                     raise
                 print(f"会话切换失败：{error}；正在恢复原会话。")
                 args.mode = None
+                args.delivery = args.delivery_policy = None
                 selector, fallback_id = fallback_id, None

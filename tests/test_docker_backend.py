@@ -80,6 +80,26 @@ def test_host_cleanup_failure_is_not_hidden_by_container_removal(
 
 
 @pytest.mark.parametrize("status", ["confirmed", "unknown"])
+def test_container_removal_does_not_rewrite_inner_cleanup_or_output(
+    backend, tmp_path, monkeypatch, status
+):
+    data = {
+        "timed_out": True,
+        "exit_code": None,
+        "stdout": "partial output",
+        "cleanup_status": status,
+        "cleanup_error": "Process snapshot denied" if status == "unknown" else None,
+        "output_complete": False,
+        "cleanup_diagnostics": [{"stage": "verify", "outcome": status}],
+    }
+    payload = {"success": True, "data": data}
+    monkeypatch.setattr(backend.runner, "run", lambda *a, **k: result(stdout=json.dumps(payload)))
+    outcome = backend.execute(tmp_path, "run_command", {})
+    assert outcome.success
+    assert outcome.data == data
+
+
+@pytest.mark.parametrize("status", ["confirmed", "unknown"])
 def test_cancelled_client_cleanup_controls_backend_reuse(backend, tmp_path, monkeypatch, status):
     context = CancellationContext()
 

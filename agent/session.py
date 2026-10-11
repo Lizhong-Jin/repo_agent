@@ -143,6 +143,10 @@ def validate_record(data, project, sid):
         ):
             raise ValueError
         validate_queue(data.get("task_queue"))
+        from .delivery import DEFAULT as DEFAULT_DELIVERY
+        from .delivery import validate_policy
+
+        validate_policy(data.get("delivery_policy", DEFAULT_DELIVERY))
         if data.get("workspace_id") is not None and data["workspace_id"] != sid:
             raise ValueError("会话与工作区 ID 不匹配")
         if type(data.get("ledger_cursor", 0)) is not int or data.get("ledger_cursor", 0) < 0:

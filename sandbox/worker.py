@@ -6,6 +6,7 @@ from pathlib import Path
 
 from tools._internal.lsp_config import LspRegistry, default_lsp_registry
 from tools.dispatch import ToolDispatcher
+from tools.execute import RunCommandTool, RunPythonTool
 from tools.factory import create_default_tools
 
 
@@ -31,6 +32,12 @@ def execute_request(request, workspace):
         execution_context=request.get("execution_context"),
         **request.get("tool_limits", {}),
     ):
+        if isinstance(tool, (RunCommandTool, RunPythonTool)):
+            # Includes RunShellTool. Track observed descendants that detach from
+            # the initial process group, and finish cleanup before serializing
+            # the result. Container removal remains the outer containment layer;
+            # it must never erase an inner cleanup error or incomplete output.
+            tool.runner.supervise_tree = True
         dispatcher.register(tool)
     result = dispatcher.execute(request["name"], request["arguments"])
     print(json.dumps(asdict(result)))

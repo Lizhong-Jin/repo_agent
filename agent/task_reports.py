@@ -9,6 +9,8 @@ import json
 import os
 import re
 import stat
+import subprocess
+import sys
 import time
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -144,6 +146,8 @@ def snapshot(root, *, exclude=(), texts=True):
 
 def fingerprint(snap):
     values = {p: {k: v for k, v in f.items() if k != "text"} for p, f in snap["files"].items()}
+    if "delivery_tree" in snap:
+        values = {"files": values, "delivery_tree": snap["delivery_tree"]}
     return {
         "hash": hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest(),
         "complete": snap["complete"],
@@ -220,6 +224,14 @@ class ReportStore:
     def get(self, selector="latest"):
         if self.directory.is_symlink() or self.directory.parent.is_symlink():
             raise ValueError("报告目录不能是符号链接")
+        if selector == "latest":
+            queue = (getattr(self.store, "data", None) or {}).get("task_queue", {})
+            latest = queue.get("delivery_latest")
+            if latest is not None:
+                task = next((t for t in queue.get("tasks", []) if t["id"] == latest), None)
+                if task is None:
+                    raise ValueError("最新交付任务引用损坏")
+                selector = task["number"]
         selected = None
         for path in self.directory.glob("*.json"):
             if not re.fullmatch(r"[0-9a-f]{32}", path.stem):
@@ -348,7 +360,14 @@ def evidence(report, ledger, final=None, *, checks=None):
         "operations": operations,
         "executions": executions,
         "failures": failures,
-        "verification_plan": plans_from_rows(rows),
+        "verification_plan": [
+            *report.get("required_verifications", []),
+            *[
+                p
+                for p in plans_from_rows(rows)
+                if p["id"] not in {c["id"] for c in report.get("required_verifications", [])}
+            ],
+        ],
     }
 
 
@@ -365,6 +384,18 @@ class ReportCapture:
         )
         self.exclude = (conversation.store.directory,)
         self.checks = {}
+        from .delivery import DEFAULT as DEFAULT_DELIVERY
+
+        self.delivery_policy = deepcopy(getattr(conversation, "delivery_policy", DEFAULT_DELIVERY))
+        self.workspace = getattr(conversation, "workspace", None)
+        self.required_plans = [
+            {
+                **deepcopy(item),
+                "declared_event": self.ledger.watermark(),
+                "call_id": "host-required",
+            }
+            for item in self.delivery_policy["checks"]
+        ]
         self.completed_checks = {}
         self.sandbox = sandbox
         self.report = {
@@ -380,6 +411,23 @@ class ReportCapture:
             "mode": conversation.mode,
             "access_mode": getattr(conversation, "access_mode", "develop"),
             "writeback_mode": writeback,
+            "delivery_policy": self.delivery_policy,
+            "execution_environment": {
+                "mode": conversation.mode,
+                "platform": sys.platform,
+                "agent_python": sys.executable,
+                "agent_python_version": sys.version,
+                "project_python": str(
+                    getattr(
+                        getattr(
+                            getattr(conversation, "execution_backend", None), "project_python", None
+                        ),
+                        "executable",
+                        "",
+                    )
+                ),
+            },
+            "required_verifications": self.required_plans,
             "workspace": str(self.root),
             "workspace_id": getattr(getattr(conversation, "workspace", None), "id", None),
             "project": str(conversation.store.project),
@@ -393,6 +441,12 @@ class ReportCapture:
 
     def _snapshot(self, root=None, *, texts=True):
         snap = snapshot(root or self.root, exclude=self.exclude, texts=texts)
+        if self.delivery_policy["mode"] == "strict" and self.workspace is not None:
+            try:
+                snap["delivery_tree"] = list(self.workspace.snapshot())
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                snap["complete"] = False
+                snap["issues"].append(f"工作区候选内容无法核实：{error}")
         self.scan_metrics.append(
             {
                 "root": snap["root"],
@@ -458,6 +512,30 @@ def load_report(store, ledger, selector="latest"):
     attach_reviews(store, report, items, digest)
     report["revision"] = digest
     report["verification_items"] = items
+    if report.get("delivery_policy", {}).get("mode") == "strict":
+        from .delivery import digest as delivery_digest
+        from .delivery import directory, read_json
+
+        try:
+            task = next(
+                t for t in (store.data or {})["task_queue"]["tasks"] if t["id"] == report["task_id"]
+            )
+            ref = task["result"]["delivery"]
+            expected = f"delivery-{report['attempt_id']}-{ref['digest']}.json"
+            if ref["file"] != expected or not re.fullmatch(r"[0-9a-f]{64}", ref["digest"]):
+                raise ValueError("交付引用无效")
+            decision = read_json(directory(store) / expected)
+            if (
+                delivery_digest(decision) != ref["digest"]
+                or decision.get("report_digest") != digest
+            ):
+                raise ValueError("交付结论与报告不匹配")
+            report["delivery_record"] = decision
+        except (OSError, ValueError, KeyError, TypeError, StopIteration):
+            report["delivery_record"] = {
+                "state": "unknown",
+                "reasons": ["交付结论未完整保存或引用不匹配"],
+            }
     return report
 
 
@@ -473,6 +551,13 @@ def render_report(report, *, detail=False, diff=False):
         f"任务交付报告 #{report['task_number']} · {states.get(report['state'], report['state'])}",
         f"环境：{report['mode']} · {report['workspace']}",
     ]
+    if report.get("delivery_policy", {}).get("mode") == "strict":
+        from .delivery import describe
+
+        lines.append("严格交付：执行结束不等于检查通过。")
+        if "delivery_record" in report:
+            lines.append("保存的交付结论：" + describe(report["delivery_record"]))
+        lines.append("以上是历史证据；/delivery 核对当前内容，合并前再次复核。")
     if report.get("access_mode") == "review":
         lines.append("权限：只读审查；未执行项目命令或测试，静态结论不等于验证通过。")
     observed, ops, checks = (

@@ -24,6 +24,8 @@ TUI 顶部常驻会话名称与序号，按 **F2** 编辑名称，Enter 保存�
 
 列表显示序号、名称、最近活动时间、是否正在运行以及是否默认恢复。查看列表和日志无需模型配置或 Docker，不占用 Agent 的执行锁；运行时也能在另一个终端查看或改名。管理命令支持 `--root`，也支持 `repo-agent --root /path sessions list`。
 
+交付模式和必需检查作为 `delivery_policy` 保存；旧会话默认 report-only，恢复不能降低严格规则。切换会话恢复目标规则，详见[可信交付](delivery.md)。
+
 ## 选择与切换已有会话
 
 会话还保存 `access_mode` 和工作区设置。旧快照默认 develop/direct；恢复审查会话保持只读，不能用 `--mode develop` 原地提升权限。切换会话时恢复目标权限与目录；需要修复审查结果时新建开发会话，详见[审查模式](review-mode.md)。

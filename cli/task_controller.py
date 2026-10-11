@@ -3,6 +3,7 @@
 from copy import deepcopy
 from threading import RLock
 
+from agent import delivery
 from agent.conversation import model_identity
 from agent.task_queue import TaskQueue
 from agent.task_reports import ReportCapture, render_report
@@ -42,6 +43,89 @@ class TaskController:
         self.closing = False
         self.report_capture = None
         self.report_error = None
+
+    @property
+    def delivery_policy(self):
+        return getattr(self.conversation, "delivery_policy", delivery.DEFAULT)
+
+    def delivery_result(self):
+        if self.conversation is None or self.delivery_policy["mode"] == "report-only":
+            return {"state": "report-only", "reasons": []}
+        return delivery.inspect(
+            self.conversation.store,
+            delivery.latest_task(self.queue.data),
+            self.delivery_policy,
+            self.conversation.execution_root,
+            self.workspace,
+        )
+
+    def delivery_allowed(self):
+        if not delivery.latest_task(self.queue.data):
+            return True
+        return delivery.allowed(self.delivery_result())
+
+    def delivery_command(self, text):
+        parts = text.split(maxsplit=2)
+        action = parts[1] if len(parts) > 1 else "status"
+        argument = parts[2] if len(parts) > 2 else ""
+        with self.lock:
+            if action == "status" and not argument:
+                return delivery.describe(self.delivery_result())
+            if self.active or self.closing:
+                raise ValueError("请等待当前任务及收尾结束后操作交付")
+            if self.delivery_policy["mode"] != "strict":
+                raise ValueError("当前为 report-only；请新建 strict 会话并指定必需检查")
+            if self.cleanup_blocked or not self._healthy():
+                raise ValueError("进程清理未确认；不能重新验证或接受例外，请先恢复执行环境")
+            previous = delivery.latest_task(self.queue.data)
+            if previous is None:
+                raise ValueError("尚无已执行任务")
+            if action in {"refresh", "accept-exception"}:
+                if (action == "refresh" and argument) or (
+                    action == "accept-exception" and not argument
+                ):
+                    raise ValueError("用法：/delivery refresh 或 /delivery accept-exception 原因")
+                ref = delivery.publish(
+                    self.conversation.store,
+                    previous,
+                    self.delivery_policy,
+                    self.conversation.execution_root,
+                    self.workspace,
+                    exception=argument if action == "accept-exception" else None,
+                )
+                previous["result"]["delivery"] = ref
+                self._save()
+                return (
+                    delivery.describe(self.delivery_result())
+                    + "\n未自动恢复队列或合并；核实后 /queue resume。"
+                )
+            if action == "recheck" and not argument:
+                content = (
+                    "重新验证当前工作区：执行全部用户固定的必需命令检查，不修改项目代码。"
+                    "人工项仍交由用户验收。"
+                )
+            elif action == "repair" and argument:
+                content = argument
+            else:
+                raise ValueError(
+                    "用法：/delivery [status|refresh|recheck|repair 文本|accept-exception 原因]"
+                )
+            staged = next(
+                (t for t in self.queue.pending if t.get("delivery_recovery_of") == previous["id"]),
+                None,
+            )
+            if staged is None:
+                staged = self.queue.add(content)
+                staged["delivery_recovery_of"] = previous["id"]
+            elif staged["text"] != content:
+                raise ValueError("已有交付修复项，请先处理或移除该项")
+            self.queue.move(staged["number"], 1)
+            self.queue.resume()
+            self._save()
+            return (
+                f"已创建交付验证/修复任务 #{staged['number']}，使用模型和现有工具；"
+                "必需检查不变，旧报告保留。"
+            )
 
     @property
     def queue(self):
@@ -92,6 +176,11 @@ class TaskController:
                 raise ValueError("正在停止，请等待当前任务收尾")
             if self.cleanup_blocked or not self._healthy():
                 raise ValueError("进程清理尚未确认；请退出、检查进程后重新启动")
+            if not self.delivery_allowed():
+                raise ValueError(
+                    delivery.describe(self.delivery_result())
+                    + "；使用 /delivery 处理，不能直接恢复队列"
+                )
             self.queue.resume()
             self._save()
 
@@ -127,6 +216,8 @@ class TaskController:
                     "从已有上下文和工具结果继续，不要重复已经完成的操作。"
                 )
                 task["continuation_of"] = previous["id"]
+                if self.delivery_policy["mode"] == "strict":
+                    task["delivery_recovery_of"] = previous["id"]
             self.queue.move(task["number"], 1)
             self.queue.resume()
             self._save()
@@ -147,6 +238,11 @@ class TaskController:
             if not self._healthy() or self.cleanup_blocked:
                 self.pause("执行环境或进程清理未确认")
                 return None
+            previous = delivery.latest_task(self.queue.data)
+            recovery = self.queue.pending[0].get("delivery_recovery_of")
+            if previous is not None and recovery != previous["id"] and not self.delivery_allowed():
+                self.pause(delivery.describe(self.delivery_result()))
+                return None
             config = getattr(self.runtime.llm, "config", None)
             settings = {
                 "model": model_identity(config) if config is not None else {},
@@ -156,10 +252,14 @@ class TaskController:
                 "mode": getattr(self.conversation, "mode", "local"),
                 "access_mode": getattr(self.conversation, "access_mode", "develop"),
                 "writeback": self.writeback,
+                "delivery_policy": deepcopy(self.delivery_policy),
             }
             task = self.queue.claim(settings)
             if task is None:
                 return None
+            previous_delivery = self.queue.data.get("delivery_latest")
+            if self.delivery_policy["mode"] == "strict":
+                self.queue.data["delivery_latest"] = task["id"]
             self.cancellation = CancellationContext()
             try:
                 if self.conversation:
@@ -172,6 +272,8 @@ class TaskController:
                 # No executor has been called. Keep the request available, but
                 # require an explicit save/resume before trying to start again.
                 task.update(state="queued", attempts=[])
+                if self.delivery_policy["mode"] == "strict":
+                    self.queue.data["delivery_latest"] = previous_delivery
                 self.persistence_blocked = True
                 self.queue.pause("启动状态保存未确认；尚未执行，请修复后 /queue resume")
                 raise
@@ -196,6 +298,12 @@ class TaskController:
                 self.report_error = f"报告基线保存失败：{error}"
                 self.write(self.report_error)
         self.runtime.task_reporter = self.report_capture
+        if self.delivery_policy["mode"] == "strict" and (
+            self.report_error or not self.report_capture.report["baseline"]["complete"]
+        ):
+            return TaskOutcome(
+                "error", self.report_error or "严格交付基线不完整，尚未调用模型或执行工具"
+            )
         return TaskRunner(
             self.runtime,
             self.cancellation.check,
@@ -283,6 +391,21 @@ class TaskController:
             if self.report_error:
                 summary["report_error"] = self.report_error
                 self.write(self.report_error)
+            if self.delivery_policy["mode"] == "strict":
+                try:
+                    summary["delivery"] = delivery.publish(
+                        self.conversation.store,
+                        self.active,
+                        self.delivery_policy,
+                        self.conversation.execution_root,
+                        self.workspace,
+                        finishing=True,
+                    )
+                except (OSError, ValueError) as error:
+                    summary["delivery_error"] = str(error)
+                    self.queue.pause("交付结论保存失败；请修复存储后 /delivery refresh")
+                if summary.get("delivery", {}).get("state") != "passed":
+                    self.queue.pause("严格交付未通过；/delivery 查看，recheck 重验或 repair 修复")
             self.queue.finish(self.active, state, summary)
             self.active = None
             self._save()  # History, pending marker and queue result share one snapshot.
@@ -297,9 +420,13 @@ class TaskController:
                     raise
             if report_notice:
                 self.write(report_notice)
+            if self.delivery_policy["mode"] == "strict":
+                self.write(delivery.describe(self.delivery_result()))
             return state
 
     def command(self, text):
+        if text.split()[:1] == ["/delivery"]:
+            return self.delivery_command(text)
         parts = text.strip().split(maxsplit=2)
         if parts[:1] == ["/continue"]:
             if len(parts) != 1:
@@ -365,4 +492,11 @@ class TaskController:
         for task in [*tasks, *terminal]:
             preview = task["text"].replace("\n", " ")[:80]
             lines.append(f"#{task['number']} [{labels[task['state']]}] {preview}")
+            if (
+                task["attempts"]
+                and task["attempts"][-1]["config"].get("delivery_policy", {}).get("mode")
+                == "strict"
+            ):
+                saved_state = task["result"].get("delivery", {}).get("state", "unknown")
+                lines.append("  保存的交付结论：" + delivery.LABELS.get(saved_state, "无法确认"))
         return "\n".join(lines)

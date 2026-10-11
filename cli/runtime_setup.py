@@ -119,6 +119,7 @@ def open_runtime(args, workspace_root, store, environment, web_backend):
                     max_refinements=args.compact_max_refinements,
                 ),
                 workspace=getattr(environment, "workspace", None),
+                delivery_policy=getattr(args, "delivery_config", None),
             )
             yield RuntimeSession(
                 runtime, config, status, thinking, display, conversation, tracer, LLMClient

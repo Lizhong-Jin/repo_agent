@@ -139,6 +139,8 @@ flowchart TD
 
 ### 报告与独立工作区
 
+`agent/delivery.py` 校验并冻结用户规则，根据报告、人工意见和当前内容生成独立交付结论；它不执行命令。`TaskController` 接入队列收尾与恢复限制，`Workspace.merge` 在 Git 变更前检查交付。`cli/delivery_command.py` 提供不调用模型的状态/重判/例外入口，模型工具不注册验收或例外操作。
+
 报告与工作区的领域状态保持在 Agent 层：`task_reports.py` 组合快照与账本，`verification.py` 校验检查计划并从回执恢复声明，`report_reviews.py` 独立保存人工意见；`workspaces.py` 协调工作区状态。`host_support/change_evidence.py` 提供有界文件观察，Git 底层机制由宿主服务实现。CLI 负责调用和展示，报告页面不能直接决定机器检查通过或代替用户合并。
 
 ## 扫描与文件系统接口
