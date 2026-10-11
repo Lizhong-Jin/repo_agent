@@ -146,6 +146,44 @@ CUDA 配置挂载 GPU，增加编译所需的内存、临时空间和执行时�
 
 ## 不同系统上的 Docker 模式
 
+### Windows native 兼容性问题的容器路线
+
+Windows native 当前标记为实验性支持，Git/LSP 首次使用会运行隔离能力探针并缓存结果。
+已识别的不兼容会给出 Docker 新会话命令；未知失败仍明确报错。详见
+[能力状态与验收边界](../docs/windows-native-isolation.md#gitlsp-能力检查)。
+
+如果 Windows native 中 Git 路径解析或 Python LSP 因 LPAC 系统 API 限制失败，显式使用整个
+Docker 会话。文件、Git、Python、命令与 LSP 共享同一份容器工作副本，避免不同后端看到不同文件。
+这不会修复 Windows native 自身的兼容性，也不会在 native 失败后自动切换后端。
+
+安装并启动 Docker Desktop，切换为 Linux 容器后，在源码仓库根目录运行（无需模型密钥）：
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 -m sandbox.build --profile standard
+.\.venv\Scripts\python.exe -X utf8 -m sandbox.docker_smoke
+```
+
+验收入口只创建临时示例项目，验证 Linux 环境、四种 Git 查询、Python 符号、非 root、断网、
+宿主文件不可见、镜像只读、文件跨调用可见、显式回写与备份恢复、超时清理与恢复。
+失败返回非零退出码；Docker 缺失时不会运行宿主工具。清理未确认时保留工作副本以供检查。
+它不使用模型、不读取用户项目，也不更改默认运行模式。
+
+验收通过后，用已安装的 CLI 在任务项目目录启动：
+
+```powershell
+repo-agent --sandbox docker --sandbox-profile standard --sandbox-writeback manual --new-session
+```
+
+先用 `/diff` 审查，再用 `/apply` 回写。Windows 的 `.venv` 不会导入；项目依赖必须预装进
+Linux 派生镜像。Git 查询的是会话副本的新基线，不能读取宿主原仓库历史。
+
+容器 worker 失败、超时或协议无效时，结果保留退出码以及每路最多约 16 KiB 的首尾输出，
+标记 `output_kind=worker_protocol`，便于定位镜像、挂载或工具启动错误。
+
+`.github/workflows/docker.yml` 在 Linux runner 上构建 standard 镜像并运行上述验收、多语言、
+隔离和回写测试。该作业不替代 Windows Docker Desktop 的真实挂载与回写验证，
+也不取代现有 Windows native 测试。
+
 本项目只运行 **Linux 容器**，启动时检查 Docker daemon 的 `OSType=linux`。容器内操作系统不随桌面系统改变。
 
 | 项目运行环境 | Docker 模式 |

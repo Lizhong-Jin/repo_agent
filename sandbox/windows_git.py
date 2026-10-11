@@ -91,13 +91,16 @@ def copy_git_runtime(source, destination, *, limit=2 * 1024**3):
 class WindowsGitRunner:
     """Injected only into the four factory-owned Git query tools on the host."""
 
-    def __init__(self, backend, max_output_bytes):
+    def __init__(self, backend, max_output_bytes, *, before_run=None):
         self.backend = backend
         self.max_output_bytes = max_output_bytes
+        self.before_run = before_run
 
     def run(self, command, *, cwd, timeout_seconds):
         if not self.backend.healthy:
             raise ProcessStartError(RuntimeError("Native backend cleanup is unconfirmed"))
+        if self.before_run is not None:
+            self.before_run()
         try:
             return self.backend._run(
                 command,

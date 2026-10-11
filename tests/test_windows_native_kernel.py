@@ -1,4 +1,4 @@
-"""Opt-in complete Windows native startup/tool/publication acceptance."""
+"""Opt-in Windows native contracts; full functional acceptance remains explicit."""
 
 import json
 import os
@@ -28,6 +28,23 @@ def require_success(result, stage):
         pytest.fail(
             f"{stage}:\n{json.dumps(asdict(result), ensure_ascii=True, indent=2)}", pytrace=False
         )
+
+
+def require_capability_outcome(result, backend, capability, stage):
+    """Only known LPAC incompatibility is an accepted rejection, never arbitrary failure."""
+    if result.success or os.getenv("REQUIRE_WINDOWS_NATIVE_FULL_TOOLS") == "1":
+        require_success(result, stage)
+        print(f"Windows native {stage}: available")
+        return True
+    assert result.error_code == "NATIVE_CAPABILITY_UNAVAILABLE", asdict(result)
+    report = result.data["capability_report"]
+    assert report["status"] == "unavailable" and report["reason"] == "lpac_compatibility", report
+    assert report["diagnostics"]["cleanup_status"] == "confirmed", report
+    assert result.data["capability"] == capability
+    assert "--sandbox docker" in result.error and "--new-session" in result.error
+    assert backend.healthy and not result.data["execution_allowed"]
+    print(f"Windows native {stage}: unavailable (lpac_compatibility), cleanup confirmed")
+    return False
 
 
 @pytest.mark.parametrize("stage", ["python", "git", "lsp", "all"])
@@ -99,20 +116,49 @@ def test_native_startup_python_worker_git_and_publication(tmp_path, monkeypatch,
                 ("git_show", {"path": "sample.py"}),
             ):
                 query = backend.execute(root, name, arguments)
-                require_success(query, name)
-                if name == "git_show":
+                available = require_capability_outcome(query, backend, "git", name)
+                if available and name == "git_show":
                     assert "return 42" in str(query.data)
-                if name == "git_diff":
+                if available and name == "git_diff":
                     assert "return 43" in str(query.data)
             assert (root / ".git/index").read_bytes() == index_before
             assert (root / "sample.py").read_text().endswith("return 43\n")
         if stage in {"lsp", "all"}:
             symbols = backend.execute(root, "get_symbols", {"path": "sample.py"})
-            require_success(symbols, "get_symbols")
-            assert "answer" in str(symbols.data), symbols.data
+            if require_capability_outcome(symbols, backend, "lsp", "get_symbols"):
+                assert "answer" in str(symbols.data), symbols.data
+            else:
+                repeated = backend.execute(root, "get_symbols", {"path": "sample.py"})
+                assert repeated == symbols
+                assert backend.last_tool_metrics["runs"] == []
+        require_success(
+            backend.execute(root, "read_file", {"reads": [{"path": "sample.py"}]}),
+            "read after probe",
+        )
+        require_success(
+            backend.execute(root, "write_file", {"path": "capability-ok.txt", "content": "ok"}),
+            "write after probe",
+        )
+        assert (root / "capability-ok.txt").read_text() == "ok"
+        assert not (root / "sample.py").read_text().startswith("def native_capability_example")
         assert backend.healthy
         assert not list(backend.windows_state_root.glob("*.json"))
     finally:
+        if destination := os.getenv("WINDOWS_NATIVE_CAPABILITY_REPORT_DIR"):
+            directory = Path(destination)
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / f"{stage}.json").write_text(
+                json.dumps(
+                    {
+                        "stage": stage,
+                        "healthy": backend.healthy,
+                        "capabilities": backend.execution_context()["capabilities"],
+                    },
+                    ensure_ascii=True,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
         backend.close()
 
 

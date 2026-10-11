@@ -1,5 +1,7 @@
 """Docker boundary. No fallback to host execution."""
 
+import csv
+import io
 import json
 import shutil
 import subprocess
@@ -14,6 +16,36 @@ from tools._internal.process_runner import ProcessRunner
 from .backend import SandboxBackend as SandboxBackend
 from .concurrency import backend_gate
 from .policy import SandboxPolicy
+
+
+def _bind_mount(source: Path, target: str, *, readonly: bool = False) -> str:
+    # --mount is CSV, even when subprocess passes it as a single argv element.
+    output = io.StringIO()
+    fields = ["type=bind", f"src={source}", f"dst={target}"]
+    if readonly:
+        fields.append("readonly")
+    csv.writer(output, lineterminator="\n").writerow(fields)
+    return output.getvalue().removesuffix("\n")
+
+
+def _failure(result, code: str, message: str) -> ToolResult:
+    """Keep bounded worker/daemon evidence without treating it as tool output."""
+    data = {
+        "exit_code": result.exit_code,
+        "timed_out": result.timed_out,
+        "output_kind": "worker_protocol",
+        "output_complete": False,
+        "cleanup_status": "confirmed",
+    }
+    for channel in ("stdout", "stderr"):
+        value = getattr(result, channel, "")
+        data[channel] = value[:8192] + (
+            "\n[truncated]\n" + value[-8192:] if len(value) > 16384 else value[8192:]
+        )
+        data[f"{channel}_truncated"] = (
+            getattr(result, f"{channel}_truncated", False) or len(value) > 16384
+        )
+    return ToolResult(False, data=data, error_code=code, error=message)
 
 
 class DockerBackend:
@@ -118,9 +150,9 @@ class DockerBackend:
                 "--env",
                 "TMPDIR=/tmp",
                 "--mount",
-                f"type=bind,src={workspace},dst=/workspace",
+                _bind_mount(workspace, "/workspace"),
                 "--mount",
-                f"type=bind,src={request},dst=/request.json,readonly",
+                _bind_mount(request, "/request.json", readonly=True),
                 "--workdir",
                 "/workspace",
                 *(
@@ -158,15 +190,19 @@ class DockerBackend:
                 if context is not None:
                     context.record_cleanup("confirmed", container=container)
             if result.timed_out or result.exit_code != 0 or result.stdout_truncated:
-                return ToolResult(
-                    False,
-                    error_code="SANDBOX_EXECUTION_FAILED",
-                    error="Sandbox 执行失败、超时或结果超过限制。",
+                return _failure(
+                    result,
+                    "SANDBOX_EXECUTION_FAILED",
+                    "Sandbox 执行失败、超时或结果超过限制；详情见 stdout/stderr。",
                 )
             try:
                 payload = json.loads(result.stdout)
+                if (
+                    not isinstance(payload, dict)
+                    or type(payload.get("success")) is not bool
+                    or not isinstance(payload.get("data", {}), dict)
+                ):
+                    raise ValueError("Invalid tool result")
                 return ToolResult(**payload)
             except (ValueError, TypeError):
-                return ToolResult(
-                    False, error_code="SANDBOX_PROTOCOL_ERROR", error="Sandbox 返回了无效结果。"
-                )
+                return _failure(result, "SANDBOX_PROTOCOL_ERROR", "Sandbox 返回了无效结果。")

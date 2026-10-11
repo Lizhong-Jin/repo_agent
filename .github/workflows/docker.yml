@@ -1,0 +1,34 @@
+name: Docker tools and isolation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PYTHONUTF8: '1'
+      RUN_SANDBOX_DOCKER_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install locked test dependencies
+        run: >-
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
+      - name: Build standard Linux image from this checkout
+        run: python -m sandbox.build --profile standard
+      - name: Verify Git, Python LSP, isolation, writeback and timeout recovery
+        run: python -m sandbox.docker_smoke
+      - name: Run actual container and multilingual regressions
+        run: python -m pytest -q -ra tests/test_docker_backend.py tests/test_sandbox.py tests/test_writeback.py tests/test_multilang_sandbox.py
+      - name: Report remaining task containers
+        if: always()
+        run: docker ps -a --filter name=repo-agent- --format '{{.Names}} {{.Status}}'

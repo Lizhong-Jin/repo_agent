@@ -4,6 +4,10 @@
 
 Windows x86_64 native 已接入工厂、能力报告、安装器与 CLI。执行使用 LPAC + Job Object；文件工具由宿主机上的可信文件服务操作原项目；进程工具在过滤后的私有项目副本中执行，确认进程树清理后逐调用回写。macOS/Linux 保持原有直接修改项目的行为。Windows 安装仍默认 local；本机启动必须通过真实隔离自检，失败不降级。
 
+**Windows native 当前为实验性支持。** 隔离自检通过只说明该主机满足启动所需的隔离检查，
+不代表 Git、语言服务器或任意 Python 包都兼容 LPAC。需要完整 Git/LSP 工具链时，建议显式
+使用 [Docker 会话](../sandbox/README.md#windows-native-兼容性问题的容器路线)。
+
 ## 使用
 
 需要 Windows 10 1809+ / Windows 11 x86_64、本地 NTFS 和完整的 Python 3.11+ 安装或常规 venv。所需 Windows API、文件权限或 Python 布局不可用时会直接报错。建议先在目标 Windows 主机运行下文的实机验收。
@@ -47,9 +51,34 @@ ACL 只设置在本次拥有的私有目录：运行时、请求和 Git 元数�
 
 普通调用不查找或复制 Git；Git 查询不复制或启动 Python。Git 仅复制 `mingw64/bin/git.exe` 与同目录 DLL，允许安装包中的硬链接，但通过只读句柄将内容写为新的独立文件，不更改原安装 ACL；符号链接、junction 与特殊文件仍拒绝。项目快照、Git 元数据与回写仍保留原来的硬链接限制。venv 的 `include-system-site-packages=false` 时不复制基础解释器的 `Lib/site-packages`，保留自己的依赖；显式为 true 时复制并保留其可见性，直接选择基础 Python 时也保留其第三方包。
 
-默认项目快照上限 256 MiB；每个运行时复制上限 2 GiB。这些是准备/回写检查，不是进程磁盘配额。每个隔离进程复制所需运行时与项目；一个 Git 工具可能执行多条查询，逐条使用独立 profile/Job，因此会增加延迟和磁盘开销，大型环境应先评估。支持的 Git 读取调用复制只读对象、索引和引用，重建最小配置，不加载仓库 hooks、filters 或外部 alternates；链接 worktree 元数据通过既有受管工作区接口处理。
+默认项目快照上限 256 MiB；每个运行时复制上限 2 GiB。这些是准备/回写检查，不是进程磁盘配额。每个隔离进程复制所需运行时与项目；一个 Git 工具可能执行多条查询，逐条使用独立 profile/Job，因此会增加延迟和磁盘开销，大型环境应先评估。支持的 Git 读取调用复制只读对象、索引和引用，重建最小配置，不加载仓库 hooks、filters 或外部 alternates。Windows native 不将独立工作区的 Git 查询替换为宿主执行；链接 worktree 的外部 Git 元数据尚不支持复制，能力检查通过后仍会明确拒绝这种布局。
 
 `get_execution_environment` 报告 `writeback_mode=per_call_after_cleanup`、`process_workspace=filtered_private_copy` 和最近回写结果。Docker 的 `--sandbox-writeback on-success`、`/apply` 不适用于此逐调用流程。
+
+## Git/LSP 能力检查
+
+Git 查询及 LSP 工具首次使用时，在原有隔离策略下执行固定探针。Git 探针读取临时最小仓库的
+根路径；LSP 探针对固定 Python 示例请求符号。探针使用私有示例副本，不读取项目 Git 历史，
+也不将探针文件回写项目。Git 请求仍先经过可信参数和工作区校验。
+
+`get_execution_environment` 的 `execution` 包含 `support_level=experimental` 和
+`capabilities.git/lsp`。每项状态为 `untested`、`available`、`unavailable` 或 `error`，附有
+有界输出、退出码、超时和清理信息。LSP 成功仅代表 Python 参考探针通过，不保证其他语言或
+项目依赖可用；Git 成功仅代表仓库发现通过，实际查询仍须成功完成。
+
+已识别的不兼容或缺失依赖返回 `NATIVE_CAPABILITY_UNAVAILABLE`；未知失败、超时或不完整输出
+返回 `NATIVE_CAPABILITY_CHECK_FAILED`。结果在当前后端实例内缓存，避免反复启动失败工具；
+更新依赖后需重启会话重新检查。普通兼容性拒绝不会禁用文件服务；清理未确认仍使整个后端
+失效，停止后续执行和写入，返回 `NATIVE_UNHEALTHY`。
+
+失败结果提供显式启动命令：
+
+```powershell
+repo-agent --sandbox docker --sandbox-profile standard --sandbox-writeback manual --new-session
+```
+
+不会自动切换后端或扩大 native 权限。`run_command`/`run_python` 中的任意代码继续按原策略
+执行，不受上述结构化工具能力探针的可用性承诺覆盖。
 
 ## 受限宿主代理
 
@@ -88,10 +117,16 @@ repo-agent native-cleanup discard <32位ID或profile名称>
 
 ## 验证
 
+需要先恢复 Git/LSP 使用时，可显式选择现有 Docker 后端，按
+[容器路线与无模型验收](../sandbox/README.md#windows-native-兼容性问题的容器路线)
+构建 standard 镜像并运行 `python -m sandbox.docker_smoke`。
+该路线运行 Linux 工具，使用会话工作副本及显式回写；不改变本页的 LPAC 策略，也不把
+容器验证通过视为 Windows native 已修复。原生失败不会自动退回容器或宿主直接执行。
+
 跨平台策略及失败注入测试：
 
 ```bash
-python -m pytest -q tests/test_windows_native.py tests/test_windows_isolation.py tests/test_native_execution_adapter.py
+python -m pytest -q tests/test_windows_native.py tests/test_windows_capabilities.py tests/test_windows_isolation.py tests/test_native_execution_adapter.py
 ```
 
 Windows x64 的 Visual Studio x64 Native Tools 环境，安装 `requirements-dev.lock` 和 `requirements-lsp.lock` 后：
@@ -101,10 +136,24 @@ $env:RUN_WINDOWS_ISOLATION_TESTS = "1"
 python -m pytest -q -ra tests/test_windows_isolation_kernel.py tests/test_windows_native_kernel.py
 ```
 
-内核测试覆盖令牌、LPAC 对普通 AppContainer 授权的隔离、越界读写、断网、子孙进程、breakaway、有界输出、超时、取消、启动失败及宿主被强杀；Git 专用策略还单独验证令牌、文件/网络限制和子进程拒绝；完整后端测试分别验收 Python/worker、Git 查询、LSP，并保留组合测试，以及 venv 重定位、回写、保留记录和包含 junction/硬链接/只读文件的清理。
+内核测试覆盖令牌、LPAC 对普通 AppContainer 授权的隔离、越界读写、断网、子孙进程、breakaway、有界输出、超时、取消、启动失败及宿主被强杀；Git 专用策略还单独验证令牌、文件/网络限制和子进程拒绝。后端契约测试分别验收 Python/worker、Git、LSP 和组合场景，以及 venv 重定位、回写、保留记录和包含 junction/硬链接/只读文件的清理。
+
+CI 将隔离验收和实验性后端契约验收分开执行。Git/LSP 契约只接受实际成功或已识别的 LPAC
+兼容性拒绝，并检查文件服务仍可用、探针不污染项目及清理已确认。未知失败、缺失依赖、超时
+和清理异常仍导致失败，不使用 blanket skip/xfail。契约通过不表示 Git/LSP 已可用。
+要严格要求整套工具全部成功，可显式运行：
+
+```powershell
+$env:RUN_WINDOWS_ISOLATION_TESTS = "1"
+$env:REQUIRE_WINDOWS_NATIVE_FULL_TOOLS = "1"
+python -m pytest -q -ra tests/test_windows_native_kernel.py
+```
+
+本地可设置 `WINDOWS_NATIVE_CAPABILITY_REPORT_DIR` 保存各场景的 JSON 诊断；默认不写这些
+报告，CI 也不上传它们。报告中可能包含本机运行时路径。
 
 CI 提供 Windows x64 × Python 3.11/3.13 独立作业；缺 SDK/API 时失败，不能以跳过冒充通过。macOS/Linux 跳过真实 Windows 内核用例；配置 CI 和跨平台单测通过不等于完成 Windows 实机验收。
 
-2026-10-11 的本地 Windows/Python 3.12 验收仍有兼容性阻塞：真实隔离内核测试 11 项通过；接入固定环境代理后，完整后端测试由 2 通过、4 失败改善为 3 通过、3 失败。Python/环境查询、venv 和恢复通过，Git、LSP 及组合用例仍失败。LPAC 内的 DOS 卷名解析被拒绝，导致 LSP 工具的 `Path.resolve(strict=True)` 和 Git 的工作目录解析失败。另有独立探针确认本机 ctypes 和 WMI 查询的兼容问题，后者还会在第三方语言服务器导入时导致原生异常退出。当前没有为此修改系统对象 ACL、增加 capability 或关闭普通 worker 的 Win32k 限制，不能将此后端视为已完成端到端验收。有关 DOS 路径解析的同类报告见 [Microsoft mxc #694](https://github.com/microsoft/mxc/issues/694)；该 issue 已关闭并不代表此兼容性问题已修复。
+2026-10-11 接入能力门控前的本地 Windows/Python 3.12 验收记录：真实隔离内核测试 11 项通过；接入固定环境代理后，完整后端测试由 2 通过、4 失败改善为 3 通过、3 失败。Python/环境查询、venv 和恢复通过，Git、LSP 及组合用例仍失败。LPAC 内的 DOS 卷名解析被拒绝，导致 LSP 工具的 `Path.resolve(strict=True)` 和 Git 的工作目录解析失败。另有独立探针确认本机 ctypes 和 WMI 查询的兼容问题，后者还会在第三方语言服务器导入时导致原生异常退出。能力门控将已识别的问题转为可解释的拒绝，不修复这些第三方兼容性。当前没有为此修改系统对象 ACL、增加 capability 或关闭普通 worker 的 Win32k 限制，不能将此后端视为已完成完整工具链验收。有关 DOS 路径解析的同类报告见 [Microsoft mxc #694](https://github.com/microsoft/mxc/issues/694)；该 issue 已关闭并不代表此兼容性问题已修复。
 
 实现依据 Microsoft 的 [AppContainer/LPAC](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer)、[进程创建属性](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute)、[Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects) 和 [profile 删除](https://learn.microsoft.com/en-us/windows/win32/api/userenv/nf-userenv-deleteappcontainerprofile)契约。

@@ -47,7 +47,7 @@ Windows ARM64 未列为发行目标；WSL2 属于 Linux 执行环境。表中列
 
 CLI 使用 `create_native_backend()`。旧 `NativeBackend` 构造入口及 `seatbelt_profile` 导入继续兼容；新增实现直接继承 `NativeBackendBase`。`sandbox/backend.py` 的执行协议不包含 Docker 专有的快照和回写接口。
 
-Windows native 已接入工厂和能力标记：LPAC + Job Object、私有 Python/工作区 ACL、实际隔离自检、确认清理后的冲突检查回写，以及租约和意图记录驱动的残留回收。Windows 首次安装仍默认 local。模块边界、清理限制和 Windows 实机测试见 [Windows 隔离执行与清理](windows-native-isolation.md)。
+Windows native 为实验性支持，已接入工厂和能力标记：LPAC + Job Object、私有 Python/工作区 ACL、实际隔离自检、确认清理后的冲突检查回写，以及租约和意图记录驱动的残留回收。Git/LSP 首次使用运行固定隔离探针，能力结果在当前后端内缓存；完整工具链建议显式选择 Docker。Windows 首次安装仍默认 local。模块边界、清理限制和 Windows 实机测试见 [Windows 隔离执行与清理](windows-native-isolation.md)。
 
 能力描述仅供选择和展示，不能作为执行授权。`ToolDispatcher` 继续识别可信适配器，后端继续进行真实自检；清理未确认时仍进入不健康状态，不回退到未隔离执行。
 

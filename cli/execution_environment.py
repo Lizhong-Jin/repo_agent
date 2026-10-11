@@ -85,6 +85,12 @@ def open_execution_environment(args, workspace_root, store, capabilities, cleanu
         if chosen:
             print(f"项目 Python：{chosen['project']}（{chosen['source']}）")
         platform_label = capabilities.label
+        if getattr(native, "platform_name", None) == "windows":
+            print(
+                "[实验性 Windows native] Git/LSP 首次使用时检查兼容性；"
+                "完整工具链建议显式使用 --sandbox docker。",
+                flush=True,
+            )
         print(
             f"[执行环境：{platform_label} native] 工具断网；"
             + (
@@ -121,7 +127,7 @@ def open_execution_environment(args, workspace_root, store, capabilities, cleanu
             + "；不执行命令、Python 或语言服务器",
             flush=True,
         )
-    if independent and native is not None:
+    if independent and native is not None and getattr(native, "platform_name", None) != "windows":
         # Linked Git metadata lives outside the native mount. Keep the existing
         # audited host read-only Git tools; do not grant sandbox access to .git.
         readers = {

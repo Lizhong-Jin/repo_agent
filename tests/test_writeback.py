@@ -108,6 +108,7 @@ def test_conflict_blocks_whole_batch_before_backup(session):
 
 def test_backup_restores_add_modify_delete_and_preserves_later_user_edits(session):
     (session.root / "a").chmod(0o600)
+    original_mode = (session.root / "a").stat().st_mode & 0o777
     (session.workspace / "a").unlink()
     (session.workspace / "new").write_text("created")
     session.apply()
@@ -120,7 +121,7 @@ def test_backup_restores_add_modify_delete_and_preserves_later_user_edits(sessio
     restored = SandboxSession.review(session.directory)
     assert restored.restore(backup) == ["a", "new"]
     assert (session.root / "a").read_text() == "before"
-    assert (session.root / "a").stat().st_mode & 0o777 == 0o600
+    assert (session.root / "a").stat().st_mode & 0o777 == original_mode
     assert not (session.root / "new").exists()
     assert restored.restore(backup) == []
 
@@ -129,19 +130,19 @@ def test_partial_write_failure_has_recoverable_backup(session, monkeypatch):
     import sandbox.session as module
 
     (session.workspace / "b").write_text("new")
-    replace = module.os.replace
+    replace = module.rename_at
 
     def fail_second(source, target, **kwargs):
         if target == "b":
             raise OSError("injected disk failure")
         return replace(source, target, **kwargs)
 
-    monkeypatch.setattr(module.os, "replace", fail_second)
+    monkeypatch.setattr(module, "rename_at", fail_second)
     assert not finish_writeback(session, completed(), "on-success")
     assert (session.root / "a").read_text() == "after"
     assert not (session.root / "b").exists()
     backup_id = session.last_backup.name
-    monkeypatch.setattr(module.os, "replace", replace)
+    monkeypatch.setattr(module, "rename_at", replace)
     assert session.restore(backup_id) == ["a"]
     assert (session.root / "a").read_text() == "before"
 

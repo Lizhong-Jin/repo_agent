@@ -230,6 +230,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !sandbox/compute_probe.py
 !sandbox/concurrency.py
 !sandbox/docker.py
+!sandbox/docker_smoke.py
 !sandbox/environment.py
 !sandbox/linux_exec.py
 !sandbox/linux_gpu.py
@@ -255,6 +256,8 @@ agent/skills/builtin/gpu-kernel-development/**
 !sandbox/rust_policy.py
 !sandbox/session.py
 !sandbox/triton_smoke_kernel.py
+!sandbox/windows_broker.py
+!sandbox/windows_capabilities.py
 !sandbox/windows_execution.py
 !sandbox/windows_git.py
 !sandbox/windows_native.py

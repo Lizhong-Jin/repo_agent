@@ -13,14 +13,22 @@ from pathlib import Path
 
 from host_support.cancellation import defer_cancellation
 from host_support.paths import app_directory, find_windows_executable
+from host_support.processes import ProcessStartError
 from host_support.windows_isolation import WindowsIsolationAPI
 from host_support.windows_recovery import recover_profiles
 from host_support.windows_security import PrivateWindowsSecurity
+from tools._internal.base import ToolResult
 from tools.git_tools import GitDiffTool, GitLogTool, GitShowTool, GitStatusTool
 
 from .native_common import NativeBackendBase
 from .native_execution import NativeCleanupError
 from .windows_broker import WindowsEnvironmentService
+from .windows_capabilities import (
+    DOCKER_GUIDANCE,
+    LSP_TOOLS,
+    CapabilityUnavailable,
+    assess_probe,
+)
 from .windows_execution import WindowsLaunch, WindowsNativeExecutionAdapter
 from .windows_git import WindowsGitRunner, copy_git_runtime, validate_git_query
 from .windows_python import inspect_python, select_project, stage_python
@@ -45,6 +53,8 @@ class WindowsNativeBackend(NativeBackendBase):
             raise ValueError(f"Windows native 残留回收失败：{self.recovery_report['failed']}")
         self.system_directory = Path(self.windows_api.windows_directory()) / "System32"
         self._checking_isolation = False
+        self._checking_capability = None
+        self.capability_reports = {}
         self.last_writeback = None
 
     def _read_paths(self):
@@ -78,11 +88,53 @@ class WindowsNativeBackend(NativeBackendBase):
             git_execution_policy="read_only_direct_git_lpac_no_children",
             last_writeback=self.last_writeback,
             recovery=self.recovery_report,
+            support_level="experimental",
+            capabilities={
+                name: deepcopy(
+                    getattr(self, "capability_reports", {}).get(name, {"status": "untested"})
+                )
+                for name in ("git", "lsp")
+            },
+            capability_scope="Git discovery and Python reference LSP; no general runtime guarantee",
+            alternative_command=DOCKER_GUIDANCE,
         )
         context["persistence"]["tmp_across_calls"] = False
         return context
 
     def _execute(self, workspace, name, arguments):
+        try:
+            return self._execute_supported(workspace, name, arguments)
+        except CapabilityUnavailable as error:
+            if not self.healthy:
+                return ToolResult(
+                    False,
+                    error_code="NATIVE_UNHEALTHY",
+                    error="能力探针清理未确认，暂停执行和写入",
+                    data={"execution_allowed": False, "last_cleanup": self.last_cleanup},
+                )
+            return ToolResult(
+                False,
+                error_code="NATIVE_CAPABILITY_UNAVAILABLE"
+                if error.report["status"] == "unavailable"
+                else "NATIVE_CAPABILITY_CHECK_FAILED",
+                error=(
+                    f"当前 Windows native 的 {error.capability} 能力检查未通过；不会绕过隔离。"
+                    f"请使用 Docker 新会话：{DOCKER_GUIDANCE}"
+                ),
+                data={
+                    "capability": error.capability,
+                    "capability_report": deepcopy(error.report),
+                    "execution_allowed": False,
+                    "executor_healthy": self.healthy,
+                    "alternative_command": DOCKER_GUIDANCE,
+                },
+            )
+
+    def _execute_supported(self, workspace, name, arguments):
+        if Path(workspace).resolve() != self.workspace:
+            raise ValueError("Native 后端不能切换工作区")
+        if name in LSP_TOOLS and self.healthy:
+            self._require_capability("lsp")
         if name == "get_execution_environment" and self.healthy:
             if Path(workspace).resolve() != self.workspace:
                 raise ValueError("Native 后端不能切换工作区")
@@ -101,9 +153,66 @@ class WindowsNativeBackend(NativeBackendBase):
         # Validation/parsing stays in trusted built-ins. Only their generated Git
         # commands enter the compatibility profile; no Python worker runs there.
         tool = queries[name](self.workspace, execution_allowed=True)
-        tool.runner = WindowsGitRunner(self, tool.max_output_bytes)
+        tool.runner = WindowsGitRunner(
+            self, tool.max_output_bytes, before_run=lambda: self._require_capability("git")
+        )
         result = tool.execute(arguments)
         return replace(result, data={**result.data, "execution_allowed": self.healthy})
+
+    def _require_capability(self, name):
+        if not hasattr(self, "capability_reports"):
+            self.capability_reports = {}
+        if name not in self.capability_reports:
+            try:
+                result = self._probe_capability(name)
+                if result.cleanup_status != "confirmed" or result.cleanup_error:
+                    self._execution_unhealthy(
+                        {
+                            "cleanup_status": "unknown",
+                            "cleanup_error": result.cleanup_error
+                            or "Capability probe cleanup unconfirmed",
+                        }
+                    )
+                report = assess_probe(name, result, self.workspace)
+            except NativeCleanupError:
+                self._execution_unhealthy(
+                    {
+                        "cleanup_status": "unknown",
+                        "cleanup_error": "Capability probe cleanup unconfirmed",
+                    }
+                )
+                report = {"status": "error", "reason": "cleanup_unconfirmed"}
+            except (OSError, ValueError, ProcessStartError) as error:
+                message = str(getattr(error, "cause", error))[:2000]
+                missing = "Git for Windows" in message or isinstance(error, FileNotFoundError)
+                report = {
+                    "status": "unavailable" if missing else "error",
+                    "reason": "missing_dependency" if missing else "probe_failed",
+                    "diagnostics": {"error": message},
+                }
+            self.capability_reports[name] = report
+        report = self.capability_reports[name]
+        if report["status"] != "available" or not self.healthy:
+            raise CapabilityUnavailable(name, report)
+
+    def _probe_capability(self, name):
+        self._prepare_workspace()
+        self._checking_capability = name
+        try:
+            if name == "git":
+                return self._run(
+                    ["git", "rev-parse", "--show-toplevel"],
+                    git_read=True,
+                    timeout=20,
+                    max_output_bytes=8192,
+                )
+            return self._run(
+                request={"name": "get_symbols", "arguments": {"path": "sample.py"}},
+                timeout=30,
+                max_output_bytes=8192,
+            )
+        finally:
+            self._checking_capability = None
 
     def _preflight(self):
         secret = self.directory / "host-only.txt"
@@ -227,8 +336,16 @@ print(json.dumps(checks))
                 ),
             ]
         control = self.windows_state_root / "calls" / isolation.lease.identity
+        probe = getattr(self, "_checking_capability", None)
+        source_workspace = self.workspace
+        if probe:
+            source_workspace = self.directory / "capability-input"
+            source_workspace.mkdir(exist_ok=True)
+            (source_workspace / "sample.py").write_text(
+                "def native_capability_example():\n    return 42\n", encoding="utf-8"
+            )
         snapshot = WindowsCallSnapshot(
-            self.workspace,
+            source_workspace,
             profile / "workspace",
             control,
             protected_paths=(
@@ -302,7 +419,7 @@ print(json.dumps(checks))
             for metadata in snapshot.workspace.rglob(".git"):
                 self.security.seal_tree(metadata, sid)
             self.security.seal_tree(scratch, sid, writable=True)
-            if not self._checking_isolation:
+            if not self._checking_isolation and not probe:
                 isolation.retain(
                     "执行中或未完成回写；项目副本："
                     + str(snapshot.workspace)
@@ -317,7 +434,7 @@ print(json.dumps(checks))
                 or execution.last_cleanup_status != "confirmed"
             ):
                 raise NativeCleanupError("Windows 调用未确认完成；保留项目副本：" + str(profile))
-            if not self._checking_isolation:
+            if not self._checking_isolation and not probe:
                 with defer_cancellation():
                     try:
                         changed = [] if git_query else snapshot.publish()
@@ -395,6 +512,15 @@ print(json.dumps(checks))
             return ()
         target = profile / "git-runtime"
         copy_git_runtime(root / "mingw64/bin", target / "bin")
+        if getattr(self, "_checking_capability", None) == "git":
+            metadata = workspace / ".git"
+            (metadata / "objects").mkdir(parents=True)
+            (metadata / "refs/heads").mkdir(parents=True)
+            (metadata / "HEAD").write_text("ref: refs/heads/main\n", encoding="ascii")
+            (metadata / "config").write_text(
+                "[core]\nrepositoryformatversion = 0\n", encoding="ascii"
+            )
+            return (target / "bin",)
         if call.git_read:
             cwd = Path(call.cwd).resolve(strict=True)
             if not cwd.is_relative_to(self.workspace):

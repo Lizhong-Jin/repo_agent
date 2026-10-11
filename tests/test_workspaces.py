@@ -380,13 +380,16 @@ def test_init_recovery_after_initial_commit_publication(tmp_path, monkeypatch):
     Git(root).require_clean()
 
 
-def test_native_worktree_uses_its_root_and_host_git_readers(workspace, monkeypatch):
+@pytest.mark.parametrize("platform", ["linux", "windows"])
+def test_native_worktree_uses_its_root_and_host_git_readers(workspace, monkeypatch, platform):
     from cli import execution_environment
     from tools import create_default_tools
 
     captured = {}
 
     class Native:
+        platform_name = platform
+
         def __init__(self, root, **options):
             captured.update(root=root, **options)
 
@@ -408,8 +411,9 @@ def test_native_worktree_uses_its_root_and_host_git_readers(workspace, monkeypat
         readers = {t.definition.name: t for t in env.tools}
         assert captured["isolated_workspace"] is True
         assert captured["root"] == workspace.root
-        assert readers["git_status"].execution_allowed is False
-        assert readers["git_status"].execute({}).success
+        assert readers["git_status"].execution_allowed is (platform == "windows")
+        if platform != "windows":
+            assert readers["git_status"].execute({}).success
         assert readers["write_file"].execute({"path": "b", "content": "worktree"}).success
         assert not (workspace.project / "b").exists()
     assert captured["closed"]

@@ -88,6 +88,7 @@ def test_git_queries_use_host_validation_and_isolated_direct_runner(tmp_path, na
     backend.workspace = tmp_path
     backend.healthy = True
     backend._prepare_workspace = lambda: None
+    backend._require_capability = lambda _: None  # Probe contracts have separate tests.
     calls = []
 
     def run(command, **options):
@@ -151,7 +152,8 @@ def test_git_discovery_maps_only_private_repository_root(tmp_path):
     assert GitQueryProcess(process, other, private, workspace).run(timeout_seconds=1) == result
 
 
-def test_git_launch_is_direct_readonly_and_does_not_stage_python(tmp_path, monkeypatch):
+@pytest.mark.parametrize("probe", [False, True])
+def test_git_launch_is_direct_readonly_and_does_not_stage_python(tmp_path, monkeypatch, probe):
     backend = object.__new__(WindowsNativeBackend)
     backend.workspace = tmp_path / "project"
     backend.workspace.mkdir()
@@ -163,6 +165,8 @@ def test_git_launch_is_direct_readonly_and_does_not_stage_python(tmp_path, monke
     (metadata / "hooks").mkdir()
     (metadata / "hooks/pre-commit").write_text("bad.exe")
     backend.directory = tmp_path / "backend"
+    backend.directory.mkdir()
+    backend._checking_capability = "git" if probe else None
     backend.runtime = tmp_path / "unused-runtime"
     backend._agent_layout = SimpleNamespace(read_paths=())
     backend._project_layout = backend._agent_layout
@@ -220,7 +224,12 @@ def test_git_launch_is_direct_readonly_and_does_not_stage_python(tmp_path, monke
                 result=object(), last_cleanup_status="confirmed", started=True
             )
         assert not lease.record["retain"]
-        assert backend.last_writeback["files"] == []
+        if probe:
+            assert not hasattr(backend, "last_writeback")
+            assert "native_capability_example" in (launch.cwd / "sample.py").read_text()
+            assert not (backend.workspace / "sample.py").exists()
+        else:
+            assert backend.last_writeback["files"] == []
         assert "bad.exe" in (metadata / "config").read_text()
     finally:
         lease.finish(released=False)
