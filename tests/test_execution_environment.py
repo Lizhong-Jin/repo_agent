@@ -262,9 +262,9 @@ def test_backend_sends_actual_policy_separately_from_model_arguments(tmp_path, m
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda *a, **kw: SimpleNamespace(
+        lambda command, **kw: SimpleNamespace(
             returncode=0,
-            stdout="sha256:fixed-image",
+            stdout="[]" if command[1] == "info" else "sha256:fixed-image",
             stderr=b"",
         ),
     )

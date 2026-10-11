@@ -188,7 +188,11 @@ class WindowsNativeBackend(NativeBackendBase):
                 report = {
                     "status": "unavailable" if missing else "error",
                     "reason": "missing_dependency" if missing else "probe_failed",
-                    "diagnostics": {"error": message},
+                    "diagnostics": {
+                        "error": message,
+                        "exception_type": type(error).__name__,
+                        "cause_type": type(getattr(error, "cause", error)).__name__,
+                    },
                 }
             self.capability_reports[name] = report
         report = self.capability_reports[name]

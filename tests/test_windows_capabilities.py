@@ -3,12 +3,14 @@
 import json
 
 import pytest
+from test_windows_native_kernel import require_capability_outcome
 
 from host_support.cancellation import CancellationContext, RunCancelled
 from host_support.processes import ProcessResult
 from sandbox.native_execution import NativeCleanupError
 from sandbox.windows_capabilities import CapabilityUnavailable, assess_probe
 from sandbox.windows_native import WindowsNativeBackend
+from tools._internal.base import ToolResult
 
 
 def process(**values):
@@ -195,3 +197,17 @@ def test_valid_output_with_incomplete_cleanup_never_advertises_availability(tmp_
     result = process(exit_code=0, stdout=str(tmp_path), stderr="", **values)
     report = assess_probe("git", result, tmp_path)
     assert report["status"] == "error" and report["reason"] == "cleanup_unconfirmed"
+
+
+def test_ci_failure_keeps_full_bounded_probe_diagnostics(tmp_path, monkeypatch):
+    monkeypatch.delenv("REQUIRE_WINDOWS_NATIVE_FULL_TOOLS", raising=False)
+    stderr = "unexpected Git failure " + "x" * 1500 + " END_OF_DIAGNOSTIC"
+    value = ToolResult(
+        False,
+        error_code="NATIVE_CAPABILITY_CHECK_FAILED",
+        data={"capability_report": assess_probe("git", process(stderr=stderr), tmp_path)},
+    )
+    with pytest.raises(pytest.fail.Exception) as error:
+        require_capability_outcome(value, backend(tmp_path), "git", "git_status")
+    assert stderr in str(error.value)
+    assert '"exit_code_hex"' in str(error.value) and '"cleanup_status"' in str(error.value)

@@ -112,7 +112,9 @@ def test_container_security_and_cleanup(monkeypatch, tmp_path, interrupt):
 
     def run(command, **kwargs):
         calls.append(command)
-        return SimpleNamespace(returncode=0, stdout="sha256:test\n", stderr=b"")
+        return SimpleNamespace(
+            returncode=0, stdout="[]" if command[1] == "info" else "sha256:test\n", stderr=b""
+        )
 
     monkeypatch.setattr(subprocess, "run", run)
     backend = DockerBackend(SandboxPolicy())
@@ -134,7 +136,7 @@ def test_container_security_and_cleanup(monkeypatch, tmp_path, interrupt):
             backend.execute(tmp_path, "read_file", {"reads": [{"path": "a"}]})
     else:
         assert backend.execute(tmp_path, "read_file", {"reads": [{"path": "a"}]}).success
-    command = calls[1]
+    command = next(command for command in calls if command[1] == "run")
     for flag in [
         "--network=none",
         "--read-only",

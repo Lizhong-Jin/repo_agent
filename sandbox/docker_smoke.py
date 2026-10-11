@@ -51,6 +51,11 @@ def run_smoke(image: str = DEFAULT_IMAGE) -> list[str]:
             require(any(item["name"] == "example" for item in symbols["symbols"]), "Python LSP")
             completed.append("python_lsp")
 
+            # Atomic file tools create private 0600 files. Unlike Path.write_text,
+            # this exposes mismatched container/host ownership on Linux.
+            call("write_file", {"path": "private.txt", "content": "private result\n"})
+            call("read_file", {"reads": [{"path": "private.txt"}]})
+
             result = call(
                 "run_python",
                 {
@@ -78,12 +83,14 @@ def run_smoke(image: str = DEFAULT_IMAGE) -> list[str]:
             require(command["exit_code"] == 0, f"Command failed: {command}")
             call("read_file", {"reads": [{"path": "result.txt"}]})
             require(not (root / "result.txt").exists(), "Host changed before apply")
-            require(session.apply() == ["result.txt"], "Unexpected writeback")
+            require(session.apply() == ["private.txt", "result.txt"], "Unexpected writeback")
+            require((root / "private.txt").read_bytes() == b"private result\n", "Private writeback")
             require(
                 (root / "result.txt").read_bytes() == b"container result\n", "Writeback content"
             )
             session.restore(session.last_backup.name)
             require(not (root / "result.txt").exists(), "Backup restore failed")
+            require(not (root / "private.txt").exists(), "Private backup restore failed")
             completed.append("writeback_and_restore")
 
             timeout = call(

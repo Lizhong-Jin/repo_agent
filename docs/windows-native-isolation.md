@@ -152,6 +152,10 @@ python -m pytest -q -ra tests/test_windows_native_kernel.py
 本地可设置 `WINDOWS_NATIVE_CAPABILITY_REPORT_DIR` 保存各场景的 JSON 诊断；默认不写这些
 报告，CI 也不上传它们。报告中可能包含本机运行时路径。
 
+CI 遇到非预期能力结果会直接输出完整的有界 JSON 诊断，避免 pytest 的字典缩略隐藏退出码、
+stderr 和清理状态。准备阶段失败还包含异常类型。未知失败继续导致作业失败；首次失败后
+停止该组耗时验收，便于尽快取得 Windows runner 上的实际证据。
+
 CI 提供 Windows x64 × Python 3.11/3.13 独立作业；缺 SDK/API 时失败，不能以跳过冒充通过。macOS/Linux 跳过真实 Windows 内核用例；配置 CI 和跨平台单测通过不等于完成 Windows 实机验收。
 
 2026-10-11 接入能力门控前的本地 Windows/Python 3.12 验收记录：真实隔离内核测试 11 项通过；接入固定环境代理后，完整后端测试由 2 通过、4 失败改善为 3 通过、3 失败。Python/环境查询、venv 和恢复通过，Git、LSP 及组合用例仍失败。LPAC 内的 DOS 卷名解析被拒绝，导致 LSP 工具的 `Path.resolve(strict=True)` 和 Git 的工作目录解析失败。另有独立探针确认本机 ctypes 和 WMI 查询的兼容问题，后者还会在第三方语言服务器导入时导致原生异常退出。能力门控将已识别的问题转为可解释的拒绝，不修复这些第三方兼容性。当前没有为此修改系统对象 ACL、增加 capability 或关闭普通 worker 的 Win32k 限制，不能将此后端视为已完成完整工具链验收。有关 DOS 路径解析的同类报告见 [Microsoft mxc #694](https://github.com/microsoft/mxc/issues/694)；该 issue 已关闭并不代表此兼容性问题已修复。

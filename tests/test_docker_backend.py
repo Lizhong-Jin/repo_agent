@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from host_support.processes import ProcessResult
-from sandbox.docker import DockerBackend
+from sandbox.docker import DockerBackend, _container_user
 from sandbox.policy import SandboxPolicy
 
 
@@ -21,7 +21,9 @@ def backend(monkeypatch):
     monkeypatch.setattr("sandbox.docker.shutil.which", lambda _: "docker")
     monkeypatch.setattr(
         "sandbox.docker.subprocess.run",
-        lambda *a, **kw: SimpleNamespace(returncode=0, stdout="sha256:test", stderr=b""),
+        lambda command, **kw: SimpleNamespace(
+            returncode=0, stdout="[]" if command[1] == "info" else "sha256:test", stderr=b""
+        ),
     )
     return DockerBackend(SandboxPolicy())
 
@@ -40,6 +42,52 @@ def result(**values):
     return ProcessResult(**(fields | values))
 
 
+@pytest.mark.parametrize(
+    "platform,uid,gid,expected",
+    [
+        ("linux", 1001, 1002, "1001:1002"),
+        ("linux", 0, 0, "65534:65534"),
+        ("linux", 1001, 0, "1001:65534"),
+        ("win32", None, None, "65534:65534"),
+        ("darwin", 501, 20, "65534:65534"),
+    ],
+)
+def test_non_root_identity_matches_linux_caller(monkeypatch, platform, uid, gid, expected):
+    monkeypatch.setattr("sandbox.docker.sys.platform", platform)
+    monkeypatch.setattr(os, "geteuid", lambda: uid, raising=False)
+    monkeypatch.setattr(os, "getegid", lambda: gid, raising=False)
+
+    def info(command, **kwargs):
+        assert platform == "linux"
+        assert command == ["docker", "info", "--format", "{{json .SecurityOptions}}"]
+        return SimpleNamespace(returncode=0, stdout='["name=seccomp,profile=builtin"]')
+
+    monkeypatch.setattr("sandbox.docker.subprocess.run", info)
+    assert _container_user("docker") == expected
+
+
+@pytest.mark.parametrize("option", ["name=rootless", "name=userns"])
+def test_unmapped_namespaces_fail_before_workload(monkeypatch, option):
+    monkeypatch.setattr("sandbox.docker.sys.platform", "linux")
+    monkeypatch.setattr(
+        "sandbox.docker.subprocess.run",
+        lambda *a, **kw: SimpleNamespace(returncode=0, stdout=json.dumps([option])),
+    )
+    with pytest.raises(ValueError, match="rootless/userns"):
+        _container_user("docker")
+
+
+@pytest.mark.parametrize("output", ["bad JSON", "null", "{}", "[null]"])
+def test_unknown_daemon_mapping_fails_closed(monkeypatch, output):
+    monkeypatch.setattr("sandbox.docker.sys.platform", "linux")
+    monkeypatch.setattr(
+        "sandbox.docker.subprocess.run",
+        lambda *a, **kw: SimpleNamespace(returncode=0, stdout=output),
+    )
+    with pytest.raises(ValueError, match="用户映射"):
+        _container_user("docker")
+
+
 @pytest.mark.parametrize("path", ["中文 workspace", "comma,dir", 'quote"dir'])
 def test_mounts_preserve_paths_as_csv_fields(backend, tmp_path, monkeypatch, path):
     workspace = tmp_path / path
@@ -56,6 +104,7 @@ def test_mounts_preserve_paths_as_csv_fields(backend, tmp_path, monkeypatch, pat
         request = json.loads(Path(request_mount[1].removeprefix("src=")).read_text())
         assert request["name"] == "git_status"
         assert command[-1] == "sha256:test"
+        assert command[command.index("--user") + 1] == backend.execution_context()["container_user"]
         return result()
 
     monkeypatch.setattr(backend.runner, "run", run)

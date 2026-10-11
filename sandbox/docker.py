@@ -3,8 +3,10 @@
 import csv
 import io
 import json
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import uuid
 from pathlib import Path
@@ -16,6 +18,38 @@ from tools._internal.process_runner import ProcessRunner
 from .backend import SandboxBackend as SandboxBackend
 from .concurrency import backend_gate
 from .policy import SandboxPolicy
+
+
+def _container_user(executable: str) -> str:
+    """Share ownership with a Linux caller without ever running the worker as root."""
+    if sys.platform != "linux":
+        # Desktop file sharing translates ownership; host IDs are not Linux IDs.
+        return "65534:65534"
+    try:
+        result = subprocess.run(
+            [executable, "info", "--format", "{{json .SecurityOptions}}"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        options = json.loads(result.stdout)
+        if (
+            result.returncode
+            or not isinstance(options, list)
+            or not all(isinstance(option, str) for option in options)
+        ):
+            raise ValueError("Invalid Docker security options")
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        raise ValueError("无法确认 Docker 用户映射；请检查当前 daemon/context。") from error
+    if any(option.split(",", 1)[0] in {"name=rootless", "name=userns"} for option in options):
+        raise ValueError(
+            "当前 Linux Docker 使用 rootless/userns 用户映射，尚不支持私有文件的宿主回写；"
+            "请使用未启用用户重映射的 Docker context。容器工具仍以非 root 身份运行。"
+        )
+    uid, gid = os.geteuid(), os.getegid()
+    # A root caller can read nobody-owned exports; never grant container UID/GID 0.
+    return f"{uid}:{gid or 65534}" if uid else "65534:65534"
 
 
 def _bind_mount(source: Path, target: str, *, readonly: bool = False) -> str:
@@ -65,6 +99,7 @@ class DockerBackend:
         if check.returncode:
             raise ValueError(f"Docker 镜像不可用；请先构建 {policy.image}。")
         self.image = check.stdout.strip()  # Pin this session to the inspected image ID.
+        self.container_user = _container_user(self.executable)
         self.runner = ProcessRunner(max_output_bytes=4 * 1024 * 1024)
 
     def execution_context(self) -> dict:
@@ -75,6 +110,7 @@ class DockerBackend:
             "network": "disabled",
             "writable_paths": ["/workspace", "/tmp", "/dev/shm"],
             "root_filesystem": "read_only",
+            "container_user": self.container_user,
             "changes_apply_to": "workspace_copy",
             "resources": {
                 "cpu_limit": self.policy.cpus,
@@ -128,7 +164,7 @@ class DockerBackend:
                 "--network=none",
                 "--read-only",
                 "--user",
-                "65534:65534",
+                self.container_user,
                 "--cap-drop=ALL",
                 "--security-opt=no-new-privileges",
                 "--memory",

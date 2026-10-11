@@ -53,9 +53,9 @@ def test_gpu_flags_and_worker_limits_are_host_owned(tmp_path, monkeypatch):
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda *a, **kw: SimpleNamespace(
+        lambda command, **kw: SimpleNamespace(
             returncode=0,
-            stdout="sha256:gpu",
+            stdout="[]" if command[1] == "info" else "sha256:gpu",
             stderr=b"",
         ),
     )

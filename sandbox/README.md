@@ -152,6 +152,13 @@ Windows native 当前标记为实验性支持，Git/LSP 首次使用会运行隔
 已识别的不兼容会给出 Docker 新会话命令；未知失败仍明确报错。详见
 [能力状态与验收边界](../docs/windows-native-isolation.md#gitlsp-能力检查)。
 
+Linux 宿主的容器工具使用调用者的非 root UID/GID，以便 `write_file` 生成的 `0600`
+私有文件能够正常审查和回写；宿主为 root 时仍使用容器 UID/GID `65534`。Windows/macOS
+文件共享保留 `65534:65534`，执行环境报告包含实际 `container_user`。
+Linux rootless/userns daemon 的 ID 重映射尚不支持此回写路径，启动时明确拒绝并提示切换
+context；不会自动关闭用户命名空间或将工作进程改为 root。远程 daemon 的挂载路径仍须
+对双方指向同一份文件，单纯 UID 数字相同不代表支持任意远程文件系统。
+
 如果 Windows native 中 Git 路径解析或 Python LSP 因 LPAC 系统 API 限制失败，显式使用整个
 Docker 会话。文件、Git、Python、命令与 LSP 共享同一份容器工作副本，避免不同后端看到不同文件。
 这不会修复 Windows native 自身的兼容性，也不会在 native 失败后自动切换后端。

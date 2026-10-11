@@ -36,13 +36,22 @@ def require_capability_outcome(result, backend, capability, stage):
         require_success(result, stage)
         print(f"Windows native {stage}: available")
         return True
-    assert result.error_code == "NATIVE_CAPABILITY_UNAVAILABLE", asdict(result)
-    report = result.data["capability_report"]
-    assert report["status"] == "unavailable" and report["reason"] == "lpac_compatibility", report
-    assert report["diagnostics"]["cleanup_status"] == "confirmed", report
-    assert result.data["capability"] == capability
-    assert "--sandbox docker" in result.error and "--new-session" in result.error
-    assert backend.healthy and not result.data["execution_allowed"]
+    report = result.data.get("capability_report", {})
+    accepted = (
+        result.error_code == "NATIVE_CAPABILITY_UNAVAILABLE"
+        and report.get("status") == "unavailable"
+        and report.get("reason") == "lpac_compatibility"
+        and report.get("diagnostics", {}).get("cleanup_status") == "confirmed"
+        and result.data.get("capability") == capability
+        and "--sandbox docker" in (result.error or "")
+        and "--new-session" in (result.error or "")
+        and backend.healthy
+        and result.data.get("execution_allowed") is False
+    )
+    if not accepted:
+        # pytest abbreviates dicts in assertions, concealing the actual probe
+        # exit code/stderr. Emit the already bounded result as explicit text.
+        require_success(result, stage)
     print(f"Windows native {stage}: unavailable (lpac_compatibility), cleanup confirmed")
     return False
 

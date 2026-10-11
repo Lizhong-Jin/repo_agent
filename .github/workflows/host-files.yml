@@ -103,7 +103,7 @@ jobs:
           if errorlevel 1 exit /b 1
           python -m pytest -q -ra tests/test_windows_isolation.py tests/test_windows_isolation_kernel.py tests/test_windows_native.py tests/test_windows_capabilities.py tests/test_native_execution_adapter.py tests/test_windows_supervisor_diagnostics.py tests/test_git_discovery.py tests/test_architecture_boundaries.py tests/test_windows_broker.py tests/test_execution_environment.py tests/test_process_runner.py
           if errorlevel 1 exit /b 1
-          python -m pytest -q -raP tests/test_windows_native_kernel.py
+          python -m pytest -q -raP --maxfail=1 tests/test_windows_native_kernel.py
 
   windows-release:
     runs-on: windows-latest
