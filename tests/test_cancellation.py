@@ -482,6 +482,7 @@ def test_docker_cancellation_waits_for_container_removal(tmp_path, monkeypatch, 
     backend = object.__new__(DockerBackend)
     backend.policy = SandboxPolicy()
     backend.image = "test-image"
+    backend.container_user = "65534:65534"
     backend.executable = "docker"
     backend.healthy = True
 

@@ -54,6 +54,15 @@ def backend(tmp_path):
         ),
         ("lsp", {"stderr": "Path.resolve: [WinError 5] Access is denied"}),
         ("lsp", {"exit_code": 0xC06D007E}),
+        (
+            "git",
+            {
+                "exit_code": 128,
+                "stderr": (
+                    "fatal: could not open '/dev/null' for reading and writing: Permission denied\n"
+                ),
+            },
+        ),
     ],
 )
 def test_known_incompatibility_is_cached_and_does_not_poison_files(tmp_path, name, values):
@@ -211,3 +220,30 @@ def test_ci_failure_keeps_full_bounded_probe_diagnostics(tmp_path, monkeypatch):
         require_capability_outcome(value, backend(tmp_path), "git", "git_status")
     assert stderr in str(error.value)
     assert '"exit_code_hex"' in str(error.value) and '"cleanup_status"' in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "capability,changes",
+    [
+        ("lsp", {}),
+        ("git", {"exit_code": 1}),
+        ("git", {"stdout": "unexpected output"}),
+        ("git", {"timed_out": True}),
+        ("git", {"stderr_truncated": True}),
+        (
+            "git",
+            {
+                "stderr": (
+                    "fatal: could not open 'project.txt' for reading and writing: Permission denied"
+                )
+            },
+        ),
+    ],
+)
+def test_null_device_signature_does_not_accept_other_failures(tmp_path, capability, changes):
+    values = {
+        "exit_code": 128,
+        "stderr": "fatal: could not open '/dev/null' for reading and writing: Permission denied\n",
+    }
+    report = assess_probe(capability, process(**(values | changes)), tmp_path)
+    assert report["status"] == "error"

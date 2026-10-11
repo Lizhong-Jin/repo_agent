@@ -158,6 +158,7 @@ def test_docker_failure_is_sticky_and_waiting_call_cannot_start(tmp_path, monkey
     backend.policy = SandboxPolicy()
     backend.executable = "docker"
     backend.image = "sha256:test"
+    backend.container_user = "65534:65534"
     entered, release = Event(), Event()
     calls = []
 

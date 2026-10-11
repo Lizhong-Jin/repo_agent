@@ -64,8 +64,19 @@ def assess_probe(capability, result, workspace):
         }
     text = (result.stdout + result.stderr).lower()
     complete = not (result.timed_out or result.stdout_truncated or result.stderr_truncated)
+    # Observed on GitHub Windows Server 2025 with Git for Windows 2.55.0:
+    # the fixed, isolated Git probe cannot open its null device. Match only this
+    # complete Git failure; unrelated denied paths/crashes remain probe errors.
+    git_null_denied = (
+        capability == "git"
+        and result.exit_code == 128
+        and not result.stdout.strip()
+        and result.stderr.strip().lower()
+        == "fatal: could not open '/dev/null' for reading and writing: permission denied"
+    )
     compatibility = complete and (
-        "unable to read current working directory: permission denied" in text
+        git_null_denied
+        or "unable to read current working directory: permission denied" in text
         or ("[winerror 5]" in text and "resolve" in text)
         or (result.exit_code is not None and result.exit_code & 0xFFFFFFFF == 0xC06D007E)
         or ("dll load failed" in text and "_ctypes" in text)
