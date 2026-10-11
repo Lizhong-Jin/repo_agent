@@ -26,6 +26,7 @@ def execute_request(request, workspace):
     for tool in create_default_tools(
         workspace,
         isolated_execution=True,
+        tool_name=request["name"],
         **({"lsp_registry": registry} if registry else {}),
         execution_context=request.get("execution_context"),
         **request.get("tool_limits", {}),

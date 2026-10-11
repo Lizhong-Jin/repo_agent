@@ -10,6 +10,26 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_worker_import_does_not_initialize_network_transports():
+    code = """
+import importlib.abc, sys
+class NoNetworkImports(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'asyncio', 'httpx'}:
+            raise AssertionError('Worker imported network dependency: ' + fullname)
+sys.meta_path.insert(0, NoNetworkImports())
+from sandbox.worker import execute_request
+from tools.factory import create_default_tools
+from llm import Message, ToolDefinition
+assert callable(execute_request)
+assert 'llm.client' not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=20
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.parametrize(
     "package,forbidden",
     [

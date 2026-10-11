@@ -21,6 +21,7 @@ CREATE_SUSPENDED = 0x4
 CREATE_UNICODE_ENVIRONMENT = 0x400
 EXTENDED_STARTUPINFO_PRESENT = 0x80000
 CREATE_NO_WINDOW = 0x8000000
+DETACHED_PROCESS = 0x8
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION = 0x400
 HANDLE_LIST = 0x20002
@@ -428,7 +429,9 @@ class WindowsIsolationAPI:
                 CREATE_SUSPENDED
                 | CREATE_UNICODE_ENVIRONMENT
                 | EXTENDED_STARTUPINFO_PRESENT
-                | CREATE_NO_WINDOW
+                # Hidden console initialization conflicts with the no-child
+                # policy. Git uses only inherited pipes and needs no console.
+                | (DETACHED_PROCESS if git_query else CREATE_NO_WINDOW)
             )
             # JOB_LIST binds the job atomically: even host death immediately after
             # CreateProcess cannot leave an unassigned suspended child behind.

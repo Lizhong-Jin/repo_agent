@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import venv
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,15 @@ pytestmark = pytest.mark.skipif(
     os.name != "nt" or os.getenv("RUN_WINDOWS_ISOLATION_TESTS") != "1",
     reason="Requires real Windows x64 LPAC/Job APIs and explicit opt-in",
 )
+
+
+def require_success(result, stage):
+    if not result.success:
+        # ToolResult repr is shortened by pytest, hiding the end of tracebacks.
+        # Process capture already bounds stdout/stderr; emit it as text instead.
+        pytest.fail(
+            f"{stage}:\n{json.dumps(asdict(result), ensure_ascii=True, indent=2)}", pytrace=False
+        )
 
 
 @pytest.mark.parametrize("stage", ["python", "git", "lsp", "all"])
@@ -72,13 +82,13 @@ def test_native_startup_python_worker_git_and_publication(tmp_path, monkeypatch,
                     )
                 },
             )
-            assert result.success, result
+            require_success(result, "run_python")
             assert (root / "result.txt").read_text() == "published"
             assert (root / ".env").read_text() == "secret"
             assert json.loads(result.data["stdout"])["cwd"] != str(root)
             assert backend.execution_context()["last_writeback"]["files"] == ["result.txt"]
             report = backend.execute(root, "get_execution_environment", {})
-            assert report.success, report
+            require_success(report, "get_execution_environment")
             assert report.data["execution"]["writeback_mode"] == "per_call_after_cleanup"
         if stage in {"git", "all"}:
             index_before = (root / ".git/index").read_bytes()
@@ -89,7 +99,7 @@ def test_native_startup_python_worker_git_and_publication(tmp_path, monkeypatch,
                 ("git_show", {"path": "sample.py"}),
             ):
                 query = backend.execute(root, name, arguments)
-                assert query.success, (name, query)
+                require_success(query, name)
                 if name == "git_show":
                     assert "return 42" in str(query.data)
                 if name == "git_diff":
@@ -98,7 +108,8 @@ def test_native_startup_python_worker_git_and_publication(tmp_path, monkeypatch,
             assert (root / "sample.py").read_text().endswith("return 43\n")
         if stage in {"lsp", "all"}:
             symbols = backend.execute(root, "get_symbols", {"path": "sample.py"})
-            assert symbols.success and "answer" in str(symbols.data), symbols
+            require_success(symbols, "get_symbols")
+            assert "answer" in str(symbols.data), symbols.data
         assert backend.healthy
         assert not list(backend.windows_state_root.glob("*.json"))
     finally:
@@ -124,7 +135,8 @@ def test_native_relocates_project_venv_without_changing_original(tmp_path, monke
                 )
             },
         )
-        assert result.success and result.data["stdout"].splitlines()[0] == "73", result
+        require_success(result, "relocated venv run_python")
+        assert result.data["stdout"].splitlines()[0] == "73", result.data
         assert str(environment) not in result.data["stdout"]
         assert (environment / "pyvenv.cfg").read_bytes() == original
     finally:

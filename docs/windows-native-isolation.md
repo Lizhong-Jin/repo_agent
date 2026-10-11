@@ -28,6 +28,7 @@ repo-agent --root C:\projects\example --sandbox native --project-python C:\proje
 | `host_support/windows_recovery.py` | 持久化意图、活动租约、跨重启回收 |
 | `sandbox/windows_execution.py` | 接入执行接口和清理状态 |
 | `sandbox/windows_native.py` | 平台策略、工具接入、真实隔离自检 |
+| `sandbox/windows_broker.py` | 固定环境查询代理：宿主策略信息与隔离内探测的组合 |
 | `sandbox/windows_git.py` | 可信 Git 运行时复制、结构化查询执行与仓库路径映射 |
 | `sandbox/windows_python.py` | Python 布局检查和私有副本重定位 |
 | `sandbox/windows_workspace.py` | 过滤快照、冲突检查、回写及备份 |
@@ -50,13 +51,23 @@ ACL 只设置在本次拥有的私有目录：运行时、请求和 Git 元数�
 
 `get_execution_environment` 报告 `writeback_mode=per_call_after_cleanup`、`process_workspace=filtered_private_copy` 和最近回写结果。Docker 的 `--sandbox-writeback on-success`、`/apply` 不适用于此逐调用流程。
 
+## 受限宿主代理
+
+Windows 的环境查询由内置 `WindowsEnvironmentService` 接收。该接口只接受原有查询分区，不向隔离进程开放任意路径解析、代码执行或 Windows API 调用。执行策略来自宿主已建立的后端上下文，系统信息来自同机的 agent 运行时；外部程序版本和 GPU 探测仍通过原 LPAC/Job 执行器运行。程序查找只使用将被映射到私有环境的 Python 目录和 System32，不使用宿主的任意 PATH。GPU 探针读取本次后端冻结的可信源码，在隔离解释器中执行，不在宿主导入项目依赖。
+
+环境报告的 `workspace_root` 是逻辑项目根，`working_directory` 标记为 `per-call private workspace`；`environment_report_source=host_policy_and_isolated_probes` 区分信息来源。探测不能确认清理时立即停止后续探测，沿用后端失效规则。静态环境查询不启动 worker，也不要求 worker 再解析宿主已验证的路径。
+
+其余 worker 按本次请求的工具名构造单个工具，保持原有执行权限和模型参数校验。Windows 管道读取使用 CPython 自带的 `_winapi.PeekNamedPipe`，无需加载 ctypes；隔离文件服务和第三方库仍可能依赖 ctypes。此阶段没有增加通用双向 IPC 服务，也没有将 Git 或语言服务器移到未隔离的宿主执行，不能据此推断这些第三方程序已兼容 LPAC。
+
 ## 隔离与清理
 
 每次调用新建随机 AppContainer profile，仅授予固定的 `registryRead` capability，满足 Winsock 初始化、子进程创建和 Python 启动所需的系统注册表读取；无网络或目录 capability。该权限扩大可读取的注册表资源范围，实际访问仍受目标对象 ACL 和用户权限约束，不能将其视为宿主配置信息完全不可见。`SECURITY_CAPABILITIES` 配合 `ALL_APPLICATION_PACKAGES_OPT_OUT` 创建 LPAC，不继承普通 AppContainer 对 `ALL APPLICATION PACKAGES` 的额外访问。系统对受限应用共享的基础资源仍可能可见；它不是虚拟机。
 
 普通 Python、命令与 worker 创建时禁用 Win32k 与扩展点，使用 `CREATE_SUSPENDED`，通过 `PROC_THREAD_ATTRIBUTE_JOB_LIST` 在创建时原子加入私有 Job；恢复主线程前核验 Job、AppContainer SID，以及恰好一个启用的 `registryRead` SID。缺失、替换、额外 capability 或错误属性均拒绝执行。环境由可信层显式提供，句柄白名单只有标准输入输出，stdin 立即 EOF。
 
-仅 `git_status`、`git_diff`、`git_log`、`git_show` 的可信参数校验器生成的查询进入 Git 专用通道，直接启动私有副本的 Git EXE，不通过 Python worker 或 Shell。由于 Git for Windows 导入 USER32，此通道不启用 Win32k lockdown，扩大了其可用系统调用面；扩展点禁用、LPAC、唯一的 `registryRead` capability、Job 与断网策略保持不变，并通过内核 child-process policy 禁止创建任何子进程。Git 的项目副本和元数据均只读，不回写；禁用外部协议、延迟获取和替换对象，参数保持 literal pathspec。任意 `run_command git` 或项目 EXE 不会获得此兼容策略，也不自动准备 Git。缺失所需 API 时直接失败。
+仅 `git_status`、`git_diff`、`git_log`、`git_show` 的可信参数校验器生成的查询进入 Git 专用通道，直接启动私有副本的 Git EXE，不通过 Python worker 或 Shell。由于 Git for Windows 导入 USER32，此通道不启用 Win32k lockdown，扩大了其可用系统调用面；扩展点禁用、LPAC、唯一的 `registryRead` capability、Job 与断网策略保持不变，并通过内核 child-process policy 禁止创建任何子进程。该通道用 `DETACHED_PROCESS` 配合显式标准输入输出管道启动，避免 `CREATE_NO_WINDOW` 的控制台初始化与子进程限制冲突。Git 的项目副本和元数据均只读，不回写；禁用外部协议、延迟获取和替换对象，参数保持 literal pathspec。任意 `run_command git` 或项目 EXE 不会获得此兼容策略，也不自动准备 Git。缺失所需 API 时直接失败。
+
+worker 的同步取消支持和 LLM 数据结构导入不初始化网络客户端；只有实际使用异步取消或 LLM 客户端时才加载对应依赖。Windows 的 `asyncio` 会在导入 `_overlapped` 时创建 socket，因此不能为了导入未使用的异步传输而给 worker 增加网络 capability。任意用户代码仍可能因导入需要网络初始化的库而被隔离策略拒绝。
 
 Job 设置 `KILL_ON_JOB_CLOSE`、禁止 breakaway。正常退出也终止残余子孙进程；超时/取消后在独立的有界期限内验证 `ActiveProcesses == 0` 和主进程已结束。stdout/stderr 持续排空并保留有界头尾。查询、终止、句柄或 profile 释放失败会传播不确定状态并禁用后端。
 
@@ -93,5 +104,7 @@ python -m pytest -q -ra tests/test_windows_isolation_kernel.py tests/test_window
 内核测试覆盖令牌、LPAC 对普通 AppContainer 授权的隔离、越界读写、断网、子孙进程、breakaway、有界输出、超时、取消、启动失败及宿主被强杀；Git 专用策略还单独验证令牌、文件/网络限制和子进程拒绝；完整后端测试分别验收 Python/worker、Git 查询、LSP，并保留组合测试，以及 venv 重定位、回写、保留记录和包含 junction/硬链接/只读文件的清理。
 
 CI 提供 Windows x64 × Python 3.11/3.13 独立作业；缺 SDK/API 时失败，不能以跳过冒充通过。macOS/Linux 跳过真实 Windows 内核用例；配置 CI 和跨平台单测通过不等于完成 Windows 实机验收。
+
+2026-10-11 的本地 Windows/Python 3.12 验收仍有兼容性阻塞：真实隔离内核测试 11 项通过；接入固定环境代理后，完整后端测试由 2 通过、4 失败改善为 3 通过、3 失败。Python/环境查询、venv 和恢复通过，Git、LSP 及组合用例仍失败。LPAC 内的 DOS 卷名解析被拒绝，导致 LSP 工具的 `Path.resolve(strict=True)` 和 Git 的工作目录解析失败。另有独立探针确认本机 ctypes 和 WMI 查询的兼容问题，后者还会在第三方语言服务器导入时导致原生异常退出。当前没有为此修改系统对象 ACL、增加 capability 或关闭普通 worker 的 Win32k 限制，不能将此后端视为已完成端到端验收。有关 DOS 路径解析的同类报告见 [Microsoft mxc #694](https://github.com/microsoft/mxc/issues/694)；该 issue 已关闭并不代表此兼容性问题已修复。
 
 实现依据 Microsoft 的 [AppContainer/LPAC](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer)、[进程创建属性](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute)、[Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects) 和 [profile 删除](https://learn.microsoft.com/en-us/windows/win32/api/userenv/nf-userenv-deleteappcontainerprofile)契约。

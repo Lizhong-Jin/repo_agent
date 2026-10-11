@@ -18,6 +18,37 @@ from ._internal.process_runner import ProcessRunner, ProcessStartError
 from .scheduling import SERIAL
 
 
+def _repository_failure(result):
+    """Keep launch/cleanup failures distinct from an actual non-repository."""
+    if result.cleanup_error or result.cleanup_status == "unknown":
+        code, message = "GIT_CLEANUP_FAILED", "Git process cleanup could not be confirmed."
+    elif result.timed_out:
+        code, message = "GIT_TIMEOUT", "Git repository detection timed out."
+    elif result.exit_code == 0:
+        return None
+    elif result.exit_code == 128 and "not a git repository" in result.stderr.lower():
+        code, message = "NOT_A_GIT_REPOSITORY", result.stderr.strip()[:4096]
+    else:
+        code, message = "GIT_ERROR", "Git repository detection failed."
+    data = {
+        "phase": "repository_detection",
+        "exit_code": result.exit_code,
+        "exit_code_hex": (
+            f"0x{result.exit_code & 0xFFFFFFFF:08X}" if result.exit_code is not None else None
+        ),
+        "timed_out": result.timed_out,
+        "cleanup_status": result.cleanup_status,
+        "cleanup_error": result.cleanup_error,
+        "stdout": result.stdout[:4096],
+        "stderr": result.stderr[:4096],
+        "stdout_truncated": result.stdout_truncated or len(result.stdout) > 4096,
+        "stderr_truncated": result.stderr_truncated or len(result.stderr) > 4096,
+    }
+    return ToolResult(
+        False, data=data, error_code=code, error=message, effects=ToolEffects.process(data)
+    )
+
+
 class _GitFilterPolicy:
     """Shared gate for Git commands that can inspect worktree content."""
 
@@ -248,10 +279,9 @@ class GitDiffTool(_GitFilterPolicy):
                 return tool_error(ToolErrorCode.PERMISSION_DENIED, "Git cannot be executed.")
             return tool_error("GIT_ERROR", "Unable to start Git repository detection.")
 
-        if repo_result.timed_out:
-            return tool_error("GIT_TIMEOUT", "Git repository detection timed out.")
-        if repo_result.exit_code != 0:
-            return tool_error("NOT_A_GIT_REPOSITORY", self._git_error_message(repo_result.stderr))
+        failure = _repository_failure(repo_result)
+        if failure is not None:
+            return failure
         repo_text = repo_result.stdout.strip()
         if not repo_text:
             return tool_error("GIT_ERROR", "Git did not return a repository root.")
@@ -604,10 +634,9 @@ class GitStatusTool(_GitFilterPolicy):
                 return tool_error(ToolErrorCode.PERMISSION_DENIED, "Git cannot be executed.")
             return tool_error("GIT_ERROR", "Unable to start Git repository detection.")
 
-        if repo_result.timed_out:
-            return tool_error("GIT_TIMEOUT", "Git repository detection timed out.")
-        if repo_result.exit_code != 0:
-            return tool_error("NOT_A_GIT_REPOSITORY", self._git_error_message(repo_result.stderr))
+        failure = _repository_failure(repo_result)
+        if failure is not None:
+            return failure
         if repo_result.stdout_truncated:
             return tool_error(
                 "GIT_STATUS_OUTPUT_TOO_LARGE", "Git repository root output was truncated."

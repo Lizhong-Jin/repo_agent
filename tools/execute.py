@@ -245,7 +245,7 @@ class GetExecutionEnvironmentTool:
                 ),
                 "reason": type(error.cause).__name__,
             }
-        if result.cleanup_error:
+        if result.cleanup_error or result.cleanup_status == "unknown":
             raise _ProbeCleanupError
         if result.timed_out:
             return {"status": "unknown", "reason": "probe_timed_out"}
@@ -258,6 +258,9 @@ class GetExecutionEnvironmentTool:
         if result.stdout_truncated or result.stderr_truncated:
             return {"status": "unknown", "reason": "probe_output_truncated"}
         return {"status": "available", "output": result.stdout.strip()}
+
+    def _find_executable(self, name: str) -> str | None:
+        return shutil.which(name, path=self.runner.base_env.get("PATH", ""))
 
     def _runtimes(self, deadline: float) -> dict:
         report = {
@@ -280,7 +283,7 @@ class GetExecutionEnvironmentTool:
             if not self.execution_allowed:
                 report[name] = {"status": "unknown", "reason": "local_probes_disabled"}
                 continue
-            executable = shutil.which(argv[0], path=self.runner.base_env.get("PATH", ""))
+            executable = self._find_executable(argv[0])
             if executable is None:
                 report[name] = {"status": "missing"}
                 continue
@@ -339,7 +342,7 @@ class GetExecutionEnvironmentTool:
             if report["cuda_available"] and report["devices"]
             else "unavailable"
         )
-        executable = shutil.which("nvidia-smi", path=self.runner.base_env.get("PATH", ""))
+        executable = self._find_executable("nvidia-smi")
         report["driver"] = (
             self._probe(
                 [executable, "--query-gpu=name,driver_version", "--format=csv,noheader"], deadline

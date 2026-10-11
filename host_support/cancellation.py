@@ -5,7 +5,6 @@ bind the context when starting an unrelated worker thread or process. Cleanup
 uses its own deadlines and must not call checkpoint().
 """
 
-import asyncio
 import signal
 import time
 from contextlib import contextmanager, suppress
@@ -125,6 +124,10 @@ def cancellation_scope(context=None, *, handle_sigint=False):
 
 async def cancellable(awaitable, context=None):
     """Cancel and await the request task, including its resource finalizers."""
+    # Importing asyncio on Windows initializes Winsock through _overlapped.
+    # Synchronous sandbox workers must not need network access to import us.
+    import asyncio
+
     context = context if context is not None else current_cancellation()
     if context is None:
         return await awaitable

@@ -236,7 +236,10 @@ def test_gpu_report_and_driver_probe(tmp_path, monkeypatch, cuda_available, torc
     result = tool.execute({"sections": ["gpu"]})
     assert result.success and result.data["gpu"]["status"] == expected
     assert result.data["gpu"]["driver"]["status"] == "available"
-    assert "-I" in commands[0] and commands[0][-1].endswith("sandbox/compute_probe.py")
+    assert "-I" in commands[0] and Path(commands[0][-1]).parts[-2:] == (
+        "sandbox",
+        "compute_probe.py",
+    )
     assert commands[1] == [
         "/bin/nvidia-smi",
         "--query-gpu=name,driver_version",

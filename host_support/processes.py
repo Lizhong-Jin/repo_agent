@@ -305,37 +305,20 @@ class ProcessRunner:
         if os.name == "nt":
             # Windows anonymous pipes cannot use select(); PeekNamedPipe also
             # works on Python 3.11, which lacks nonblocking Windows pipe support.
-            import ctypes
+            import _winapi
             import msvcrt
-            from ctypes import wintypes
 
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            peek = kernel32.PeekNamedPipe
-            peek.argtypes = [
-                wintypes.HANDLE,
-                wintypes.LPVOID,
-                wintypes.DWORD,
-                wintypes.LPVOID,
-                ctypes.POINTER(wintypes.DWORD),
-                wintypes.LPVOID,
-            ]
-            peek.restype = wintypes.BOOL
-            available = wintypes.DWORD()
-            if not peek(
-                msvcrt.get_osfhandle(stream.fileno()),
-                None,
-                0,
-                None,
-                ctypes.byref(available),
-                None,
-            ):
-                error = ctypes.get_last_error()
-                if error in (109, 232):  # Broken/disconnected pipe.
+            # CPython exposes this on all supported versions (3.11+). Avoid
+            # loading _ctypes/its DLL dependencies in Win32k-locked workers.
+            try:
+                available, _ = _winapi.PeekNamedPipe(msvcrt.get_osfhandle(stream.fileno()), 0)
+            except OSError as error:
+                if error.winerror in (109, 232):  # Broken/disconnected pipe.
                     return b""
-                raise ctypes.WinError(error)
-            if not available.value:
+                raise
+            if not available:
                 return None
-            return os.read(stream.fileno(), min(8192, available.value))
+            return os.read(stream.fileno(), min(8192, available))
         try:
             return os.read(stream.fileno(), 8192)
         except BlockingIOError:

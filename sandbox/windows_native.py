@@ -20,6 +20,7 @@ from tools.git_tools import GitDiffTool, GitLogTool, GitShowTool, GitStatusTool
 
 from .native_common import NativeBackendBase
 from .native_execution import NativeCleanupError
+from .windows_broker import WindowsEnvironmentService
 from .windows_execution import WindowsLaunch, WindowsNativeExecutionAdapter
 from .windows_git import WindowsGitRunner, copy_git_runtime, validate_git_query
 from .windows_python import inspect_python, select_project, stage_python
@@ -82,6 +83,10 @@ class WindowsNativeBackend(NativeBackendBase):
         return context
 
     def _execute(self, workspace, name, arguments):
+        if name == "get_execution_environment" and self.healthy:
+            if Path(workspace).resolve() != self.workspace:
+                raise ValueError("Native 后端不能切换工作区")
+            return WindowsEnvironmentService(self).execute(arguments)
         queries = {
             "git_status": GitStatusTool,
             "git_diff": GitDiffTool,

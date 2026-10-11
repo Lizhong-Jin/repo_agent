@@ -1,9 +1,32 @@
+import builtins
+import os
 import sys
 
 import pytest
 
 from host_support import processes as process_module
 from tools import ProcessResult, ProcessRunner, ProcessStartError, RunCommandTool
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows pipe API")
+def test_windows_pipe_reading_does_not_import_ctypes(monkeypatch):
+    original = builtins.__import__
+
+    def guarded(name, *args, **kwargs):
+        if name in {"ctypes", "_ctypes"}:
+            pytest.fail("Pipe reader loaded ctypes")
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    reader, writer = os.pipe()
+    with os.fdopen(reader, "rb", buffering=0) as stream:
+        try:
+            assert ProcessRunner._read_available(stream) is None
+            os.write(writer, b"pipe payload")
+            assert ProcessRunner._read_available(stream) == b"pipe payload"
+        finally:
+            os.close(writer)
+        assert ProcessRunner._read_available(stream) == b""
 
 
 def test_runner_reuses_configuration_with_independent_cwd_and_output(tmp_path):
@@ -26,7 +49,7 @@ def test_runner_reuses_configuration_with_independent_cwd_and_output(tmp_path):
             timeout_seconds=5,
         )
         assert isinstance(result, ProcessResult)
-        assert result.stdout == f"{directory.name} configured\n"
+        assert result.stdout.splitlines() == [f"{directory.name} configured"]
         assert result.stderr == ""
         assert result.exit_code == 0
         assert not result.timed_out

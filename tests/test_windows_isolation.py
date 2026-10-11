@@ -289,7 +289,9 @@ def test_win32_launch_attributes_are_atomic_restricted_and_explicit(monkeypatch,
             assert exe == "C:/tool.exe" and line.value == 'C:/tool.exe "a b"'
             assert inherit is True
             assert flags & win.CREATE_SUSPENDED and flags & win.EXTENDED_STARTUPINFO_PRESENT
-            assert flags & win.CREATE_UNICODE_ENVIRONMENT and flags & win.CREATE_NO_WINDOW
+            assert flags & win.CREATE_UNICODE_ENVIRONMENT
+            assert bool(flags & win.CREATE_NO_WINDOW) is (not git_query)
+            assert bool(flags & win.DETACHED_PROCESS) is git_query
             assert not flags & 0x1000000  # CREATE_BREAKAWAY_FROM_JOB
             startup = ctypes.cast(si, ctypes.POINTER(win.StartupInfoEx)).contents
             assert startup.startup.cb == ctypes.sizeof(win.StartupInfoEx)
