@@ -135,6 +135,6 @@ local 的 Git 工具仍会启动 Git 子进程；发现外部 clean/process 过�
 - 开始使用：[安装与升级](docs/installation.md)、[命令与快捷键](docs/usage.md)、[配置参考](docs/configuration.md)。
 - 管理对话：[会话恢复](docs/sessions.md)、[任务队列](docs/task-queue.md)、[执行账本](docs/execution-ledger.md)、[任务交付报告](docs/task-reports.md)、[上下文压缩](docs/context-compaction.md)、[思考设置](docs/thinking.md)、[日志](docs/logging.md)。
 - 执行任务：[只读审查](docs/review-mode.md)、[独立工作区](docs/workspaces.md)、[验证与验收](docs/verification.md)、[原生沙箱](docs/native-sandbox.md)、[Docker 与回写](sandbox/README.md)、[GPU 开发](docs/gpu-operators.md)、[Skills](docs/skills.md)、[Web 搜索](docs/web-search.md)、[网页读取](docs/web-fetch.md)。
-- 参与开发：[项目架构](Project_Architecture.md)、[开发与验证](docs/development.md)、[工具开发](docs/tools.md)、[模型接口](docs/llm.md)、[模型目录](docs/model-catalog.md)、[构建与分发](docs/distribution.md)。
+- 参与开发：[项目架构](Project_Architecture.md)、[开发与验证](docs/development.md)、[工具开发](docs/tools.md)、[模型接口](docs/llm.md)、[模型目录](docs/model-catalog.md)、[构建与分发](docs/distribution.md)、[发行验收](docs/release-acceptance.md)。
 
 默认测试使用模拟模型响应。真实 native、Docker、多语言、GPU 和发行安装验证需要相应环境及显式开关，见[验证矩阵](docs/development.md#开发环境与验证)。

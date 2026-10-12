@@ -30,10 +30,19 @@ def require_success(result, stage):
         )
 
 
+def record_capability(stage, status, *, reason=None):
+    if destination := os.getenv("WINDOWS_NATIVE_CAPABILITY_REPORT"):
+        path = Path(destination)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"stage": stage, "status": status, "reason": reason}) + "\n")
+
+
 def require_capability_outcome(result, backend, capability, stage):
     """Only known LPAC incompatibility is an accepted rejection, never arbitrary failure."""
     if result.success or os.getenv("REQUIRE_WINDOWS_NATIVE_FULL_TOOLS") == "1":
         require_success(result, stage)
+        record_capability(stage, "available")
         print(f"Windows native {stage}: available")
         return True
     report = result.data.get("capability_report", {})
@@ -52,6 +61,7 @@ def require_capability_outcome(result, backend, capability, stage):
         # pytest abbreviates dicts in assertions, concealing the actual probe
         # exit code/stderr. Emit the already bounded result as explicit text.
         require_success(result, stage)
+    record_capability(stage, "unavailable", reason="lpac_compatibility")
     print(f"Windows native {stage}: unavailable (lpac_compatibility), cleanup confirmed")
     return False
 

@@ -10,7 +10,9 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from release_helpers import installed_flow, offline_prefix
 
+from configuration.literal import parse_config
 from installer import paths, release_install
 from installer.release_manifest import digest, read_release
 
@@ -227,8 +229,9 @@ def test_real_release_survives_download_removal(tmp_path, monkeypatch, install_f
     workspace.mkdir()
 
     def run(args, **kwargs):
+        guard = kwargs.pop("network_guard", True)
         result = subprocess.run(
-            [str(item) for item in args],
+            [*(offline_prefix() if guard else []), *[str(item) for item in args]],
             env=env,
             cwd=workspace,
             capture_output=True,
@@ -315,7 +318,32 @@ def test_real_release_survives_download_removal(tmp_path, monkeypatch, install_f
     )
     docker.chmod(0o755)
     run([tmp_path / "bin/repo-agent-build-sandbox", "--profile", "standard"])
+    installed_flow(
+        run,
+        root / ".venv/bin/python",
+        tmp_path,
+        rust=True,
+        native_run=lambda args: run(args, network_guard=False),
+    )
     before = config.read_bytes()
+    run(
+        [
+            "/bin/bash",
+            root / "install-release.sh",
+            "--mode",
+            "local",
+            "--offline",
+            "--skip-toolchains",
+            "--no-path",
+            "--bin-dir",
+            tmp_path / "bin",
+        ]
+    )
+    assert parse_config(config.read_text(), source=config) == parse_config(
+        before.decode(), source=config
+    )
+    before = config.read_bytes()  # Reinstall may normalize quoting without changing values.
+    run(["/bin/bash", root / "install-release.sh", "--recover"])
     run([command, "uninstall", "--dry-run"])
     assert command.exists()
     if install_from_archive:

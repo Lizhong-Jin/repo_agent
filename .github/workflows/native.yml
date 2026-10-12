@@ -1,0 +1,53 @@
+name: Native kernel acceptance
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            runner: ubuntu-22.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: macos-x86_64
+            runner: macos-15-intel
+          - target: macos-arm64
+            runner: macos-14
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Prepare Linux isolation on disposable hosted runner
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap libseccomp2
+          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Install locked runtime, LSP and test dependencies
+        run: >-
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock -r requirements-lsp.lock
+      - name: Run mandatory real kernel acceptance (no skips)
+        run: python scripts/release_acceptance.py run --profile native --target ${{ matrix.target }} --output artifacts/native
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: acceptance-native-${{ matrix.target }}
+          path: artifacts/native/
+          if-no-files-found: error

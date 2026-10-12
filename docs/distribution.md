@@ -2,7 +2,7 @@
 
 [文档首页](index.md) · [开发与验证](development.md) · [用户安装说明](installation.md)
 
-面向发布维护者，命令在源码仓库根目录运行。构建器只生成平台完整包，内置独立 Python、Agent wheel、安装器和对应平台的运行依赖；不再提供轻量发行包构建。所有产物按版本、平台分目录保存，不自动上传发布。
+面向发布维护者，命令在源码仓库根目录运行。构建器只生成平台完整包，内置独立 Python、Agent wheel、安装器和对应平台的运行依赖；不再提供轻量发行包构建。所有产物按版本、平台分目录保存，不自动上传发布。正式发布的必需标准、五平台流水线与资产资格见[发行验收](release-acceptance.md)。
 
 ## 构建独立发行版与更新依赖
 
@@ -102,7 +102,7 @@ Rust 源码统一位于 `rust/`。手工编译使用 `python scripts/build_rust.
 .venv/bin/python scripts/build_release.py --target linux-arm64 --rust-wheelhouse /path/to/rust_wheels --require-rust
 ```
 
-工作流 `.github/workflows/policy-scan-wheels.yml` 构建 Linux/macOS 的 x86_64、arm64 四种 wheel，执行加载及差分测试后保存为工作流产物；不自动发布。Linux 使用 manylinux 2.28，macOS 最低版本为 x86_64 的 10.15 和 arm64 的 11.0。源码归档仍包含构建输入。构建细节见 [Rust 扫描器说明](../rust/docs/policy-scan.md)。
+工作流 `.github/workflows/policy-scan-wheels.yml` 构建 Linux/macOS 的 x86_64、arm64 四种 wheel，执行加载及差分测试后保存为工作流产物；不自动发布。Linux 使用 manylinux 2.28，macOS 扩展部署标签基线为 x86_64 的 10.15 和 arm64 的 11.0；它不是完整发行包最低系统版本的实测证明。源码归档仍包含构建输入。构建细节见 [Rust 扫描器说明](../rust/docs/policy-scan.md)。
 
 发行包安装直接安装已登记并校验的 Rust wheel，不下载、不编译，也不需要用户安装 Rust/Cargo/maturin。扩展为可选组件，安装或加载失败不会撤销核心安装；未附带扩展的发行包没有 `rust_wheel` 字段，可继续安装核心程序。若清单已登记扩展但文件缺失或哈希不符，发行完整性校验会拒绝安装；这不同于核心安装提交后可选扩展的安装/导入失败。默认扫描器仍为 `python`，安装成功后可显式选择 `rust`。
 
@@ -181,7 +181,7 @@ $env:REPO_AGENT_WINDOWS_ARCHIVE = (Resolve-Path 'dist/0.1.5/windows-x86_64/repo-
 python -m pytest -q tests/test_windows_release.py
 ```
 
-`.github/workflows/host-files.yml` 配置了 Windows ZIP 构建与上述实际生命周期验收，前序步骤成功后上传 ZIP 与校验文件。非 Windows 测试仅覆盖格式、命令归属与事务契约，真实 Windows 用例会跳过，不能代替 Windows 验收。
+`.github/workflows/release-acceptance.yml` 统一执行五平台完整包构建、实际安装生命周期及旧正式版升级验收；所有必需作业和证据通过后汇总原包与校验文件，见[发行验收流程](release-acceptance.md)。非 Windows 测试仅覆盖格式、命令归属与事务契约，真实 Windows 用例会跳过，不能代替 Windows 验收。
 
 上述验收使用 local 模式验证安装生命周期。macOS native、Linux native、WSL GPU 仍须分别进行[真实沙箱验证](native-sandbox.md#验证)，不能以打包成功替代。
 

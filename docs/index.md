@@ -52,6 +52,7 @@
 | [代码组织](code-organization.md) | 目录归属、依赖方向、安装兼容入口与验证 |
 | [Rust 后端与构建](../rust/README.md) | Linux/macOS 文件系统能力、构建命令、版本目录、离线材料和发行集成 |
 | [可选 Rust 策略扫描器](../rust/docs/policy-scan.md) | Linux 策略扫描接口、路径与取消语义、差分验证 |
+| [发行验收](release-acceptance.md) | 必需标准、五平台实装、升级、内核验证、证据与发布门槛 |
 | [构建与分发](distribution.md) | 全平台完整包、版本与平台目录、离线构建、产物校验与安装验收 |
 
 ## 文档维护约定

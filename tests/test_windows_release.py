@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from release_helpers import installed_flow
 
 from host_support import integration, paths, windows_install
 from installer import install_transaction, installation, setup, uninstall
@@ -395,6 +396,7 @@ def test_real_windows_release_survives_download_removal_and_uninstalls(tmp_path)
     values = parse_config(config.read_text(encoding="utf-8"), source=config)
     assert values == {**defaults, "LLM_MODEL": "keep", "LLM_TIMEOUT": ""}
     assert backups(config)[0].read_text(encoding="utf-8") == previous_config
+    installed_flow(run, root / ".venv/Scripts/python.exe", tmp_path)
     run(script(root, "--recover"))
     run(script(root, "--uninstall", "--dry-run"))
     assert (root / ".venv").is_dir()

@@ -1,6 +1,7 @@
 name: Prebuilt Rust scanner wheels
 
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     paths:
@@ -54,6 +55,8 @@ jobs:
       - name: Build ABI3 platform wheel
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.9.6
+          rust-toolchain: 1.89.0
           command: build
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}

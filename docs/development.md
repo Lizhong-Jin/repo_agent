@@ -16,6 +16,7 @@
 .venv/bin/ruff format --check agent cli llm tools sandbox host_support installer configuration scripts examples tests build_support.py build_manifest.py
 python3 build_manifest.py
 python3 scripts/lock_dependencies.py --check
+python3 scripts/check_docs.py
 ```
 
 开发依赖安装可能联网；锁文件检查需要 uv。CI 的 `lint` 作业使用 `requirements-dev.lock` 中锁定的 Ruff，执行上方相同范围的规则检查与格式检查；提交前应确保两项都通过。默认测试使用模拟模型，不消耗在线推理额度；安装入口测试需要仓库 `.venv/bin/repo-agent` 可运行。构建清单测试使用已有的 setuptools/wheel，因此旧安装补齐时上方也安装锁定的构建依赖。独立发行版不安装开发依赖。
@@ -48,7 +49,7 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
-最后的 editable 安装会创建安装入口测试依赖的 `.venv/bin/repo-agent`。CI 的 `regression` 作业采用同样的准备流程，在 Linux/macOS × Python 3.11/3.13 上运行默认全量测试。默认全量会收集整个测试目录，但仍会按平台、依赖和开关跳过真实环境用例；下列验收需在对应环境中单独启用。
+最后的 editable 安装会创建安装入口测试依赖的 `.venv/bin/repo-agent`。CI 的 `regression` 作业采用同样的准备流程，在 Linux/macOS × Python 3.11/3.13 上运行默认全量测试。默认全量会收集整个测试目录，但仍会按平台、依赖和开关跳过真实环境用例；下列验收需在对应环境中单独启用。`native.yml` 已在 Linux/macOS 四个平台强制执行必需内核用例；五平台发行实装和升级由[发行验收](release-acceptance.md)工作流统一运行。
 
 将以下验证分别记录，不能用默认测试通过替代真实环境验收：
 
@@ -261,3 +262,5 @@ CLI 会话绑定 `ExecutionLedger` 后自动注册 `read_tool_result`，用于�
 </details>
 
 可信交付回归 `tests/test_delivery.py` 使用固定模型和真实 Git/短命令验证：必需规则不可降级、报告/结论/会话保存中断、内容过期、人工意见与例外绑定、队列优先重验、重启和合并限制。它已纳入跨平台契约 CI；不替代 native 内核或真实模型任务效果验收。
+
+发行门槛回归：`python -m pytest -q tests/test_release_acceptance.py`。它检查失败/跳过作业、证据缺失、跨提交或跨尝试混用、参数用例缺失与资产变化不会放行；完整发行验收另需实际平台归档。

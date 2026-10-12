@@ -1,6 +1,7 @@
 name: Docker tools and isolation
 
 on:
+  workflow_call:
   push:
   pull_request:
   workflow_dispatch:
