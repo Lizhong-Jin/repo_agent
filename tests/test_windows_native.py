@@ -512,6 +512,37 @@ def test_python_relocation_authorizes_only_runtime_layout_without_host_execution
     assert (venv / "pyvenv.cfg").read_text() == f"home = {base}\n"
 
 
+@pytest.mark.parametrize("inherit_system_packages", [False, True])
+def test_isolated_python_copy_prunes_global_packages_without_relaxing_link_checks(
+    tmp_path, inherit_system_packages
+):
+    base = tmp_path / "runtime"
+    python_install(base)
+    packages = base / "Lib/site-packages"
+    packages.mkdir()
+    (packages / "host_package.py").write_text("host data")
+    os.link(packages / "host_package.py", tmp_path / "outside-link")
+    environment = tmp_path / "test-env"
+    (environment / "Scripts").mkdir(parents=True)
+    executable = environment / "Scripts/python.exe"
+    executable.write_bytes(b"MZredirector")
+    (environment / "Lib/site-packages").mkdir(parents=True)
+    (environment / "Lib/site-packages/test_dependency.py").write_text("VALUE = 73")
+    (environment / "pyvenv.cfg").write_text(
+        f"home = {base}\ninclude-system-site-packages = {str(inherit_system_packages).lower()}\n"
+    )
+    layout = inspect_python(executable, "explicit", tmp_path / "project")
+    if inherit_system_packages:
+        with pytest.raises(ValueError, match="link"):
+            stage_python(layout, tmp_path / "staged")
+    else:
+        private, private_base = stage_python(layout, tmp_path / "staged")
+        assert not (private_base / "Lib/site-packages").exists()
+        assert (private.parent.parent / "Lib/site-packages/test_dependency.py").is_file()
+        assert (private_base / "Lib/encodings/__init__.py").is_file()
+    assert (packages / "host_package.py").read_text() == "host data"
+
+
 def test_python_rejects_broad_or_invalid_layouts(tmp_path):
     root = tmp_path / "project"
     executable = python_install(root)

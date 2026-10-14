@@ -7,14 +7,15 @@ import socket
 import sys
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
-from host_support.cancellation import RunCancelled, cancellation_scope
+from host_support.cancellation import CancellationContext, RunCancelled, cancellation_scope
 from host_support.path_rules import NameRules
 from sandbox.linux_mounts import MountTable
 from sandbox.linux_policy import PythonPolicyScanner
-from sandbox.policy_scan import PolicyPlan, ScanFailure, ScanRequest
+from sandbox.policy_scan import PolicyPlan, ScanFailure, ScanRequest, ScanResult
 from sandbox.policy_scanners import create_policy_scanner
 from sandbox.rust_policy import RustPolicyScanner
 from scripts.benchmark_linux_policy import policy_backend
@@ -55,7 +56,25 @@ def counts(metrics):
 
 
 def equivalent(engines, compiled, call):
-    results = [engine.scan(compiled, call) for engine in engines]
+    # Hosted Linux runners can change unrelated mounts while these independent
+    # scans run. A rejected snapshot is not a scanner mismatch: discard *both*
+    # results and retry from a fresh observation, with a strict finite bound.
+    # Production rejection and failures() below deliberately remain unchanged.
+    for attempt in range(3):
+        try:
+            results = [engine.scan(compiled, call) for engine in engines]
+            break
+        except ScanFailure as failure:
+            if (
+                attempt == 2
+                or type(failure.error) is not ValueError
+                or str(failure.error) != "Linux native 扫描期间挂载布局发生变化，拒绝使用旧策略"
+            ):
+                raise
+            fresh = MountTable.read().text
+            if fresh == call.mount_snapshot:
+                raise
+            call = replace(call, mount_snapshot=fresh)
     assert results[0].masks == results[1].masks
     if engines[1].last_diagnostics.get("workers", 1) == 1:
         assert results[0].git_paths == results[1].git_paths
@@ -85,6 +104,47 @@ def failures(engines, compiled, call):
     else:
         assert str(errors[0]) == str(errors[1])
     return errors[1]
+
+
+@pytest.mark.parametrize("interrupted_engine", [0, 1])
+def test_equivalence_restarts_both_scans_after_observed_mount_change(
+    monkeypatch, interrupted_engine
+):
+    before, after = "old snapshot", "new snapshot"
+    monkeypatch.setattr(MountTable, "read", lambda: Mock(text=after))
+    result = ScanResult((), (), {"complete": True})
+    scanners = [Mock(last_diagnostics={"workers": 1}) for _ in range(2)]
+    for engine in scanners:
+        engine.scan.return_value = result
+    scanners[interrupted_engine].scan.side_effect = [
+        ScanFailure(ValueError("Linux native 扫描期间挂载布局发生变化，拒绝使用旧策略"), {}),
+        result,
+    ]
+    equivalent(scanners, None, ScanRequest((), False, before))
+    assert [c.args[1].mount_snapshot for c in scanners[0].scan.call_args_list] == [before, after]
+    assert scanners[1].scan.call_args.args[1].mount_snapshot == after
+    assert scanners[1].scan.call_count == interrupted_engine + 1
+
+
+@pytest.mark.parametrize("kind", ["unchanged", "other_error", "cancelled", "persistent"])
+def test_equivalence_retry_never_hides_other_failures_or_persistent_churn(monkeypatch, kind):
+    observations = iter([Mock(text=f"snapshot-{i}") for i in range(1, 4)])
+    monkeypatch.setattr(
+        MountTable,
+        "read",
+        lambda: Mock(text="original") if kind == "unchanged" else next(observations),
+    )
+    error = {
+        "other_error": ValueError("unsafe link"),
+        "cancelled": RunCancelled(CancellationContext()),
+    }.get(kind, ValueError("Linux native 扫描期间挂载布局发生变化，拒绝使用旧策略"))
+    failure = ScanFailure(error, {})
+    scanner = Mock()
+    scanner.scan.side_effect = failure
+    with pytest.raises(ScanFailure) as caught:
+        equivalent([scanner, Mock()], None, ScanRequest((), False, "original"))
+    assert caught.value is failure
+    assert scanner.scan.call_count == (3 if kind == "persistent" else 1)
 
 
 @pytest.mark.parametrize("git_read", [False, True])

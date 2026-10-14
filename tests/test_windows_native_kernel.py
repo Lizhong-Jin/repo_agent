@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import sys
 import venv
 from dataclasses import asdict
 from pathlib import Path
@@ -101,7 +102,7 @@ def test_native_startup_python_worker_git_and_publication(tmp_path, monkeypatch,
             pytest.fail("Python and LSP must work without Git installed")
 
         monkeypatch.setattr("sandbox.windows_native.find_windows_executable", unexpected_git)
-    backend = create_native_backend(root, profile="standard")
+    backend = create_native_backend(root, profile="standard", project_python=sys.executable)
     try:
         assert backend.preflight_metrics["isolation_verified"]
         if stage in {"python", "all"}:

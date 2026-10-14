@@ -181,7 +181,16 @@ def run(profile, target, output, archive=None):
         junit = output / "tests.xml"
         junit.unlink(missing_ok=True)
         result = subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", "-ra", *required, f"--junitxml={junit}"],
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-v",
+                "-ra",
+                "--durations=15",
+                *required,
+                f"--junitxml={junit}",
+            ],
             cwd=ROOT,
             env=env,
             timeout=1800,

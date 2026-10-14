@@ -109,10 +109,10 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           architecture: x64
-      - run: >-
-          python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
-      - run: >-
-          python -m pip install --require-hashes --only-binary=:all: -r requirements-lsp.lock
+      - name: Prepare isolated Windows test environment
+        run: |
+          python -m venv .venv
+          .venv/Scripts/python.exe -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock -r requirements-lsp.lock
       - name: Build probe with installed SDK and run real isolation tests
         shell: cmd
         run: |
@@ -120,17 +120,15 @@ jobs:
           if not defined ISOLATION_VS exit /b 1
           call "%ISOLATION_VS%\VC\Auxiliary\Build\vcvars64.bat"
           if errorlevel 1 exit /b 1
-          python -m pytest -q -ra tests/test_windows_isolation.py tests/test_windows_isolation_kernel.py tests/test_windows_native.py tests/test_windows_capabilities.py tests/test_native_execution_adapter.py tests/test_windows_supervisor_diagnostics.py tests/test_git_discovery.py tests/test_architecture_boundaries.py tests/test_windows_broker.py tests/test_execution_environment.py tests/test_process_runner.py
+          .venv\Scripts\python.exe -m pytest -v -ra --durations=15 --junitxml=artifacts/windows-isolation.xml tests/test_windows_isolation.py tests/test_windows_isolation_kernel.py tests/test_windows_native.py tests/test_windows_capabilities.py tests/test_native_execution_adapter.py tests/test_windows_supervisor_diagnostics.py tests/test_git_discovery.py tests/test_architecture_boundaries.py tests/test_windows_broker.py tests/test_execution_environment.py tests/test_process_runner.py
           if errorlevel 1 exit /b 1
-          python -m pytest -q -raP --maxfail=1 tests/test_windows_native_kernel.py
-          if errorlevel 1 exit /b 1
-          python scripts/release_acceptance.py run --profile permissions --target windows-x86_64 --output artifacts/windows-permissions
+          .venv\Scripts\python.exe -m pytest -v -raP --durations=15 --junitxml=artifacts/windows-native.xml --maxfail=1 tests/test_windows_native_kernel.py
 
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: windows-permissions-${{ matrix.python }}
-          path: artifacts/windows-permissions/
+          name: windows-isolation-tests-${{ matrix.python }}
+          path: artifacts/*.xml
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v6
@@ -138,4 +136,39 @@ jobs:
         with:
           name: windows-native-capabilities-${{ matrix.python }}
           path: artifacts/windows-native.jsonl
+          if-no-files-found: error
+
+  windows-permissions:
+    name: Windows mandatory permissions (Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.13']
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      RUN_WINDOWS_ISOLATION_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+          architecture: x64
+      - name: Prepare isolated Windows test environment
+        run: |
+          python -m venv .venv
+          .venv/Scripts/python.exe -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
+      - name: Build probe with installed SDK and require all permission tests
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "ISOLATION_VS=%%i"
+          if not defined ISOLATION_VS exit /b 1
+          call "%ISOLATION_VS%\VC\Auxiliary\Build\vcvars64.bat"
+          if errorlevel 1 exit /b 1
+          .venv\Scripts\python.exe scripts/release_acceptance.py run --profile permissions --target windows-x86_64 --output artifacts/windows-permissions
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: windows-permissions-${{ matrix.python }}
+          path: artifacts/windows-permissions/
           if-no-files-found: error

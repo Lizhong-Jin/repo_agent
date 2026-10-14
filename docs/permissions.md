@@ -113,6 +113,6 @@ python -m pytest -q tests/test_permission_kernel.py tests/test_windows_native_ke
 
 内核测试验证带中文/空格路径的读取、执行外部脚本、拒绝修改输入副本及宿主原件、工作区输出、撤销、超时和取消后的输入清理。取消既覆盖启动前，也覆盖观察到子进程已经运行后的取消；Windows 确认 Job 清理后删除只读输入，待恢复工作区仍按原机制保留，清理未知时不提前删除资源。
 
-Linux/macOS 的 `native` 验收已强制包含本文件全部实机测试。Windows isolation job 用 `scripts/release_acceptance.py run --profile permissions --target windows-x86_64` 生成独立 JUnit/JSON 证据。两者都验证用例身份，任何失败、跳过、空集合或缺少用例均不通过，普通跨平台单元测试的合理跳过不受影响。
+Linux/macOS 的 `native` 验收已强制包含本文件全部实机测试。Windows 独立的 `windows-permissions` job 用 `scripts/release_acceptance.py run --profile permissions --target windows-x86_64` 生成 JUnit/JSON 证据，不与 Git/LSP 能力探针共用时间预算。Windows 两组任务均在不继承系统包的 venv 中安装锁定依赖；内核测试显式选择测试解释器，避免扫描和复制 runner 全局 Python 的无关依赖。验收验证用例身份，任何失败、跳过、空集合或缺少用例均不通过，普通跨平台单元测试的合理跳过不受影响。
 
 Windows 发行包仍需人工验收：junction/reparse point 拒绝、实际键盘 Ctrl+C 的 UI 与进程联动、Job 清理及残留 profile 回收、工作区回写/备份恢复不包含外部输入。需要在受支持 Windows x64 和实际安装包上执行；macOS 的通过结果不能替代 Windows 或 Linux 内核验证。

@@ -32,7 +32,9 @@ def native_inputs(tmp_path, monkeypatch):
     (external / ".env").write_text("never-visible")
     (external / "run.py").write_text("print('external-script-ran')\n")
     monkeypatch.setattr("sandbox.windows_native.app_directory", lambda _: tmp_path / "state")
-    backend = create_native_backend(workspace, profile="standard")
+    # Exercise the selected test runtime, not an unrelated setup-python global
+    # installation discovered later on PATH (which can contain huge packages).
+    backend = create_native_backend(workspace, profile="standard", project_python=sys.executable)
     manager = PermissionManager(workspace, backend="native")
     manager.bind_backend(backend)
     identity = manager.grant("external_read", str(external))
@@ -125,6 +127,9 @@ def test_native_running_cancellation_removes_inputs_after_process_cleanup(
             else backend.workspace
         )
         markers.append(workspace / "started.txt")
+        # Start the launch watchdog after runtime/input preparation. Copying a
+        # Windows interpreter is not evidence that the child has started.
+        watcher.start()
         return paths, mapping
 
     def cancel_when_running():
@@ -142,7 +147,6 @@ def test_native_running_cancellation_removes_inputs_after_process_cleanup(
     if sys.platform != "win32":
         monkeypatch.setattr("sandbox.posix_execution.stage_permission_inputs", capture)
     watcher = threading.Thread(target=cancel_when_running)
-    watcher.start()
     try:
         with cancellation_scope(context), pytest.raises(RunCancelled):
             backend.execute(
@@ -156,7 +160,8 @@ def test_native_running_cancellation_removes_inputs_after_process_cleanup(
             )
     finally:
         finished.set()
-        watcher.join(timeout=2)
+        if watcher.ident is not None:
+            watcher.join(timeout=2)
     assert not watcher.is_alive()
     assert began.is_set(), "Cancellation must occur after the child actually started"
     assert staged and all(not path.exists() for path in staged)

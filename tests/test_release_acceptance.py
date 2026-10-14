@@ -139,11 +139,20 @@ def test_windows_permissions_job_uses_no_skip_gate():
     import yaml
 
     workflow = Path(__file__).resolve().parents[1] / ".github/workflows/host-files.yml"
-    job = yaml.safe_load(workflow.read_text())["jobs"]["windows-isolation"]
+    jobs = yaml.safe_load(workflow.read_text())["jobs"]
+    job = jobs["windows-permissions"]
+    assert "needs" not in job  # Slow native capability tests cannot starve this gate.
+    assert job["strategy"]["matrix"]["python"] == ["3.11", "3.13"]
     assert any(
         "--profile permissions --target windows-x86_64" in step.get("run", "")
         for step in job["steps"]
     )
+    for name in ("windows-isolation", "windows-permissions"):
+        commands = "\n".join(step.get("run", "") for step in jobs[name]["steps"])
+        assert "python -m venv .venv" in commands
+        assert ".venv/Scripts/python.exe -m pip install --require-hashes" in commands
+        assert ".venv\\Scripts\\python.exe" in commands
+        assert "--system-site-packages" not in commands
 
 
 def test_zero_and_unrelated_tests_do_not_qualify(tmp_path):
