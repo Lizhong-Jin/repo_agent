@@ -66,12 +66,7 @@ jobs:
           merge-multiple: true
       - name: Prepare Linux isolation on disposable hosted runner
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap libseccomp2
-          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
+        run: bash .github/scripts/prepare-linux-isolation.sh
       - name: Build the candidate exactly once
         run: python scripts/build_release.py --target ${{ matrix.target }} --output dist --rust-wheelhouse rust_wheels --require-rust
       - name: Fetch an older published package for upgrade acceptance

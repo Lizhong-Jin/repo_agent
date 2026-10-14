@@ -297,7 +297,9 @@ def test_outer_supervisor_confirmation_recovers_inner_timeout(bare_backend, monk
 def native_project(tmp_path):
     workspace = tmp_path / 'project "quoted" (中文)'
     workspace.mkdir()
-    backend = NativeBackend(workspace)
+    # Generic Seatbelt acceptance must also run on hosted Macs without a GPU.
+    # Real Metal compute has its own opt-in tests in test_macos_metal.py.
+    backend = NativeBackend(workspace, profile="standard")
     try:
         yield workspace, backend
     finally:
@@ -498,7 +500,11 @@ def test_native_cli_records_mode_and_closes_backend(tmp_path, monkeypatch):
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
     monkeypatch.setenv("AGENT_SANDBOX_WRITEBACK", "on-success")
-    monkeypatch.setattr(sys, "argv", ["repo-agent", "--root", str(tmp_path), "--model", "m"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["repo-agent", "--root", str(tmp_path), "--model", "m", "--sandbox-profile", "standard"],
+    )
     monkeypatch.setattr(LLMClient, "get_context_limit", lambda *a, **kw: None)
     backends = []
 

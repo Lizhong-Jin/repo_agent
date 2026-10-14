@@ -526,8 +526,8 @@ def test_real_linux_cancellation_preserves_backend_health(linux_project, monkeyp
     root, backend = linux_project
     collect = ProcessRunner._collect_output
 
-    def cancel(process, streams, deadline, supervisor=None):
-        collect(process, streams, min(deadline, time.monotonic() + 0.2), supervisor)
+    def cancel(process, streams, deadline, supervisor=None, cancellation=None):
+        collect(process, streams, min(deadline, time.monotonic() + 0.2), supervisor, cancellation)
         raise KeyboardInterrupt
 
     with monkeypatch.context() as scoped:
