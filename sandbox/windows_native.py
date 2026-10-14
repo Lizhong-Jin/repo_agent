@@ -4,6 +4,7 @@ import json
 import ntpath
 import os
 import re
+import shutil
 import socket
 import sys
 from contextlib import contextmanager
@@ -304,6 +305,8 @@ print(json.dumps(checks))
 
     @contextmanager
     def _prepare_windows_call(self, isolation, call):
+        from .permission_inputs import stage_permission_inputs
+
         profile = isolation.profile.directory
         sid = self.security.sid_string(isolation.profile.sid)
         runtime = profile / "runtime"
@@ -361,6 +364,7 @@ print(json.dumps(checks))
         )
         completed = False
         try:
+            inputs, input_mapping = stage_permission_inputs(self, profile / "inputs")
             git_paths = self._stage_git(profile, snapshot.workspace, call) if git_query else ()
             environment = {
                 "SystemRoot": str(self.system_directory.parent),
@@ -395,6 +399,9 @@ print(json.dumps(checks))
                 "GIT_LITERAL_PATHSPECS": "1",
             }
             mapping.append((self.workspace, snapshot.workspace))
+            if inputs:
+                environment["REPO_AGENT_READ_ROOTS"] = json.dumps(inputs)
+            mapping.extend(input_mapping)
             cwd = snapshot.workspace / Path(call.cwd).relative_to(self.workspace)
             if git_query:
                 command = (str(git_paths[0] / "git.exe"), *call.command[1:])
@@ -414,7 +421,12 @@ print(json.dumps(checks))
                 command = (str(agent), "-I", "-c", bootstrap)
             else:
                 command = self._command(
-                    call.command, cwd, mapping, project, agent, (*git_paths, self.system_directory)
+                    call.command,
+                    cwd,
+                    mapping,
+                    project,
+                    agent,
+                    (*git_paths, self.system_directory),
                 )
             # The profile root itself must not permit deleting/replacing read-only
             # runtime children. Only workspace and scratch receive writable ACLs.
@@ -459,6 +471,18 @@ print(json.dumps(checks))
             completed = True
         finally:
             never_started = isolation.execution is None or not isolation.execution.started
+            cleanup_confirmed = (
+                isolation.execution is not None
+                and isolation.execution.last_cleanup_status == "confirmed"
+            )
+            # A cancelled call may retain its unpublished workspace for recovery.
+            # Authorized inputs are never recovery data. Delete them only after
+            # confirming Job cleanup; unknown cleanup retains the entire profile.
+            if cleanup_confirmed and (profile / "inputs").exists():
+                try:
+                    shutil.rmtree(profile / "inputs")
+                except OSError as error:
+                    raise NativeCleanupError("Windows 只读输入副本清理失败") from error
             if completed or never_started:
                 if never_started and isolation.lease:
                     isolation.lease.record["retain"] = False
@@ -467,14 +491,36 @@ print(json.dumps(checks))
                 snapshot.discard_control()
 
     def _command(self, command, cwd, mapping, project, agent, search):
+        # Check components before containment: Path.is_relative_to is lexical and
+        # would admit allowed/../outside.exe. Do not resolve away reparse points.
+        def checked_path(value):
+            path = Path(value)
+            if ".." in path.parts:
+                raise ValueError("Windows native 拒绝包含 .. 的命令路径")
+            if os.name == "nt":
+                from host_support.windows_files import validate_component
+
+                drive, tail = ntpath.splitdrive(value)
+                if drive and (
+                    len(drive) != 2 or drive[1] != ":" or not tail.startswith(("/", "\\"))
+                ):
+                    raise ValueError("Windows native requires a local absolute or relative path")
+                for part in path.parts[1:] if path.anchor else path.parts:
+                    validate_component(part)
+            return path
+
         def mapped(value):
             path = Path(value)
             if path.is_absolute():
-                for original, private in mapping:
+                checked_path(value)
+                for original, private in sorted(
+                    mapping, key=lambda pair: len(pair[0].parts), reverse=True
+                ):
                     if path.is_relative_to(original):
                         return str(private / path.relative_to(original))
             return value
 
+        checked_path(command[0])
         values = [mapped(value) for value in command]
         if command[0] == str(self.python):
             values[0] = str(agent)
@@ -493,7 +539,8 @@ print(json.dumps(checks))
                 raise ValueError("Windows native 可执行文件不在已授权工具路径内：" + command[0])
             values[0] = str(executable)
         allowed = (self.system_directory, *(private for _, private in mapping), *search)
-        if not any(Path(values[0]).is_relative_to(path) for path in allowed):
+        executable = checked_path(values[0])
+        if not any(executable.is_relative_to(path) for path in allowed):
             raise ValueError("Windows native 拒绝运行未授权的宿主可执行文件")
         return tuple(values)
 

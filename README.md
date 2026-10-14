@@ -45,6 +45,8 @@ Docker 会话可使用 `/diff` 查看副本变更、`/apply` 回写原项目；l
 
 只需要分析和建议时，使用[只读审查模式](docs/review-mode.md)。它仅开放受控读取和 Git 查询，不启动命令后端；会话恢复和任务续跑会保持审查权限。
 
+默认保持严格权限。native 可用 `--read-only-root /绝对目录` 授权外部只读输入；`--allow-host-discovery` 允许查询宿主程序位置。任务中的申请由用户通过 `/permissions` 批准或拒绝，再 `/continue` 继续；授权不跨会话或重启继承。没有完全访问模式，详见[统一权限与按需授权](docs/permissions.md)。
+
 ## 当前功能
 
 | 功能 | 说明 |
@@ -95,6 +97,7 @@ repo-agent doctor                               # 按安装模式诊断依赖和
 | `/report [任务编号] [--diff]` | 查看任务交付报告：文件变化、工具操作差异、验证清单与实际执行证据 |
 | `/queue` | 查看和管理持久化串行队列，见[任务队列](docs/task-queue.md) |
 | `/workspace` | 查看当前权限、执行路径和工作区状态 |
+| `/permissions` | 查看授权与申请；approve/deny 处理申请，revoke 撤销授权 |
 | `/new [名称]` | 新建会话，保留当前文件和沙箱副本；worktree 会话需退出后新建 |
 | `/switch 序号或名称` | 保存当前会话，恢复指定会话的上下文和用量 |
 | `/rename 名称` 或 F2 | 修改当前会话名称 |

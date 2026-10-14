@@ -14,21 +14,42 @@ from .policy import SandboxPolicy
 from .session import SandboxSession, files, fingerprint
 
 
-def copy_private_tree(source, destination, *, allowed=None, limit=2 * 1024**3):
+def copy_private_tree(
+    source,
+    destination,
+    *,
+    allowed=None,
+    limit=2 * 1024**3,
+    source_identity=None,
+    preserve_executable=False,
+    max_entries=None,
+    windows_names=True,
+):
     """Copy bytes via safe descriptors before launch; never preserve links/ACLs."""
     source, destination = Path(source), Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     total = 0
+    entries = 0
+    root_checked = source_identity is None
     for directory, dirs, names, fd in walk_descriptors(source):
         checkpoint()
         parent = Path(directory).relative_to(source)
+        if parent == Path(".") and source_identity is not None:
+            info = os.fstat(fd)
+            if (info.st_dev, info.st_ino) != source_identity:
+                raise ValueError("Authorized input directory was replaced")
+            root_checked = True
         for name in list(dirs) + names:
+            entries += 1
+            if max_entries is not None and entries > max_entries:
+                raise ValueError("Private input exceeds the entry count limit")
             relative = (parent / name).as_posix()
             if is_protected_name(relative) or (allowed is not None and not allowed(relative)):
                 if name in dirs:
                     dirs.remove(name)
                 continue
-            validate_snapshot_names([relative])
+            if windows_names:
+                validate_snapshot_names([relative])
             info = stat_at(name, dir_fd=fd)
             target = destination / relative
             if stat.S_ISDIR(info.st_mode):
@@ -38,12 +59,31 @@ def copy_private_tree(source, destination, *, allowed=None, limit=2 * 1024**3):
                 raise ValueError(f"Runtime contains a link or special file: {relative}")
             source_fd = open_file(name, dir_fd=fd)
             with os.fdopen(source_fd, "rb") as incoming, target.open("xb") as outgoing:
+                opened = os.fstat(incoming.fileno())
+                if (
+                    not stat.S_ISREG(opened.st_mode)
+                    or opened.st_nlink != 1
+                    or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)
+                ):
+                    raise ValueError("Private input changed during copy")
                 while chunk := incoming.read(1024 * 1024):
                     total += len(chunk)
                     if total > limit:
                         raise ValueError("Windows native runtime exceeds the copy size limit")
                     outgoing.write(chunk)
                     checkpoint()
+                after = os.fstat(incoming.fileno())
+                if (after.st_nlink, after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (
+                    1,
+                    opened.st_size,
+                    opened.st_mtime_ns,
+                    opened.st_ctime_ns,
+                ):
+                    raise ValueError("Private input changed during copy")
+            if preserve_executable:
+                target.chmod(0o755 if info.st_mode & 0o111 else 0o644)
+    if not root_checked:
+        raise ValueError("Authorized input directory could not be pinned")
 
 
 class WindowsCallSnapshot(SandboxSession):

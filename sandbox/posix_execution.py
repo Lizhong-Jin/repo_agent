@@ -11,6 +11,7 @@ from pathlib import Path
 from host_support.processes import ProcessRunner
 
 from .native_execution import NativeCleanupError
+from .permission_inputs import map_input_arguments, stage_permission_inputs
 from .project_python import select_python
 
 
@@ -60,6 +61,8 @@ class PosixNativeExecutionAdapter:
             scratch = control / "scratch"
             scratch.mkdir()
             read_paths = backend.read_paths
+            inputs, input_mapping = stage_permission_inputs(backend, control / "inputs")
+            read_paths = (*read_paths, *(Path(path) for path in inputs.values()))
             project_environment = getattr(backend, "project_python", None)
             if project_environment:
                 # Project interpreters inside the workspace remain read-only,
@@ -90,7 +93,7 @@ class PosixNativeExecutionAdapter:
                     )
                     path.chmod(0o555)
                 read_paths = (*read_paths, aliases)
-            command = call.command
+            command = map_input_arguments(call.command, input_mapping)
             if call.request is not None:
                 request_path = control / "request.json"
                 request_path.write_text(json.dumps(call.request))
@@ -107,6 +110,8 @@ class PosixNativeExecutionAdapter:
                 command, control, scratch, read_paths, git_read=call.git_read
             )
             environment = backend._environment(scratch)
+            if inputs:
+                environment["REPO_AGENT_READ_ROOTS"] = json.dumps(inputs)
             # Only project commands receive interpreter aliases and project PATH.
             # Workers retain trusted PATH even when granted project read access.
             if selected and call.request is None:

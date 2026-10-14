@@ -26,6 +26,7 @@ def test_cli_fetch_and_cached_read_without_search_key(tmp_path, monkeypatch, mod
     monkeypatch.setattr("tools._internal.web_pages.PublicHTTP.download", download)
     native_closed = []
     native = SimpleNamespace(
+        workspace=tmp_path,
         healthy=True,
         tools=lambda: [],
         close=lambda: native_closed.append(True),

@@ -14,6 +14,7 @@ class AccessPolicy:
     # The composing host may admit specific control implementations. This is
     # never populated from model arguments, project configuration or snapshots.
     trusted_readers: tuple[type, ...] = ()
+    permissions: object = None
 
     def __post_init__(self):
         if self.mode not in {"develop", "review"}:
@@ -22,12 +23,24 @@ class AccessPolicy:
             not isinstance(reader, type) for reader in self.trusted_readers
         ):
             raise ValueError("trusted_readers must contain concrete implementation types")
+        if self.permissions is not None:
+            from .permissions import PermissionManager
+
+            if (
+                type(self.permissions) is not PermissionManager
+                or self.permissions.profile.access_mode != self.mode
+            ):
+                raise ValueError("Permission manager must match the host access mode")
 
     @property
     def read_only(self):
         return self.mode == "review"
 
     def allows(self, tool):
+        from .permissions import PermissionTool
+
+        if type(tool) is PermissionTool:
+            return self.permissions is not None and tool.manager is self.permissions
         if not self.read_only:
             return True
         from .execute import GetExecutionEnvironmentTool

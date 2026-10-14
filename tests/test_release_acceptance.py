@@ -126,6 +126,26 @@ def test_mandatory_tests_cannot_skip(tmp_path, child):
         acceptance.junit_results(path, ["tests/example.py::required"])
 
 
+def test_permissions_kernel_tests_required_on_every_native_platform():
+    required = acceptance.selectors("permissions", "windows-x86_64")
+    assert len(required) >= 4
+    assert any("running_cancellation" in item for item in required)
+    for target in acceptance.TARGETS:
+        if not target.startswith("windows"):
+            assert set(required) <= set(acceptance.selectors("native", target))
+
+
+def test_windows_permissions_job_uses_no_skip_gate():
+    import yaml
+
+    workflow = Path(__file__).resolve().parents[1] / ".github/workflows/host-files.yml"
+    job = yaml.safe_load(workflow.read_text())["jobs"]["windows-isolation"]
+    assert any(
+        "--profile permissions --target windows-x86_64" in step.get("run", "")
+        for step in job["steps"]
+    )
+
+
 def test_zero_and_unrelated_tests_do_not_qualify(tmp_path):
     path = tmp_path / "tests.xml"
     for content in ("<testsuite/>", '<testsuite><testcase name="other"/></testsuite>'):

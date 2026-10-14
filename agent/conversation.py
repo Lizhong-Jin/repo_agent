@@ -204,6 +204,9 @@ class SavedConversation:
             "task_number": self.runtime._task_number,
             "mode": self.mode,
             "access_mode": self.access_mode,
+            "permissions": self.runtime.access_policy.permissions.snapshot()
+            if getattr(getattr(self.runtime, "access_policy", None), "permissions", None)
+            else None,
             "delivery_policy": deepcopy(self.delivery_policy),
             "workspace_id": self.workspace.id if self.workspace is not None else None,
             "sandbox": str(self.sandbox.directory) if self.sandbox is not None else None,
@@ -368,6 +371,7 @@ class SavedConversation:
             loaded_tool_groups=[],
             task_queue=TaskQueue().snapshot(),
             ledger_cursor=0,
+            permissions=None,
         )
         record["status"].update(
             calls=0,
@@ -385,6 +389,9 @@ class SavedConversation:
         except (OSError, ValueError):
             self.store.id, self.store.data = old_id, old_data
             raise OSError("新会话保存失败；当前会话保留") from None
+        permissions = getattr(getattr(self.runtime, "access_policy", None), "permissions", None)
+        if permissions is not None:
+            permissions.reset()
         if self.tracer is not None:
             self.tracer.switch_session()
         self.log_error = None

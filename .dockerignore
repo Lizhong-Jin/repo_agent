@@ -251,6 +251,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !sandbox/native_execution.py
 !sandbox/native_gpu_probe.py
 !sandbox/operator_smoke.py
+!sandbox/permission_inputs.py
 !sandbox/policy.py
 !sandbox/policy_scan.py
 !sandbox/policy_scanners.py
@@ -300,6 +301,7 @@ agent/skills/builtin/gpu-kernel-development/**
 !tools/factory.py
 !tools/filesystem.py
 !tools/git_tools.py
+!tools/permissions.py
 !tools/scheduling.py
 !tools/semantic.py
 !tools/tool_groups.py

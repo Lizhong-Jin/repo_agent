@@ -38,6 +38,8 @@ macOS 通用内核验收显式使用 `standard` 配置，验证 CPU 工具和 Se
 
 Windows native 仍为实验性：安全拒绝且清理确认可以满足隔离契约，但不算工具功能可用。Windows 内核作业另上传 `windows-native-capabilities-<Python版本>`，逐项记录 available / unavailable；完整功能承诺需在实际目标环境开启 `REQUIRE_WINDOWS_NATIVE_FULL_TOOLS=1` 验收。
 
+外部只读授权的全部实机测试纳入 Linux/macOS `native` 必需验收。Windows 内核作业另运行 `permissions` 验收配置，上传 `windows-permissions-<Python版本>` 的 JUnit 与 JSON；这些权限测试要求实际成功，不能用“不兼容”或跳过替代。权限取消覆盖暂存后取消及子进程启动后取消。
+
 ## 触发与发布
 
 1. 更新版本、锁文件和说明，提交全部变更。

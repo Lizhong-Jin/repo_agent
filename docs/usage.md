@@ -1,5 +1,7 @@
 # 启动、交互与上下文
 
+默认权限保持严格。`--read-only-root`、`--allow-host-discovery` 和 `/permissions` 提供显式的有限授权；申请处理后用 `/continue` 继续，见[统一权限与按需授权](permissions.md)。
+
 [文档首页](index.md) · [项目首页](../README.md) · [会话管理](sessions.md) · [配置参考](configuration.md)
 
 ## 启动与项目目录

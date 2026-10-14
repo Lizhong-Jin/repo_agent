@@ -391,6 +391,7 @@ def test_native_worktree_uses_its_root_and_host_git_readers(workspace, monkeypat
         platform_name = platform
 
         def __init__(self, root, **options):
+            self.workspace = root
             captured.update(root=root, **options)
 
         def tools(self):

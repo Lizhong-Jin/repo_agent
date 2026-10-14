@@ -1,5 +1,7 @@
 # 工具开发参考
 
+当前权限与外部读取工具的用户接口见[统一权限与按需授权](permissions.md)。`PermissionManager` 是宿主维护的单会话授权源；`AccessPolicy`、权限工具和 native 输入暂存共享此对象，项目配置、模型参数及快照均不能构造有效授权。申请工具属于串行控制工具，只创建申请，不批准或直接执行任务。
+
 [文档首页](index.md) · [Runtime 与验证](development.md) · [项目架构](../Project_Architecture.md)
 
 面向扩展工具或维护执行协议的开发者。以下命令默认在已安装开发依赖的源码目录运行；示例中的 `client` 需由调用方配置。

@@ -73,6 +73,9 @@ def test_failure_releases_native_client_web_and_real_session_lock(tmp_path, monk
     class Backend:
         healthy = True
 
+        def __init__(self, workspace):
+            self.workspace = workspace
+
         def tools(self):
             fail("tools")
             return []
@@ -84,7 +87,7 @@ def test_failure_releases_native_client_web_and_real_session_lock(tmp_path, monk
             closed.append("native")
             fail("native_close")
 
-    monkeypatch.setattr(execution_environment, "NativeBackend", lambda *a, **kw: Backend())
+    monkeypatch.setattr(execution_environment, "NativeBackend", lambda root, **kw: Backend(root))
 
     def client_factory(config):
         http = httpx.Client(

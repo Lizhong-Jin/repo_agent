@@ -1,5 +1,6 @@
 """Single consumer for a session queue, shared by terminal and line interfaces."""
 
+import json
 from copy import deepcopy
 from threading import RLock
 
@@ -195,16 +196,22 @@ class TaskController:
                 raise ValueError("请等待当前任务收尾后再使用 /continue")
             if self.cleanup_blocked or not self._healthy():
                 raise ValueError("进程清理尚未确认；请退出、检查进程后重新启动")
+            permissions = getattr(getattr(self.runtime, "access_policy", None), "permissions", None)
+            if permissions is not None and permissions.pending:
+                raise ValueError("请先 /permissions approve ID 或 deny ID 处理申请")
             executed = [t for t in self.queue.data["tasks"] if t["attempts"]]
             previous = max(executed, key=lambda t: t.get("finished_at", ""), default=None)
             if (
                 previous is None
                 or previous["state"] not in {"needs_input", "failed"}
-                or previous["result"].get("run_status") != "max_steps"
+                or (
+                    previous["result"].get("run_status") != "max_steps"
+                    and previous["result"].get("pause_reason") != "permission_required"
+                )
                 or previous["result"].get("cleanup_status") == "unknown"
                 or not self.history
             ):
-                raise ValueError("当前没有可继续的调用上限任务，或其上下文已清空")
+                raise ValueError("当前没有可继续的调用上限任务或权限暂停任务，或其上下文已清空")
             # Reuse the staged entry if a preceding save failed. Never duplicate it.
             task = next(
                 (t for t in self.queue.pending if t.get("continuation_of") == previous["id"]),
@@ -212,7 +219,7 @@ class TaskController:
             )
             if task is None:
                 task = self.queue.add(
-                    "继续完成上一项因调用轮数上限暂停的任务。"
+                    "继续完成上一项暂停的任务，遵守当前有效权限。"
                     "从已有上下文和工具结果继续，不要重复已经完成的操作。"
                 )
                 task["continuation_of"] = previous["id"]
@@ -237,6 +244,10 @@ class TaskController:
                 return None
             if not self._healthy() or self.cleanup_blocked:
                 self.pause("执行环境或进程清理未确认")
+                return None
+            permissions = getattr(getattr(self.runtime, "access_policy", None), "permissions", None)
+            if permissions is not None and permissions.pending:
+                self.pause("存在待处理权限申请；请先 /permissions approve ID 或 deny ID")
                 return None
             previous = delivery.latest_task(self.queue.data)
             recovery = self.queue.pending[0].get("delivery_recovery_of")
@@ -334,6 +345,8 @@ class TaskController:
                     notice=value.notice or "",
                     task_id=getattr(value.stats, "task_id", None),
                 )
+                if getattr(value, "pause_reason", ""):
+                    summary["pause_reason"] = value.pause_reason
                 if self.conversation:
                     self.conversation.finish_task(
                         value, transcript=transcript, emit=self.write, save=False
@@ -425,6 +438,8 @@ class TaskController:
             return state
 
     def command(self, text):
+        if text.split()[:1] == ["/permissions"]:
+            return self.permissions_command(text)
         if text.split()[:1] == ["/delivery"]:
             return self.delivery_command(text)
         parts = text.strip().split(maxsplit=2)
@@ -472,6 +487,45 @@ class TaskController:
                     "remove 编号|move 编号 位置|clear|retry 编号]"
                 )
         return self.describe()
+
+    def permissions_command(self, text):
+        permissions = getattr(getattr(self.runtime, "access_policy", None), "permissions", None)
+        if permissions is None:
+            raise ValueError("当前运行环境没有权限管理器")
+        parts = text.split()
+        with self.lock, permissions.lock:
+            if len(parts) == 1 or parts[1:] == ["list"]:
+                state = permissions.snapshot()
+                state.pop("events")
+                return json.dumps(state, ensure_ascii=False, indent=2)
+            if len(parts) != 3 or parts[1] not in {"approve", "deny", "revoke"}:
+                raise ValueError(
+                    "用法：/permissions [list|approve ID|deny ID|revoke ID|revoke all]"
+                )
+            if self.active or self.closing:
+                raise ValueError("请等待当前任务和清理完成后再修改权限")
+            if self.cleanup_blocked or not self._healthy():
+                raise ValueError("进程清理未确认，不能修改权限；请退出检查")
+            profile, pending, events = (
+                permissions.profile,
+                deepcopy(permissions.pending),
+                permissions.events,
+            )
+            try:
+                if parts[1] == "revoke":
+                    permissions.revoke(parts[2])
+                else:
+                    permissions.decide(parts[2], approve=parts[1] == "approve")
+                self._save()
+            except (OSError, ValueError):
+                if parts[1] == "approve":
+                    permissions.profile, permissions.pending, permissions.events = (
+                        profile,
+                        pending,
+                        events,
+                    )
+                raise
+        return "权限已更新；仅当前会话有效。/continue 继续任务，或 /permissions 查看。"
 
     def describe(self):
         labels = {

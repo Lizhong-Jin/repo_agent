@@ -45,6 +45,18 @@ def host_target():
 def selectors(profile, target):
     if target not in TARGETS:
         raise ValueError("Unknown release target")
+    permission_file = "tests/test_permission_kernel.py"
+    permission_tests = (
+        [
+            f"{permission_file}::{node.name}"
+            for node in ast.parse((ROOT / permission_file).read_text()).body
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
+        ]
+        if profile in {"native", "permissions"}
+        else []
+    )
+    if profile == "permissions":
+        return permission_tests
     if profile == "package":
         if target.startswith("windows"):
             return [
@@ -63,7 +75,7 @@ def selectors(profile, target):
         else ("tests/test_native_sandbox.py", "REAL_NATIVE")
     )
     # Keep every real kernel test mandatory. TypeScript is a separate optional capability.
-    return [
+    return permission_tests + [
         f"{file}::{node.name}"
         for node in ast.parse((ROOT / file).read_text()).body
         if isinstance(node, ast.FunctionDef)
@@ -130,9 +142,11 @@ def run(profile, target, output, archive=None):
             raise ValueError("Acceptance must run on the package's actual platform/architecture")
         required = selectors(profile, target)
         env = os.environ.copy()
-        if profile == "native":
+        if profile in {"native", "permissions"}:
             env[
-                "RUN_SANDBOX_LINUX_TESTS"
+                "RUN_WINDOWS_ISOLATION_TESTS"
+                if target.startswith("windows")
+                else "RUN_SANDBOX_LINUX_TESTS"
                 if target.startswith("linux")
                 else "RUN_SANDBOX_NATIVE_TESTS"
             ] = "1"
@@ -275,7 +289,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     runner = commands.add_parser("run")
-    runner.add_argument("--profile", choices=("native", "package"), required=True)
+    runner.add_argument("--profile", choices=("native", "package", "permissions"), required=True)
     runner.add_argument("--target", choices=TARGETS, required=True)
     runner.add_argument("--output", type=Path, required=True)
     runner.add_argument("--archive", type=Path)

@@ -8,6 +8,8 @@ HELP = (
     "/report [任务编号] [--diff] 查看交付报告；TUI 中打开独立报告页，也可按 F3。"
     "/delivery 查看交付；refresh 重判；recheck 重新验证；"
     "repair 文本 修复；accept-exception 原因 接受例外。"
+    "/permissions 查看权限及申请；approve ID 批准、deny ID 拒绝、revoke ID/all 撤销。"
+    "授权仅当前会话有效；处理申请后 /continue 继续，不自动重放调用。"
     "/workspace 查看执行工作区；退出后用 workspaces review/merge/discard 审查、合并或归档。"
     "TUI 执行中输入普通任务会排队，完成后按顺序执行。"
     "/continue 继续因调用上限暂停的任务，再获得 max_steps 轮预算并优先执行。"

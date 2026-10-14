@@ -90,7 +90,7 @@ jobs:
       - run: >-
           python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock -r requirements-build.lock
       - run: python -m pip install --no-build-isolation --no-deps -e .
-      - run: python -m pytest -q tests/test_architecture_boundaries.py tests/test_host_file_contracts.py tests/test_windows_files.py tests/test_windows_release.py tests/test_docker_acceptance.py tests/test_docker_backend.py tests/test_windows_job.py tests/test_cancellation.py tests/test_task_queue.py tests/test_continue.py tests/test_execution_ledger.py tests/test_task_reports.py tests/test_verification_plan.py tests/test_delivery.py tests/test_tui_reports.py tests/test_workspaces.py tests/test_review_mode.py
+      - run: python -m pytest -q tests/test_architecture_boundaries.py tests/test_host_file_contracts.py tests/test_windows_files.py tests/test_windows_release.py tests/test_docker_acceptance.py tests/test_docker_backend.py tests/test_windows_job.py tests/test_cancellation.py tests/test_task_queue.py tests/test_continue.py tests/test_execution_ledger.py tests/test_task_reports.py tests/test_verification_plan.py tests/test_delivery.py tests/test_tui_reports.py tests/test_workspaces.py tests/test_review_mode.py tests/test_permissions.py tests/test_permission_adapters.py
 
   windows-isolation:
     name: Windows isolation and experimental native contracts (Python ${{ matrix.python }})
@@ -123,6 +123,15 @@ jobs:
           python -m pytest -q -ra tests/test_windows_isolation.py tests/test_windows_isolation_kernel.py tests/test_windows_native.py tests/test_windows_capabilities.py tests/test_native_execution_adapter.py tests/test_windows_supervisor_diagnostics.py tests/test_git_discovery.py tests/test_architecture_boundaries.py tests/test_windows_broker.py tests/test_execution_environment.py tests/test_process_runner.py
           if errorlevel 1 exit /b 1
           python -m pytest -q -raP --maxfail=1 tests/test_windows_native_kernel.py
+          if errorlevel 1 exit /b 1
+          python scripts/release_acceptance.py run --profile permissions --target windows-x86_64 --output artifacts/windows-permissions
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: windows-permissions-${{ matrix.python }}
+          path: artifacts/windows-permissions/
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v6
         if: always()

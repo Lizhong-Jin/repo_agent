@@ -47,7 +47,10 @@ def report_trace_error(tracer):
 @contextmanager
 def open_runtime(args, workspace_root, store, environment, web_backend):
     session, native = environment.sandbox, environment.native
-    policy = AccessPolicy(getattr(args, "mode", None) or "develop")
+    policy = AccessPolicy(
+        getattr(args, "mode", None) or "develop",
+        permissions=getattr(environment, "permissions", None),
+    )
     tools = list(environment.tools)
     archive = HistoryArchive(store)
     tools += [HistoryTool(archive, "search"), HistoryTool(archive, "read")]

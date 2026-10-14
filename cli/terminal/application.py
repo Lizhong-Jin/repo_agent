@@ -316,7 +316,7 @@ class ConversationUI:
             self.editor.text = ""
             self.display_command(task)
             return
-        if task.split()[0] in {"/queue", "/continue", "/delivery"}:
+        if task.split()[0] in {"/queue", "/continue", "/delivery", "/permissions"}:
             if task.split()[0] == "/continue" and self.busy:
                 self.phase = "请等待当前任务收尾后再使用 /continue"
                 return

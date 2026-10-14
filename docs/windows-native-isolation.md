@@ -1,5 +1,7 @@
 # Windows native 隔离执行与清理
 
+显式授权的外部目录也按调用复制到 LPAC profile 的只读输入区，不加入可写工作区或回写备份。授权、程序路径映射及 Windows 实机验收边界见[统一权限与按需授权](permissions.md)。
+
 [平台适配](platform-adaptation.md#原生后端) · [原生沙箱](native-sandbox.md)
 
 Windows x86_64 native 为实验性支持，已接入工厂、能力报告、安装器与 CLI。执行使用 LPAC + Job Object；文件工具由宿主机上的可信文件服务操作原项目；进程工具在过滤后的私有项目副本中执行，确认进程树清理后逐调用回写。macOS/Linux 保持原有直接修改项目的行为。Windows 安装仍默认 local；本机启动必须通过真实隔离自检，失败不降级。

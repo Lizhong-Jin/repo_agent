@@ -7,6 +7,7 @@ from sandbox import SandboxPolicy, SandboxSession
 from sandbox.environment import DEFAULT_IMAGE, check_image_profile, detect_environment
 from sandbox.native import create_native_backend as NativeBackend
 from tools import create_default_tools
+from tools.permissions import PermissionManager, permission_tools
 
 
 @dataclass
@@ -15,6 +16,7 @@ class ExecutionEnvironment:
     sandbox: object = None
     native: object = None
     workspace: object = None
+    permissions: object = None
 
 
 def describe_retained_sandbox(session):
@@ -27,9 +29,23 @@ def describe_retained_sandbox(session):
 
 def open_execution_environment(args, workspace_root, store, capabilities, cleanup):
     session = native = None
+    permissions = PermissionManager(
+        workspace_root,
+        backend=args.sandbox,
+        access_mode=getattr(args, "mode", None) or "develop",
+    )
+    for path in getattr(args, "read_only_root", ()) or ():
+        permissions.grant("external_read", path)
+    if getattr(args, "allow_host_discovery", False):
+        permissions.grant("host_discovery")
+    if getattr(store, "data", None) and store.data.get("permissions"):
+        print("[权限] 历史权限仅作记录；本次仅应用显式启动授权，其他权限需重新申请。")
     if getattr(args, "mode", None) == "review":
         print(f"[只读审查] {workspace_root}；仅受控读取和 Git 查询，不启动命令后端")
-        return ExecutionEnvironment(create_default_tools(workspace_root, read_only=True))
+        return ExecutionEnvironment(
+            create_default_tools(workspace_root, read_only=True) + permission_tools(permissions),
+            permissions=permissions,
+        )
     independent = Path(workspace_root) != getattr(store, "project", Path(workspace_root))
     if independent:
         print(f"[独立 Git 工作区] {workspace_root}\n原项目：{store.project}；修改需审查后接收")
@@ -80,6 +96,7 @@ def open_execution_environment(args, workspace_root, store, capabilities, cleanu
             **options,
         )
         cleanup.callback(native.close)
+        permissions.bind_backend(native)
         tools = native.tools()
         chosen = native.execution_context().get("python_environments", {})
         if chosen:
@@ -136,4 +153,6 @@ def open_execution_environment(args, workspace_root, store, capabilities, cleanu
             if t.definition.name in {"git_status", "git_diff", "git_log", "git_show"}
         }
         tools = [readers.get(t.definition.name, t) for t in tools]
-    return ExecutionEnvironment(tools, session, native)
+    return ExecutionEnvironment(
+        tools + permission_tools(permissions), session, native, permissions=permissions
+    )

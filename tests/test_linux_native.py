@@ -111,6 +111,39 @@ def test_policy_masks_secrets_and_readonly_git(linux_policy, tmp_path):
     (control / "hidden-dir").chmod(0o700)  # Let non-root pytest remove its fixture.
 
 
+def test_authorized_inputs_are_readonly_mounts_without_host_source(linux_policy, tmp_path):
+    from sandbox.permission_inputs import stage_permission_inputs
+    from tools.permissions import PermissionManager
+
+    backend = linux_policy
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "data.txt").write_text("input")
+    (external / ".env").write_text("private")
+    manager = PermissionManager(backend.workspace, backend="native")
+    manager.bind_backend(backend)
+    identity = manager.grant("external_read", str(external))
+    control = tmp_path / "call"
+    scratch = control / "scratch"
+    scratch.mkdir(parents=True)
+    paths, _ = stage_permission_inputs(backend, control / "inputs")
+    copied = Path(paths[identity])
+    assert not (copied / ".env").exists()
+    try:
+        argv = backend._sandbox_command(
+            ["echo", "ok"], control, scratch, (*backend.read_paths, copied)
+        )
+        triples = [tuple(argv[i : i + 3]) for i in range(len(argv) - 2)]
+        assert ("--ro-bind", str(copied), str(copied)) in triples
+        assert ("--bind", str(copied), str(copied)) not in triples
+        assert str(external) not in argv
+        assert "--unshare-net" in argv and "--disable-userns" in argv
+        assert argv[argv.index("--cap-drop") + 1] == "ALL"
+    finally:
+        if (control / "hidden-dir").exists():
+            (control / "hidden-dir").chmod(0o700)
+
+
 def test_masks_rescan_and_reject_protected_symlinks(linux_policy):
     root = linux_policy.workspace
     assert linux_policy._mount_policy((), git_read=False) == ([], [])

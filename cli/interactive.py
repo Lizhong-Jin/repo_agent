@@ -108,7 +108,7 @@ def run_interactive(
         if task in {"/exit", "/quit"}:
             print("会话已结束。")
             return
-        if task.split()[0] in {"/queue", "/continue", "/delivery"}:
+        if task.split()[0] in {"/queue", "/continue", "/delivery", "/permissions"}:
             try:
                 print(controller.command(task))
             except (OSError, ValueError) as error:

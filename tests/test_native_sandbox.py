@@ -51,6 +51,7 @@ def test_cli_defaults_to_native_despite_old_writeback_config(tmp_path, monkeypat
         assert options == {"profile": "auto", "gpus": None, "project_python": None}
         native_calls.append(workspace)
         return SimpleNamespace(
+            workspace=workspace,
             healthy=True,
             tools=lambda: [],
             close=lambda: closed.append(True),

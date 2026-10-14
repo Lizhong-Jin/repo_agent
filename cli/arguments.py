@@ -101,6 +101,18 @@ def create_parser():
     parser.add_argument("--restore-backup", help="与 --sandbox-review 一起使用，恢复备份 ID")
     add_runtime_arguments(parser)
     parser.add_argument("--project-python", help="native 项目 Python；默认自动发现启动环境")
+    parser.add_argument(
+        "--read-only-root",
+        action="append",
+        default=[],
+        metavar="ABSOLUTE_DIRECTORY",
+        help="显式授权 native 读取外部目录（可重复）；进程使用只读输入副本，仅当前会话有效",
+    )
+    parser.add_argument(
+        "--allow-host-discovery",
+        action="store_true",
+        help="允许查询宿主平台和程序位置；不执行宿主命令，不开放环境变量",
+    )
     return parser
 
 
@@ -118,6 +130,10 @@ def parse_arguments(argv=None):
 
 
 def validate_execution_options(parser, args):
+    if getattr(args, "read_only_root", None) and (
+        args.sandbox != "native" or getattr(args, "mode", None) == "review"
+    ):
+        parser.error("--read-only-root 仅支持 develop + native")
     if getattr(args, "mode", None) == "review":
         if args.workspace == "worktree":
             parser.error("审查模式不创建 worktree；请用 --root 指向已有工作区")

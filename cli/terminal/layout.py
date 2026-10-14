@@ -54,6 +54,7 @@ def build_layout(ui, *, terminal_input=None, terminal_output=None):
                 "/logs",
                 "/report",
                 "/delivery",
+                "/permissions",
                 "/workspace",
                 "/exit",
                 "/model",

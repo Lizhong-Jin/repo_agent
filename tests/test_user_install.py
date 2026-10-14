@@ -433,6 +433,7 @@ def test_startup_defaults_and_partial_cli_overrides(
     monkeypatch.setattr(sys, "argv", ["repo-agent", *flags])
     # Model defaults must also work with zero CLI arguments and the default sandbox.
     sandbox = SimpleNamespace(
+        workspace=project,
         healthy=True,
         tools=lambda: [],
         close=lambda: None,
