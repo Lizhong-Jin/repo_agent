@@ -5,9 +5,12 @@ set -euo pipefail
 sudo apt-get update
 sudo apt-get install -y bubblewrap libseccomp2
 
+# Match LinuxNativeBackend's trusted search order, not the runner's PATH.
+bwrap_path="$(PATH=/usr/bin:/bin:/usr/local/bin command -v bwrap)"
+
 supports_nested_userns_blocking() {
   local usage
-  usage="$(bwrap --help)"
+  usage="$("$bwrap_path" --help)"
   [[ "$usage" == *--disable-userns* && "$usage" == *--assert-userns-disabled* ]]
 }
 
@@ -27,11 +30,12 @@ if ! supports_nested_userns_blocking; then
   meson setup "$build_dir/build" "$build_dir/bubblewrap-$version" \
     --buildtype=release -Dtests=false -Dman=disabled -Dselinux=disabled
   ninja -C "$build_dir/build" bwrap
-  sudo install -m 0755 "$build_dir/build/bwrap" /usr/local/bin/bwrap
-  hash -r
+  # Replace the launcher the backend actually selects on this disposable runner.
+  sudo install -m 0755 "$build_dir/build/bwrap" "$bwrap_path"
 fi
 
-bwrap --version
+printf 'Bubblewrap used by native backend: %s\n' "$bwrap_path"
+"$bwrap_path" --version
 supports_nested_userns_blocking
 if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
   sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
