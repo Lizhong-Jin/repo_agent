@@ -13,6 +13,14 @@ from configuration.environment import CONFIG_KEYS
 
 
 @pytest.fixture(autouse=True)
+def native_startup_report(request, monkeypatch):
+    if destination := os.getenv("NATIVE_STARTUP_REPORT"):
+        from native_ci_metrics import install_startup_recorder
+
+        install_startup_recorder(monkeypatch, destination, request.node.nodeid)
+
+
+@pytest.fixture(autouse=True)
 def isolated_user_defaults(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_CONFIG_DIR", str(tmp_path / "user-defaults"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "user-state"))

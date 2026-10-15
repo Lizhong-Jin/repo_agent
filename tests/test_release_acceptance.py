@@ -149,8 +149,12 @@ def test_windows_permissions_job_uses_no_skip_gate():
     )
     for name in ("windows-isolation", "windows-permissions"):
         commands = "\n".join(step.get("run", "") for step in jobs[name]["steps"])
-        assert "python -m venv .venv" in commands
-        assert ".venv/Scripts/python.exe -m pip install --require-hashes" in commands
+        if name == "windows-permissions":
+            assert "python -m venv --without-pip .venv" in commands
+            assert "python -m pip --python .venv install --no-compile --require-hashes" in commands
+        else:
+            assert "python -m venv .venv" in commands
+            assert ".venv/Scripts/python.exe -m pip install --require-hashes" in commands
         assert ".venv\\Scripts\\python.exe" in commands
         assert "--system-site-packages" not in commands
 

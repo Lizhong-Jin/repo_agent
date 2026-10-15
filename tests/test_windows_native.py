@@ -12,7 +12,12 @@ from host_support.processes import ProcessResult
 from host_support.windows_recovery import RecoveryLease, recover_profiles
 from host_support.windows_security import PrivateWindowsSecurity
 from sandbox.native_execution import NativeCall, NativeCleanupError
-from sandbox.windows_git import GitQueryProcess, copy_git_runtime, validate_git_query
+from sandbox.windows_git import (
+    GitQueryProcess,
+    copy_git_runtime,
+    git_runtime_directory,
+    validate_git_query,
+)
 from sandbox.windows_native import WindowsNativeBackend
 from sandbox.windows_python import inspect_python, stage_python
 from sandbox.windows_workspace import WindowsCallSnapshot, copy_private_tree
@@ -53,6 +58,29 @@ def test_git_runtime_rejects_reparse_source_and_honors_size_limit(tmp_path):
         pytest.skip("Creating symlinks requires Windows Developer Mode")
     with pytest.raises(ValueError, match="link or special"):
         copy_git_runtime(source, tmp_path / "linked")
+
+
+def test_git_layout_does_not_mix_old_and_new_runtimes(tmp_path):
+    for layout in ("mingw64", "ucrt64"):
+        directory = tmp_path / layout / "bin"
+        directory.mkdir(parents=True)
+        (directory / "git.exe").write_bytes(layout.encode())
+        (directory / f"{layout}.dll").write_bytes(layout.encode())
+    selected = git_runtime_directory(tmp_path / "cmd/git.exe")
+    copy_git_runtime(selected, tmp_path / "private")
+    assert {path.name for path in (tmp_path / "private").iterdir()} == {"git.exe", "ucrt64.dll"}
+    assert (tmp_path / "private/git.exe").read_bytes() == b"ucrt64"
+    assert git_runtime_directory(tmp_path / "mingw64/bin/git.exe") == tmp_path / "mingw64/bin"
+
+
+@pytest.mark.parametrize("entry", ["cmd/git.exe", "bin/git.exe", "arbitrary/git.exe"])
+def test_missing_or_unknown_git_layout_fails_with_discovered_path(tmp_path, entry):
+    executable = tmp_path / entry
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"MZ")
+    with pytest.raises(ValueError, match="standard Git for Windows layout") as error:
+        git_runtime_directory(executable)
+    assert str(executable) in str(error.value)
 
 
 @pytest.mark.parametrize("system_packages", [False, True])
@@ -209,7 +237,11 @@ def test_git_discovery_maps_only_private_repository_root(tmp_path):
 
 
 @pytest.mark.parametrize("probe", [False, True])
-def test_git_launch_is_direct_readonly_and_does_not_stage_python(tmp_path, monkeypatch, probe):
+@pytest.mark.parametrize("layout", ["mingw64", "ucrt64"])
+@pytest.mark.parametrize("entrypoint", ["cmd", "bin", "runtime"])
+def test_git_launch_is_direct_readonly_and_does_not_stage_python(
+    tmp_path, monkeypatch, probe, layout, entrypoint
+):
     backend = object.__new__(WindowsNativeBackend)
     backend.workspace = tmp_path / "project"
     backend.workspace.mkdir()
@@ -237,11 +269,12 @@ def test_git_launch_is_direct_readonly_and_does_not_stage_python(tmp_path, monke
         seal_tree=lambda path, sid, **kw: sealed.append((path, kw)),
     )
     installed = tmp_path / "Git"
-    (installed / "mingw64/bin").mkdir(parents=True)
-    (installed / "mingw64/bin/git.exe").write_bytes(b"MZgit")
+    (installed / layout / "bin").mkdir(parents=True)
+    (installed / layout / "bin/git.exe").write_bytes(b"MZgit")
+    entry = f"{layout}/bin" if entrypoint == "runtime" else entrypoint
     monkeypatch.setattr(
         "sandbox.windows_native.find_windows_executable",
-        lambda *a, **kw: str(installed / "cmd/git.exe"),
+        lambda *a, **kw: str(installed / entry / "git.exe"),
     )
 
     def unexpected_python(*args):

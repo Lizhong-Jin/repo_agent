@@ -31,18 +31,26 @@ def require_success(result, stage):
         )
 
 
-def record_capability(stage, status, *, reason=None):
+def record_capability(stage, status, *, reason=None, result=None):
     if destination := os.getenv("WINDOWS_NATIVE_CAPABILITY_REPORT"):
         path = Path(destination)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps({"stage": stage, "status": status, "reason": reason}) + "\n")
+            row = {"stage": stage, "status": status, "reason": reason}
+            if result is not None:
+                row["result"] = asdict(result)
+            stream.write(json.dumps(row) + "\n")
+
+
+@pytest.fixture(autouse=True)
+def begin_capability_report(request):
+    # Also leave evidence if startup fails before the first capability probe.
+    record_capability(request.node.name, "started")
 
 
 def require_capability_outcome(result, backend, capability, stage):
     """Only known LPAC incompatibility is an accepted rejection, never arbitrary failure."""
-    if result.success or os.getenv("REQUIRE_WINDOWS_NATIVE_FULL_TOOLS") == "1":
-        require_success(result, stage)
+    if result.success:
         record_capability(stage, "available")
         print(f"Windows native {stage}: available")
         return True
@@ -58,9 +66,10 @@ def require_capability_outcome(result, backend, capability, stage):
         and backend.healthy
         and result.data.get("execution_allowed") is False
     )
-    if not accepted:
+    if not accepted or os.getenv("REQUIRE_WINDOWS_NATIVE_FULL_TOOLS") == "1":
         # pytest abbreviates dicts in assertions, concealing the actual probe
         # exit code/stderr. Emit the already bounded result as explicit text.
+        record_capability(stage, "failed", reason=report.get("reason"), result=result)
         require_success(result, stage)
     record_capability(stage, "unavailable", reason="lpac_compatibility")
     print(f"Windows native {stage}: unavailable (lpac_compatibility), cleanup confirmed")

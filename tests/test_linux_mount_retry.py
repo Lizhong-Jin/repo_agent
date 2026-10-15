@@ -42,6 +42,10 @@ def test_changed_mount_restarts_from_fresh_filesystem_observations(scanning):
     assert masks == [root / "new.key"]
     assert len(calls) == 2 and calls[0] != calls[1]
     assert backend.last_policy_metrics["complete"]
+    metrics = backend.last_policy_metrics
+    assert metrics["attempt_count"] == 2
+    assert [item["complete"] for item in metrics["attempts"]] == [False, True]
+    assert metrics["total_scan_ms"] == sum(item["scan_ms"] for item in metrics["attempts"])
 
 
 @pytest.mark.parametrize("change", [False, True])

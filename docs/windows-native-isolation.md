@@ -94,6 +94,10 @@ Windows 的环境查询由内置 `WindowsEnvironmentService` 接收。该接口�
 
 ## 隔离与清理
 
+Git 运行时识别兼容旧版 `mingw64/bin` 和 Git for Windows 2.56 起的 `ucrt64/bin`，可从
+`cmd/git.exe`、`bin/git.exe` 或运行时内的入口定位。只复制选中运行时内的 Git 与 DLL，仍由
+无跟随复制检查拒绝符号链接和重解析目录；不混用两套运行时，也不回退到宿主 Git 执行。
+
 每次调用新建随机 AppContainer profile，仅授予固定的 `registryRead` capability，满足 Winsock 初始化、子进程创建和 Python 启动所需的系统注册表读取；无网络或目录 capability。该权限扩大可读取的注册表资源范围，实际访问仍受目标对象 ACL 和用户权限约束，不能将其视为宿主配置信息完全不可见。`SECURITY_CAPABILITIES` 配合 `ALL_APPLICATION_PACKAGES_OPT_OUT` 创建 LPAC，不继承普通 AppContainer 对 `ALL APPLICATION PACKAGES` 的额外访问。系统对受限应用共享的基础资源仍可能可见；它不是虚拟机。
 
 普通 Python、命令与 worker 创建时禁用 Win32k 与扩展点，使用 `CREATE_SUSPENDED`，通过 `PROC_THREAD_ATTRIBUTE_JOB_LIST` 在创建时原子加入私有 Job；恢复主线程前核验 Job、AppContainer SID，以及恰好一个启用的 `registryRead` SID。缺失、替换、额外 capability 或错误属性均拒绝执行。环境由可信层显式提供，句柄白名单只有标准输入输出，stdin 立即 EOF。
@@ -145,6 +149,9 @@ python -m pytest -q -ra tests/test_windows_isolation_kernel.py tests/test_window
 CI 将隔离验收和实验性后端契约验收分开执行。Git/LSP 契约只接受实际成功或已识别的 LPAC
 兼容性拒绝，并检查文件服务仍可用、探针不污染项目及清理已确认。未知失败、缺失依赖、超时
 和清理异常仍导致失败，不使用 blanket skip/xfail。契约通过不表示 Git/LSP 已可用。
+能力报告在测试开始时建立，未知失败在抛出断言前保存原始诊断。原生分组和权限作业使用不携带
+pip 的独立 venv，由宿主 pip 按哈希锁文件安装依赖；Git/venv 分组不安装 LSP。缓存仅复用依赖
+下载，不缓存私有运行时或安全扫描结果。启动阶段计时随测试报告上传。
 要严格要求整套工具全部成功，可显式运行：
 
 ```powershell

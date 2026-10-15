@@ -30,3 +30,6 @@ def test_windows_native_groups_cover_all_parameter_cases():
     assert Counter(group["group"] for group in groups) == Counter(matrix["group"])
     actual = [case for group in groups for case in group["tests"].split()]
     assert Counter(actual) == Counter(expected)
+    for group in groups:
+        needs_lsp = any(f"[{stage}]" in group["tests"] for stage in ("lsp", "all"))
+        assert group["lsp"] is needs_lsp

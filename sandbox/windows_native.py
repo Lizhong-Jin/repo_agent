@@ -31,7 +31,12 @@ from .windows_capabilities import (
     assess_probe,
 )
 from .windows_execution import WindowsLaunch, WindowsNativeExecutionAdapter
-from .windows_git import WindowsGitRunner, copy_git_runtime, validate_git_query
+from .windows_git import (
+    WindowsGitRunner,
+    copy_git_runtime,
+    git_runtime_directory,
+    validate_git_query,
+)
 from .windows_python import inspect_python, select_project, stage_python
 from .windows_workspace import WindowsCallSnapshot, copy_private_tree
 
@@ -556,17 +561,9 @@ print(json.dumps(checks))
             if call.git_read:
                 raise ValueError("Windows native Git 工具需要 Git for Windows")
             return ()
-        executable = Path(git)
-        root = executable.parent.parent
-        if (
-            executable.parent.name.lower() not in {"cmd", "bin"}
-            or not (root / "mingw64/bin/git.exe").is_file()
-        ):
-            if call.git_read:
-                raise ValueError("Windows native requires the standard Git for Windows layout")
-            return ()
+        runtime = git_runtime_directory(git)
         target = profile / "git-runtime"
-        copy_git_runtime(root / "mingw64/bin", target / "bin")
+        copy_git_runtime(runtime, target / "bin")
         if getattr(self, "_checking_capability", None) == "git":
             metadata = workspace / ".git"
             (metadata / "objects").mkdir(parents=True)

@@ -259,8 +259,16 @@ WSL 驱动 9p 挂载的跨系统访问成本；网络盘、FUSE 或缓慢存储�
 - `metadata_ms`：目录打开及别名复用前类型检查耗时；根路径解析、末尾核验等仍计入 `mapping_ms`。
 - `directory_opens`、`metadata_checks`：成功打开目录及别名类型检查次数。
 - `by_root_mount`：按暴露根路径与实际挂载点分组的枚举、分类、元数据耗时及次数，含文件系统类型。
+- `attempts`、`attempt_count`、`total_scan_ms`：包括挂载变化导致的失败尝试；原有 `scan_ms`
+  等字段仍描述最后一次尝试，`total_scan_ms` 汇总所有尝试，避免重试耗时被覆盖。
 - WSL CUDA 的 `startup_metrics.checks.driver_discovery_ms`：额外驱动发现沙箱的完整耗时；
   `startup_metrics.runs` 同时保留发现阶段与隔离/CUDA 自检阶段各自的策略和进程计时。
+
+CI 的 native/permissions 验收同时保存 `startup.jsonl`，记录每次真实初始化的
+`platform_setup_ms`、`runtime_copy_ms`、`read_paths_ms`、`preflight_ms`、`project_python_ms`
+及各次扫描的目录/挂载统计，失败初始化也保留记录。采集不额外预热或启动沙箱，因此第一条
+记录可用于区分首次目录扫描、挂载变化重试与后续热缓存运行。通过 `NATIVE_STARTUP_REPORT`
+也可以为直接运行的 pytest 指定报告路径。
 
 以下命令在 WSL 或真实 Linux 中输出完整启动与空命令耗时，可对比 standard 和 auto：
 

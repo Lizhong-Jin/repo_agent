@@ -122,7 +122,9 @@ class NativeBackendBase:
             raise ValueError("原生 GPU 的 cuda profile / GPU 选择仅支持 Linux / WSL2 NVIDIA CUDA")
         self.requested_profile = profile
         self.requested_gpus = gpus
+        phase_started = perf_counter()
         self._platform_setup()
+        self.startup_metrics["platform_setup_ms"] = (perf_counter() - phase_started) * 1000
         self.workspace = Path(workspace).resolve(strict=True)
         self.isolated_workspace = isolated_workspace
         if isolated_workspace and project_python:
@@ -155,17 +157,25 @@ class NativeBackendBase:
                 )
             self.startup_metrics["runtime_copy_ms"] = (perf_counter() - copy_started) * 1000
             self.python = Path(sys.executable).absolute()
+            phase_started = perf_counter()
             self.read_paths = self._read_paths()
+            self.startup_metrics["read_paths_ms"] = (perf_counter() - phase_started) * 1000
             self.protected_paths = tuple(runtime_protected_paths(self.workspace))
             self._prepare_workspace()
             self.startup_metrics["workspace_check_ms"] = self.last_workspace_check_ms
-            self._preflight()
+            phase_started = perf_counter()
+            try:
+                self._preflight()
+            finally:
+                self.startup_metrics["preflight_ms"] = (perf_counter() - phase_started) * 1000
+            phase_started = perf_counter()
             self.project_python = self.execution_adapter.select_project_python(self, project_python)
             if isolated_workspace and self.project_python.source != "agent fallback":
                 parent = self.project_python.executable.parent
                 if parent.resolve() != parent.absolute():
                     raise ValueError("独立工作区不能通过目录符号链接复用外部 Python 环境")
             self.project_python_info = self._probe_project_python()
+            self.startup_metrics["project_python_ms"] = (perf_counter() - phase_started) * 1000
             if hasattr(self, "preflight_metrics"):
                 self.startup_metrics["checks"] = self.preflight_metrics
         except BaseException:

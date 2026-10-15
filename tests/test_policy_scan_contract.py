@@ -94,4 +94,9 @@ def test_adapter_preserves_failure_kind_and_metrics(tmp_path, error):
     with pytest.raises(type(error)) as caught:
         backend._mount_policy((), git_read=False)
     assert caught.value is error
-    assert backend.last_policy_metrics == metrics
+    assert backend.last_policy_metrics == {
+        **metrics,
+        "attempts": [metrics],
+        "attempt_count": 1,
+        "total_scan_ms": 1,
+    }

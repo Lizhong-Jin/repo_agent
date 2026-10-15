@@ -124,6 +124,20 @@ class LinuxNativeBackend(NativeBackendBase):
 
     def _mount_policy(self, read_paths, *, git_read):
         self._check_workspace_layout()
+        attempts = []
+
+        def record(metrics):
+            attempts.append(dict(metrics))
+            self._set_metric(
+                "last_policy_metrics",
+                {
+                    **metrics,
+                    "attempts": list(attempts),
+                    "attempt_count": len(attempts),
+                    "total_scan_ms": sum(item.get("scan_ms", 0.0) for item in attempts),
+                },
+            )
+
         # A changed mount table invalidates every observation from this attempt.
         # Retry only this specific failure, before any process can be launched.
         for attempt in range(3):
@@ -152,7 +166,7 @@ class LinuxNativeBackend(NativeBackendBase):
             try:
                 result = scanner.scan(self._policy_plan(), request)
             except ScanFailure as failure:
-                self._set_metric("last_policy_metrics", failure.metrics)
+                record(failure.metrics)
                 if (
                     attempt < 2
                     and type(failure.error) is ValueError
@@ -161,7 +175,7 @@ class LinuxNativeBackend(NativeBackendBase):
                 ):
                     continue
                 raise failure.error from None
-            self._set_metric("last_policy_metrics", dict(result.metrics))
+            record(result.metrics)
             if self.wsl_drivers:
                 self.wsl_drivers.verify(table)
             return list(result.masks), list(result.git_paths)

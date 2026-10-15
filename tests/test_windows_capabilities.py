@@ -222,6 +222,41 @@ def test_ci_failure_keeps_full_bounded_probe_diagnostics(tmp_path, monkeypatch):
     assert '"exit_code_hex"' in str(error.value) and '"cleanup_status"' in str(error.value)
 
 
+@pytest.mark.parametrize("strict", [False, True])
+def test_ci_failure_writes_report_before_raising(tmp_path, monkeypatch, strict):
+    path = tmp_path / "artifacts" / "capabilities.jsonl"
+    monkeypatch.setenv("WINDOWS_NATIVE_CAPABILITY_REPORT", str(path))
+    monkeypatch.setenv("REQUIRE_WINDOWS_NATIVE_FULL_TOOLS", "1" if strict else "0")
+    value = ToolResult(
+        False,
+        error_code="NATIVE_CAPABILITY_UNAVAILABLE",
+        data={
+            "capability": "git",
+            "capability_report": {
+                "status": "unavailable",
+                "reason": "missing_dependency",
+                "diagnostics": {"error": "Git runtime not found"},
+            },
+        },
+    )
+    with pytest.raises(pytest.fail.Exception):
+        require_capability_outcome(value, backend(tmp_path), "git", "git_status")
+    report = json.loads(path.read_text())
+    assert report["status"] == "failed" and report["reason"] == "missing_dependency"
+    assert report["result"]["data"] == value.data
+
+
+def test_ci_report_exists_before_backend_startup(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from test_windows_native_kernel import begin_capability_report
+
+    path = tmp_path / "artifacts" / "capabilities.jsonl"
+    monkeypatch.setenv("WINDOWS_NATIVE_CAPABILITY_REPORT", str(path))
+    begin_capability_report.__wrapped__(SimpleNamespace(node=SimpleNamespace(name="startup")))
+    assert json.loads(path.read_text()) == {"stage": "startup", "status": "started", "reason": None}
+
+
 @pytest.mark.parametrize(
     "capability,changes",
     [

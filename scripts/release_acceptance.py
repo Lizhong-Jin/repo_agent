@@ -143,6 +143,9 @@ def run(profile, target, output, archive=None):
         required = selectors(profile, target)
         env = os.environ.copy()
         if profile in {"native", "permissions"}:
+            startup_report = output / "startup.jsonl"
+            startup_report.unlink(missing_ok=True)
+            env["NATIVE_STARTUP_REPORT"] = str(startup_report)
             env[
                 "RUN_WINDOWS_ISOLATION_TESTS"
                 if target.startswith("windows")
