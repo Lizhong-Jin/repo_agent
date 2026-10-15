@@ -326,7 +326,11 @@ print(json.dumps(checks))
             if chosen == self._agent_layout:
                 project, project_base = agent, agent_base
             else:
-                project, project_base = stage_python(chosen, profile / "project-python")
+                project, project_base = stage_python(
+                    chosen,
+                    profile / "project-python",
+                    staged_base=(self._agent_layout, agent_base),
+                )
             python_paths = (project.parent, project_base)
             mapping = [
                 (

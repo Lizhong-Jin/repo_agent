@@ -2,6 +2,7 @@
 
 import json
 import os
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -78,6 +79,61 @@ def test_venv_base_packages_follow_config_and_own_packages_are_preserved(tmp_pat
     direct = inspect_python(base_python, "base", root)
     _, direct_base = stage_python(direct, tmp_path / "direct")
     assert (direct_base / "Lib/site-packages/base_only.py").exists()
+
+
+@pytest.mark.parametrize("same_policy", [False, True])
+def test_venvs_share_only_identically_filtered_private_base(tmp_path, same_policy):
+    from sandbox.windows_python import WindowsPythonLayout
+
+    base_python = python_install(tmp_path / "base")
+    packages = base_python.parent / "Lib/site-packages"
+    packages.mkdir()
+    (packages / "base_only.py").write_text("base")
+    layouts = []
+    for name in ("agent", "project"):
+        root = tmp_path / name
+        (root / "Scripts").mkdir(parents=True)
+        (root / "Scripts/python.exe").write_bytes(b"MZvenv")
+        (root / "Lib/site-packages").mkdir(parents=True)
+        (root / f"Lib/site-packages/{name}.py").write_text(name)
+        (root / "pyvenv.cfg").write_text(f"home = {base_python.parent}\n")
+        layouts.append(
+            WindowsPythonLayout(root / "Scripts/python.exe", root, base_python.parent, name)
+        )
+    agent, project = layouts
+    project = replace(project, system_site_packages=not same_policy)
+    profile = tmp_path / "call"
+    _, private_base = stage_python(agent, profile / "agent")
+    executable, project_base = stage_python(
+        project, profile / "project", staged_base=(agent, private_base)
+    )
+    assert (project_base == private_base) is same_policy
+    assert (profile / "project/base").exists() is not same_policy
+    assert (project_base / "Lib/site-packages/base_only.py").exists() is not same_policy
+    assert (executable.parent.parent / "Lib/site-packages/project.py").read_text() == "project"
+    assert str(project_base) in (executable.parent.parent / "pyvenv.cfg").read_text()
+    # The next call still copies fresh bytes and never reuses the previous profile.
+    (base_python.parent / "Lib/new_module.py").write_text("updated")
+    _, next_base = stage_python(agent, tmp_path / "next-call/agent")
+    assert (next_base / "Lib/new_module.py").read_text() == "updated"
+    assert not (private_base / "Lib/new_module.py").exists()
+
+
+def test_direct_python_is_not_reused_as_a_filtered_venv_base(tmp_path):
+    from sandbox.windows_python import WindowsPythonLayout
+
+    python = python_install(tmp_path / "base")
+    (python.parent / "Lib/site-packages").mkdir()
+    (python.parent / "Lib/site-packages/host_only.py").write_text("must remain hidden")
+    direct = WindowsPythonLayout(python, python.parent, python.parent, "direct")
+    _, private = stage_python(direct, tmp_path / "agent")
+    root = tmp_path / "venv"
+    (root / "Scripts").mkdir(parents=True)
+    (root / "Scripts/python.exe").write_bytes(b"MZvenv")
+    layout = WindowsPythonLayout(root / "Scripts/python.exe", root, python.parent, "venv")
+    _, base = stage_python(layout, tmp_path / "project", staged_base=(direct, private))
+    assert base != private
+    assert not (base / "Lib/site-packages").exists()
 
 
 @pytest.mark.parametrize("name", ["git_status", "git_diff", "git_log", "git_show"])

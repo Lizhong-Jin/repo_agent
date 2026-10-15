@@ -89,7 +89,7 @@ def select_project(workspace, explicit, agent_python, *, isolated_workspace=Fals
     return ProjectPython(chosen.executable, chosen.source, layout.read_paths), layout
 
 
-def stage_python(layout, directory):
+def stage_python(layout, directory, *, staged_base=None):
     directory = Path(directory)
     root = directory / "environment"
 
@@ -128,7 +128,18 @@ def stage_python(layout, directory):
                 return False
             return allowed(relative)
 
-        copy_private_tree(layout.base, base, allowed=base_allowed)
+        # Reuse only an identically filtered base already copied into THIS call's
+        # private profile. Never cache user environment bytes across calls or use
+        # a direct interpreter tree that may expose extra host site-packages.
+        if (
+            staged_base is not None
+            and staged_base[0].root != staged_base[0].base
+            and staged_base[0].base == layout.base
+            and staged_base[0].system_site_packages == layout.system_site_packages
+        ):
+            base = staged_base[1]
+        else:
+            copy_private_tree(layout.base, base, allowed=base_allowed)
         (root / "pyvenv.cfg").write_text(
             f"home = {base}\n"
             f"include-system-site-packages = {str(layout.system_site_packages).lower()}\n",

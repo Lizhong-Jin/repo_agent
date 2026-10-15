@@ -12,11 +12,12 @@ import sys
 from pathlib import Path
 from time import perf_counter
 
+from host_support.cancellation import checkpoint
 from host_support.languages import sandbox_environment
 from tools._internal.file_policy import PROTECTED_NAME_RULES
 
 from .linux_gpu import NativeGPU
-from .linux_mounts import MountTable
+from .linux_mounts import MOUNT_LAYOUT_CHANGED, MountTable
 from .linux_policy import validate_workspace_file
 from .native_common import NativeBackendBase
 from .policy_scan import PolicyPlan, PolicyScanner, ScanFailure, ScanRequest
@@ -123,36 +124,47 @@ class LinuxNativeBackend(NativeBackendBase):
 
     def _mount_policy(self, read_paths, *, git_read):
         self._check_workspace_layout()
-        table = MountTable.read()
-        views, roots = (), ()
-        if self.wsl_drivers:
-            self.wsl_drivers.verify(table)
-            views = self.wsl_drivers.views(read_paths)
-            roots = tuple(
-                view / package.name for view in views for package in self.wsl_drivers.packages
+        # A changed mount table invalidates every observation from this attempt.
+        # Retry only this specific failure, before any process can be launched.
+        for attempt in range(3):
+            checkpoint()
+            table = MountTable.read()
+            views, roots = (), ()
+            if self.wsl_drivers:
+                self.wsl_drivers.verify(table)
+                views = self.wsl_drivers.views(read_paths)
+                roots = tuple(
+                    view / package.name for view in views for package in self.wsl_drivers.packages
+                )
+            request = ScanRequest(
+                read_paths=tuple(read_paths),
+                git_read=git_read,
+                mount_snapshot=table.text,
+                pruned_paths=tuple(views),
+                extra_roots=tuple(roots),
             )
-        request = ScanRequest(
-            read_paths=tuple(read_paths),
-            git_read=git_read,
-            mount_snapshot=table.text,
-            pruned_paths=tuple(views),
-            extra_roots=tuple(roots),
-        )
-        # Lazy composition also supports scanner-only benchmarks without launching
-        # a backend. The selected engine itself keeps no filesystem observations.
-        scanner = getattr(self, "_policy_scanner", None)
-        if scanner is None:
-            scanner = create_policy_scanner()
-            self._policy_scanner: PolicyScanner = scanner
-        try:
-            result = scanner.scan(self._policy_plan(), request)
-        except ScanFailure as failure:
-            self._set_metric("last_policy_metrics", failure.metrics)
-            raise failure.error from None
-        self._set_metric("last_policy_metrics", dict(result.metrics))
-        if self.wsl_drivers:
-            self.wsl_drivers.verify(table)
-        return list(result.masks), list(result.git_paths)
+            # Lazy composition also supports scanner-only benchmarks without launching
+            # a backend. The selected engine itself keeps no filesystem observations.
+            scanner = getattr(self, "_policy_scanner", None)
+            if scanner is None:
+                scanner = create_policy_scanner()
+                self._policy_scanner: PolicyScanner = scanner
+            try:
+                result = scanner.scan(self._policy_plan(), request)
+            except ScanFailure as failure:
+                self._set_metric("last_policy_metrics", failure.metrics)
+                if (
+                    attempt < 2
+                    and type(failure.error) is ValueError
+                    and str(failure.error) == MOUNT_LAYOUT_CHANGED
+                    and MountTable.read().text != table.text
+                ):
+                    continue
+                raise failure.error from None
+            self._set_metric("last_policy_metrics", dict(result.metrics))
+            if self.wsl_drivers:
+                self.wsl_drivers.verify(table)
+            return list(result.masks), list(result.git_paths)
 
     def _sandbox_command(self, command, control, scratch, read_paths, *, git_read=False):
         masks, git_paths = self._mount_policy(read_paths, git_read=git_read)

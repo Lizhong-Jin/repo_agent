@@ -127,9 +127,8 @@ def test_native_running_cancellation_removes_inputs_after_process_cleanup(
             else backend.workspace
         )
         markers.append(workspace / "started.txt")
-        # Start the launch watchdog after runtime/input preparation. Copying a
-        # Windows interpreter is not evidence that the child has started.
-        watcher.start()
+        if sys.platform != "win32":
+            watcher.start()
         return paths, mapping
 
     def cancel_when_running():
@@ -147,6 +146,18 @@ def test_native_running_cancellation_removes_inputs_after_process_cleanup(
     if sys.platform != "win32":
         monkeypatch.setattr("sandbox.posix_execution.stage_permission_inputs", capture)
     watcher = threading.Thread(target=cancel_when_running)
+    if sys.platform == "win32":
+        from host_support.windows_isolation import WindowsIsolationAPI
+
+        resume = WindowsIsolationAPI.resume
+
+        def resume_and_watch(api, thread):
+            resume(api, thread)
+            # ACL sealing and suspended-process verification are preparation,
+            # not child execution. Only now start the bounded marker wait.
+            watcher.start()
+
+        monkeypatch.setattr(WindowsIsolationAPI, "resume", resume_and_watch)
     try:
         with cancellation_scope(context), pytest.raises(RunCancelled):
             backend.execute(

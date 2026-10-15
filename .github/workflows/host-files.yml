@@ -6,6 +6,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Keep only the newest branch/PR run; manual and tag acceptance runs stay independent.
+concurrency:
+  group: host-files-${{ github.workflow }}-${{ github.event_name }}-${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch')) && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch') }}
+
 permissions:
   contents: read
 
@@ -74,11 +79,12 @@ jobs:
           path: artifacts/*.xml
           if-no-files-found: error
 
+  # Linux/macOS contracts are already included in regression above.
   contracts:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [windows-latest]
         python: ['3.11', '3.13']
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -93,7 +99,7 @@ jobs:
       - run: python -m pytest -q tests/test_architecture_boundaries.py tests/test_host_file_contracts.py tests/test_windows_files.py tests/test_windows_release.py tests/test_docker_acceptance.py tests/test_docker_backend.py tests/test_windows_job.py tests/test_cancellation.py tests/test_task_queue.py tests/test_continue.py tests/test_execution_ledger.py tests/test_task_reports.py tests/test_verification_plan.py tests/test_delivery.py tests/test_tui_reports.py tests/test_workspaces.py tests/test_review_mode.py tests/test_permissions.py tests/test_permission_adapters.py
 
   windows-isolation:
-    name: Windows isolation and experimental native contracts (Python ${{ matrix.python }})
+    name: Windows isolation contracts (Python ${{ matrix.python }})
     strategy:
       fail-fast: false
       matrix:
@@ -102,7 +108,6 @@ jobs:
     timeout-minutes: 25
     env:
       RUN_WINDOWS_ISOLATION_TESTS: '1'
-      WINDOWS_NATIVE_CAPABILITY_REPORT: artifacts/windows-native.jsonl
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -120,9 +125,7 @@ jobs:
           if not defined ISOLATION_VS exit /b 1
           call "%ISOLATION_VS%\VC\Auxiliary\Build\vcvars64.bat"
           if errorlevel 1 exit /b 1
-          .venv\Scripts\python.exe -m pytest -v -ra --durations=15 --junitxml=artifacts/windows-isolation.xml tests/test_windows_isolation.py tests/test_windows_isolation_kernel.py tests/test_windows_native.py tests/test_windows_capabilities.py tests/test_native_execution_adapter.py tests/test_windows_supervisor_diagnostics.py tests/test_git_discovery.py tests/test_architecture_boundaries.py tests/test_windows_broker.py tests/test_execution_environment.py tests/test_process_runner.py
-          if errorlevel 1 exit /b 1
-          .venv\Scripts\python.exe -m pytest -v -raP --durations=15 --junitxml=artifacts/windows-native.xml --maxfail=1 tests/test_windows_native_kernel.py
+          .venv\Scripts\python.exe -m pytest -v -ra --durations=15 --junitxml=artifacts/windows-isolation.xml tests/test_windows_security.py tests/test_windows_isolation.py tests/test_windows_isolation_kernel.py tests/test_windows_native.py tests/test_windows_capabilities.py tests/test_native_execution_adapter.py tests/test_windows_supervisor_diagnostics.py tests/test_git_discovery.py tests/test_architecture_boundaries.py tests/test_windows_broker.py tests/test_execution_environment.py tests/test_process_runner.py
 
       - uses: actions/upload-artifact@v6
         if: always()
@@ -131,10 +134,57 @@ jobs:
           path: artifacts/*.xml
           if-no-files-found: error
 
+  windows-native:
+    name: Windows native ${{ matrix.group }} (Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.13']
+        group: [python-lsp, git-venv, integration]
+        include:
+          - group: python-lsp
+            tests: >-
+              tests/test_windows_native_kernel.py::test_native_startup_python_worker_git_and_publication[python]
+              tests/test_windows_native_kernel.py::test_native_startup_python_worker_git_and_publication[lsp]
+          - group: git-venv
+            tests: >-
+              tests/test_windows_native_kernel.py::test_native_startup_python_worker_git_and_publication[git]
+              tests/test_windows_native_kernel.py::test_native_relocates_project_venv_without_changing_original
+          - group: integration
+            tests: >-
+              tests/test_windows_native_kernel.py::test_native_startup_python_worker_git_and_publication[all]
+              tests/test_windows_native_kernel.py::test_recovery_keeps_retained_work_and_never_follows_junctions
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      RUN_WINDOWS_ISOLATION_TESTS: '1'
+      WINDOWS_NATIVE_CAPABILITY_REPORT: artifacts/windows-native.jsonl
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+          architecture: x64
+      - name: Prepare isolated Windows test environment
+        run: |
+          python -m venv .venv
+          .venv/Scripts/python.exe -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock -r requirements-lsp.lock
+      - name: Run native group
+        env:
+          NATIVE_TESTS: ${{ matrix.tests }}
+        shell: cmd
+        run: |
+          .venv\Scripts\python.exe -m pytest -v -raP --durations=15 --junitxml=artifacts/windows-native.xml %NATIVE_TESTS%
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: windows-native-capabilities-${{ matrix.python }}
+          name: windows-native-tests-${{ matrix.group }}-${{ matrix.python }}
+          path: artifacts/*.xml
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: windows-native-capabilities-${{ matrix.group }}-${{ matrix.python }}
           path: artifacts/windows-native.jsonl
           if-no-files-found: error
 

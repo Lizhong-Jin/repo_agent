@@ -3,9 +3,10 @@
 import ctypes as C
 import os
 import stat
-from pathlib import Path
+from contextlib import contextmanager
 
 from . import windows_files
+from .cancellation import checkpoint
 from .filesystem import walk_descriptors
 
 
@@ -76,8 +77,9 @@ class PrivateWindowsSecurity:
         allow = 0x1301BF if writable else 0x1200A9
         return f"D:P(D;OICI;0x{deny:x};;;{sid})" + grants + f"(A;OICI;0x{allow:x};;;{sid})"
 
-    def set_acl(self, path, sid=None, *, writable=False, directory=True):
-        """Replace the ACL only on caller-owned staging/state objects, by handle."""
+    @contextmanager
+    def _dacl(self, sid, *, writable):
+        """Keep one parsed descriptor alive for an entire private-tree traversal."""
         descriptor, dacl = C.c_void_p(), C.c_void_p()
         present, defaulted = C.c_int32(), C.c_int32()
         self.api.check(
@@ -93,32 +95,45 @@ class PrivateWindowsSecurity:
             )
             if not present.value or not dacl.value:
                 raise OSError("Private ACL must not be absent or NULL")
-            with windows_files._parent(path, None) as (parent, name):
-                if name is None:
-                    raise ValueError("Never change a volume-root ACL")
-                files = windows_files._api()
-                fd = files.open(name, parent, 0x40000 | 0x20000, directory=directory)
-                try:
-                    result = self.advapi.SetSecurityInfo(
-                        files.handle(fd), 1, 0x80000004, None, None, dacl, None
-                    )
-                    if result:
-                        raise C.WinError(result)
-                finally:
-                    os.close(fd)
+            yield dacl
         finally:
             self.api.kernel.LocalFree(descriptor)
 
+    def _set_acl(self, path, dacl, *, directory=True, dir_fd=None):
+        with windows_files._parent(path, dir_fd) as (parent, name):
+            if name is None:
+                raise ValueError("Never change a volume-root ACL")
+            files = windows_files._api()
+            fd = files.open(name, parent, 0x40000 | 0x20000, directory=directory)
+            try:
+                result = self.advapi.SetSecurityInfo(
+                    files.handle(fd), 1, 0x80000004, None, None, dacl, None
+                )
+                if result:
+                    raise C.WinError(result)
+            finally:
+                os.close(fd)
+
+    def set_acl(self, path, sid=None, *, writable=False, directory=True):
+        """Replace the ACL only on caller-owned staging/state objects, by handle."""
+        with self._dacl(sid, writable=writable) as dacl:
+            self._set_acl(path, dacl, directory=directory)
+
     def seal_tree(self, path, sid, *, writable=False):
         """Seal before any untrusted process is launched; reject all link types."""
-        self.set_acl(path, sid, writable=writable)
-        for directory, dirs, names, parent in walk_descriptors(path):
-            for name in (*dirs, *names):
-                info = windows_files.stat_at(name, dir_fd=parent)
-                is_directory = stat.S_ISDIR(info.st_mode)
-                if not is_directory and (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1):
-                    raise ValueError("Private runtime contains a link or special file")
-                self.set_acl(Path(directory) / name, sid, writable=writable, directory=is_directory)
+        with self._dacl(sid, writable=writable) as dacl:
+            checkpoint()
+            self._set_acl(path, dacl)
+            for _, dirs, names, parent in walk_descriptors(path):
+                for name in (*dirs, *names):
+                    checkpoint()
+                    info = windows_files.stat_at(name, dir_fd=parent)
+                    is_directory = stat.S_ISDIR(info.st_mode)
+                    if not is_directory and (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1):
+                        raise ValueError("Private runtime contains a link or special file")
+                    # The walker already pinned this parent without following links.
+                    # Avoid reopening every ancestor for each child in large runtimes.
+                    self._set_acl(name, dacl, directory=is_directory, dir_fd=parent)
 
 
 def clear_private_directory(path):

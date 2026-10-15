@@ -6,6 +6,11 @@ on:
   workflow_dispatch:
   workflow_call:
 
+# Keep only the newest branch/PR run; manual and tag acceptance runs stay independent.
+concurrency:
+  group: native-${{ github.workflow }}-${{ github.event_name }}-${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch')) && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch') }}
+
 permissions:
   contents: read
 

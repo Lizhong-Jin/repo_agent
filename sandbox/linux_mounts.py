@@ -5,6 +5,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+MOUNT_LAYOUT_CHANGED = "Linux native 扫描期间挂载布局发生变化，拒绝使用旧策略"
+
 
 def _unescape(value):
     return re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), value)
@@ -53,4 +55,4 @@ class MountTable:
 
     def verify(self):
         if type(self).read().text != self.text:
-            raise ValueError("Linux native 扫描期间挂载布局发生变化，拒绝使用旧策略")
+            raise ValueError(MOUNT_LAYOUT_CHANGED)

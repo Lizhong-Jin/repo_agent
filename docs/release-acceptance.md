@@ -30,13 +30,15 @@
 | macos-arm64 | macos-14 | 同上 | local 安装生命周期 + native 交付 |
 | windows-x86_64 | windows-latest | 同上 | local 安装生命周期 + local 人工交付 |
 
+日常 CI 中，Linux/macOS 的 contracts 用例由同平台、同 Python 版本的默认全量测试覆盖；Windows 保留独立 contracts。Windows 原生验收按 `python-lsp`、`git-venv`、`integration` 三组并行执行，每个 Python 版本仍完整覆盖六项用例，权限验收继续独立执行。分组覆盖由 `tests/test_ci_workflows.py` 检查。分支 push 与 PR 的新运行会取消同工作流、同事件、同引用的旧运行；手动和标签验收使用独立运行组，复用工作流也有各自的组名。
+
 源码兼容回归继续覆盖 Python 3.11/3.13；发行包使用自己的受管解释器。Linux 内核和完整包验收共用 `.github/scripts/prepare-linux-isolation.sh`：安装 Bubblewrap/libseccomp，检查 `--disable-userns` 与 `--assert-userns-disabled`；系统版本不支持时，校验 SHA256 后构建固定的 Bubblewrap 0.11.0，保留 Ubuntu 22.04 的 libc 基线。脚本仅在一次性托管 runner 上解除阻挡用户 namespace 的 AppArmor 开关，不属于用户机器的安装步骤。
 
 Linux 依赖准备按后端相同的 `/usr/bin:/bin:/usr/local/bin` 顺序查找 Bubblewrap；需要升级时替换实际选中的可执行文件，并对该路径验证版本和安全选项，避免 shell 检查新版而后端仍调用旧版。
 
 macOS 通用内核验收显式使用 `standard` 配置，验证 CPU 工具和 Seatbelt 隔离，不要求托管 runner 提供 Metal 设备。真实 Metal 计算仍由 `tests/test_macos_metal.py` 的独立可选硬件测试验证；通用验收通过不代表 Metal 可用。
 
-Windows native 仍为实验性：安全拒绝且清理确认可以满足隔离契约，但不算工具功能可用。Windows 内核作业另上传 `windows-native-capabilities-<Python版本>`，逐项记录 available / unavailable；完整功能承诺需在实际目标环境开启 `REQUIRE_WINDOWS_NATIVE_FULL_TOOLS=1` 验收。
+Windows native 仍为实验性：安全拒绝且清理确认可以满足隔离契约，但不算工具功能可用。Windows 内核分组另上传 `windows-native-capabilities-<分组>-<Python版本>`，逐项记录 available / unavailable；完整功能承诺需在实际目标环境开启 `REQUIRE_WINDOWS_NATIVE_FULL_TOOLS=1` 验收。
 
 外部只读授权的全部实机测试纳入 Linux/macOS `native` 必需验收。Windows 内核作业另运行 `permissions` 验收配置，上传 `windows-permissions-<Python版本>` 的 JUnit 与 JSON；这些权限测试要求实际成功，不能用“不兼容”或跳过替代。权限取消覆盖暂存后取消及子进程启动后取消。
 
