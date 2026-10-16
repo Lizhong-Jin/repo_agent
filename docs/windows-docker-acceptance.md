@@ -18,7 +18,7 @@
 `-Build` 构建当前源码的 standard 镜像；构建需要网络。已有当前版本的镜像可以省略。
 可用 `-Python` 指定解释器、`-Image` 指定镜像、`-Report` 指定报告路径；报告默认写入
 `artifacts/windows-docker.json` 和 `artifacts/windows-docker.tui.json`。
-脚本先执行宿主契约测试，再强制运行真实容器验收及真实容器 TUI 测试。
+脚本先执行宿主契约测试，再强制运行真实容器验收、TUI 和受控依赖测试。后两项另存 JUnit 证据 `artifacts/windows-docker-services.xml`；依赖测试使用本地合成的 Python wheel/npm tarball，不访问包仓库或真实 GitHub。
 Docker/镜像缺失、挂载失败、能力缺失均返回非零，不跳过或回退 local/native。
 
 完整容器验收入口也随 Python 包分发，安装版无需 pytest 即可运行：
@@ -50,7 +50,7 @@ Docker/镜像缺失、挂载失败、能力缺失均返回非零，不跳过或�
 | TUI Ctrl+C | 离线假模型驱动真实 Docker；输入两次 Ctrl+C；验证任务取消、队列暂停、清理 confirmed 及 `/queue resume` 后完成新任务 | Windows 实机仍须另验真实按键 |
 
 “完整工具链”指镜像声明的 standard 工具和上述基础行为，不代表每种语言的所有 LSP 方法、
-所有第三方依赖或 GPU 都已测试。GPU/CUDA、项目依赖、Windows 专属程序均不在此入口范围。
+所有第三方依赖或 GPU 都已测试。源码脚本额外验证受控 Python/npm 安装后在容器中导入、宿主 token 不传入、回写与恢复仍排除 `node_modules`；安装包内的 `sandbox.docker_acceptance` 入口不含此 pytest 扩展。GPU/CUDA、任意真实项目依赖、Windows 专属程序仍需单独验收。
 
 报告包含宿主平台与 Python 版本、Docker 客户端/服务端版本、daemon 架构、实际镜像 ID、容器用户、分阶段结果、工具名单、取消清理
 记录及失败后保留的目录。容器清理查询失败不会被当成容器不存在；只检查本次记录的容器，

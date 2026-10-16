@@ -38,9 +38,16 @@ class AccessPolicy:
 
     def allows(self, tool):
         from .permissions import PermissionTool
+        from .scoped_services import ScopedServiceTool
 
         if type(tool) is PermissionTool:
             return self.permissions is not None and tool.manager is self.permissions
+        if type(tool) is ScopedServiceTool:
+            return (
+                not self.read_only
+                and self.permissions is not None
+                and tool.manager is self.permissions
+            )
         if not self.read_only:
             return True
         from .execute import GetExecutionEnvironmentTool

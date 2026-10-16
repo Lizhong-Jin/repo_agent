@@ -1,5 +1,6 @@
 """Prepare local/native/Docker tools and register cleanup at resource acquisition."""
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from sandbox.environment import DEFAULT_IMAGE, check_image_profile, detect_envir
 from sandbox.native import create_native_backend as NativeBackend
 from tools import create_default_tools
 from tools.permissions import PermissionManager, permission_tools
+from tools.scoped_services import scoped_service_tools
 
 
 @dataclass
@@ -153,6 +155,14 @@ def open_execution_environment(args, workspace_root, store, capabilities, cleanu
             if t.definition.name in {"git_status", "git_diff", "git_log", "git_show"}
         }
         tools = [readers.get(t.definition.name, t) for t in tools]
+    services = scoped_service_tools(
+        permissions,
+        workspace=session.workspace if session is not None else workspace_root,
+        backend=native if native is not None else session.backend if session is not None else None,
+        github_token=os.environ.get("REPO_AGENT_GITHUB_TOKEN") or None,
+    )
+    cleanup.callback(services[0].service.http.close)
+    tools += services
     return ExecutionEnvironment(
         tools + permission_tools(permissions), session, native, permissions=permissions
     )

@@ -42,7 +42,9 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: windows-docker-acceptance
-          path: artifacts/*.json
+          path: |
+            artifacts/*.json
+            artifacts/*.xml
       - name: Inspect remaining task containers
         if: always()
         shell: powershell

@@ -1,6 +1,6 @@
 # 工具开发参考
 
-当前权限与外部读取工具的用户接口见[统一权限与按需授权](permissions.md)。`PermissionManager` 是宿主维护的单会话授权源；`AccessPolicy`、权限工具和 native 输入暂存共享此对象，项目配置、模型参数及快照均不能构造有效授权。申请工具属于串行控制工具，只创建申请，不批准或直接执行任务。
+当前权限与外部读取工具的用户接口见[统一权限与按需授权](permissions.md)。`PermissionManager` 是宿主维护的单会话授权源；`AccessPolicy`、权限工具和 native 输入暂存共享此对象，项目配置、模型参数及快照均不能构造有效授权。申请工具属于串行控制工具，只创建申请，不批准或直接执行任务。`network_request`、`install_python_dependencies`、`install_npm_dependencies`、`github` 是另行注册的宿主串行服务：无精确授权时只申请并暂停，有授权时消耗一次再执行。它们不进入 worker 工厂，不给命令进程联网；支持范围、锁格式和跨平台限制见同一权限文档。
 
 [文档首页](index.md) · [Runtime 与验证](development.md) · [项目架构](../Project_Architecture.md)
 
@@ -557,7 +557,7 @@ RUN_SANDBOX_DOCKER_TESTS=1 .venv/bin/python -m pytest -q tests/test_multilang_sa
 
 也可设置 `SANDBOX_LSP_TEST_IMAGE` 验证另一个镜像标签。
 服务器缓存均放在 `/tmp`，适配只读根文件系统及非 root 用户；运行期不联网，也不自动下载 Go 工具链或模块。
-语言工具链已包含，但项目依赖需预置到受信任的派生镜像：`.venv`、`node_modules` 不会从宿主机复制。
+语言工具链已包含。项目依赖可预置到受信任的派生镜像，或通过受控依赖服务安装支持的锁定包到会话私有工作区；`.venv`、`node_modules` 不会从宿主机复制，受控服务也不运行生命周期脚本。
 对于复杂工程，需提供正确的 `tsconfig.json`、`go.mod`/`go.work`、`compile_commands.json` 等项目配置；
 C/C++ 编译数据库中的路径必须适用于容器内的 `/workspace`，不能直接依赖宿主机绝对路径。
 

@@ -3,10 +3,12 @@
 Saved records are audit data, not authority: there is deliberately no restore API.
 """
 
+import json
 import os
 import re
 import stat
 import sys
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import RLock
@@ -43,6 +45,7 @@ class PermissionProfile:
     access_mode: str = "develop"
     read_only_roots: tuple[ReadOnlyRoot, ...] = ()
     host_discovery: bool = False
+    operations: tuple = ()
 
 
 class PermissionManager:
@@ -108,7 +111,15 @@ class PermissionManager:
     def _event(self, action, **fields):
         self.events = [*self.events[-127:], {"action": action, **fields}]
 
-    def _validate_scope(self, capability, path):
+    def _validate_scope(self, capability, path, scope=None):
+        if capability in {"network", "dependencies", "github_read", "github_write"}:
+            from .service_scopes import validate_scope
+
+            if path is not None or self.profile.access_mode == "review":
+                raise ValueError("服务授权仅支持 develop，且不能带 path")
+            return validate_scope(capability, scope)
+        if scope is not None:
+            raise ValueError("此权限不接受 scope")
         if capability == "external_read":
             if self.profile.backend != "native" or self.profile.access_mode == "review":
                 raise ValueError("外部目录授权目前仅支持 develop + native")
@@ -119,26 +130,42 @@ class PermissionManager:
         elif capability != "host_discovery" or path is not None:
             raise ValueError("仅支持 external_read 或不带 path 的 host_discovery")
 
-    def request(self, capability, *, reason, path=None):
-        self._validate_scope(capability, path)
+    def request(self, capability, *, reason, path=None, scope=None):
+        scope = self._validate_scope(capability, path, scope)
         if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000:
             raise ValueError("权限申请需要 1–1000 字符的原因")
         with self.lock:
             for request in self.pending.values():
-                if (request["capability"], request["path"]) == (capability, path):
-                    return dict(request)
+                if (request["capability"], request["path"], request.get("scope")) == (
+                    capability,
+                    path,
+                    scope,
+                ):
+                    return deepcopy(request)
             if len(self.pending) >= 8:
                 raise ValueError("待处理申请过多；请先处理已有申请")
             identity = uuid4().hex[:12]
             request = dict(id=identity, capability=capability, path=path, reason=reason)
+            if scope is not None:
+                request["scope"] = scope
             self.pending[identity] = request
             self._event("request", **request)
-            return dict(request)
+            return deepcopy(request)
 
-    def grant(self, capability, path=None):
-        self._validate_scope(capability, path)
+    def grant(self, capability, path=None, scope=None):
+        scope = self._validate_scope(capability, path, scope)
         with self.lock:
-            if capability == "host_discovery":
+            if scope is not None:
+                if len(self.profile.operations) >= 8:
+                    raise ValueError("最多保留 8 个单次操作授权")
+                identity = uuid4().hex[:12]
+                record = (
+                    identity,
+                    capability,
+                    json.dumps(scope, sort_keys=True, ensure_ascii=True),
+                )
+                self.profile = replace(self.profile, operations=(*self.profile.operations, record))
+            elif capability == "host_discovery":
                 self.profile = replace(self.profile, host_discovery=True)
                 identity = "host_discovery"
             else:
@@ -168,7 +195,7 @@ class PermissionManager:
                     self.profile, read_only_roots=(*self.profile.read_only_roots, grant)
                 )
                 identity = grant.id
-            self._event("grant", id=identity, capability=capability, path=path)
+            self._event("grant", id=identity, capability=capability, path=path, scope=scope)
             return identity
 
     def decide(self, identity, *, approve):
@@ -177,17 +204,24 @@ class PermissionManager:
             if request is None:
                 raise ValueError("未知权限申请 ID；请先 /permissions 查看")
             if approve:
-                self.grant(request["capability"], request["path"])
+                self.grant(request["capability"], request["path"], request.get("scope"))
             del self.pending[identity]
             self._event("approve" if approve else "deny", id=identity)
 
     def revoke(self, identity):
         with self.lock:
             if identity == "all":
-                self.profile = replace(self.profile, read_only_roots=(), host_discovery=False)
+                self.profile = replace(
+                    self.profile, read_only_roots=(), host_discovery=False, operations=()
+                )
                 self.pending.clear()
             elif identity == "host_discovery":
                 self.profile = replace(self.profile, host_discovery=False)
+            elif any(g[0] == identity for g in self.profile.operations):
+                self.profile = replace(
+                    self.profile,
+                    operations=tuple(g for g in self.profile.operations if g[0] != identity),
+                )
             elif any(g.id == identity for g in self.profile.read_only_roots):
                 self.profile = replace(
                     self.profile,
@@ -203,6 +237,21 @@ class PermissionManager:
         self.revoke("all")
         self.events = []
 
+    def consume(self, capability, scope):
+        """Spend before I/O. Errors/ambiguous remote outcomes never restore authority."""
+        scope = self._validate_scope(capability, None, scope)
+        serialized = json.dumps(scope, sort_keys=True, ensure_ascii=True)
+        with self.lock:
+            for identity, kind, approved in self.profile.operations:
+                if (kind, approved) == (capability, serialized):
+                    self.profile = replace(
+                        self.profile,
+                        operations=tuple(g for g in self.profile.operations if g[0] != identity),
+                    )
+                    self._event("consume", id=identity, capability=capability)
+                    return True
+            return False
+
     def root(self, identity):
         for grant in self.profile.read_only_roots:
             if grant.id == identity:
@@ -216,7 +265,9 @@ class PermissionManager:
         with self.lock:
             return {
                 "policy": "strict"
-                if not self.profile.read_only_roots and not self.profile.host_discovery
+                if not self.profile.read_only_roots
+                and not self.profile.host_discovery
+                and not self.profile.operations
                 else "scoped",
                 "backend": self.profile.backend,
                 "access_mode": self.profile.access_mode,
@@ -227,14 +278,18 @@ class PermissionManager:
                 "external_write": False,
                 "process_network": "disabled" if self.profile.backend != "local" else "unavailable",
                 "host_discovery": self.profile.host_discovery,
+                "operations": [
+                    {"id": i, "capability": c, "scope": json.loads(s), "uses": 1}
+                    for i, c, s in self.profile.operations
+                ],
                 "external_read": [
                     {"id": g.id, "path": str(g.path)} for g in self.profile.read_only_roots
                 ],
-                "pending": [dict(r) for r in self.pending.values()],
+                "pending": deepcopy(list(self.pending.values())),
                 "lifetime": "current live session only; never restored from snapshots",
                 "execution_paths": "REPO_AGENT_READ_ROOTS JSON maps grant IDs "
                 "to read-only per-call copies",
-                "events": [dict(e) for e in self.events],
+                "events": deepcopy(self.events),
             }
 
 
@@ -248,14 +303,26 @@ class PermissionTool:
             "get_permissions": ({}, [], "Inspect effective permissions and pending requests."),
             "request_permission": (
                 {
-                    "capability": {"type": "string", "enum": ["external_read", "host_discovery"]},
+                    "capability": {
+                        "type": "string",
+                        "enum": [
+                            "external_read",
+                            "host_discovery",
+                            "network",
+                            "dependencies",
+                            "github_read",
+                            "github_write",
+                        ],
+                    },
                     "path": {"type": "string"},
+                    "scope": {"type": "object"},
                     "reason": {"type": "string"},
                 },
                 ["capability", "reason"],
                 "Request permission from the user, then pause. This NEVER approves access. "
                 "External paths must be absolute directories. "
-                "No write, network or full-access grants.",
+                "For network/dependencies/GitHub, call the corresponding service tool first to "
+                "prepare an exact single-use scope. No arbitrary process network/full access.",
             ),
             "read_external": (
                 {

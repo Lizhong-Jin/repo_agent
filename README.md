@@ -45,7 +45,7 @@ Docker 会话可使用 `/diff` 查看副本变更、`/apply` 回写原项目；l
 
 只需要分析和建议时，使用[只读审查模式](docs/review-mode.md)。它仅开放受控读取和 Git 查询，不启动命令后端；会话恢复和任务续跑会保持审查权限。
 
-默认保持严格权限。native 可用 `--read-only-root /绝对目录` 授权外部只读输入；`--allow-host-discovery` 允许查询宿主程序位置。任务中的申请由用户通过 `/permissions` 批准或拒绝，再 `/continue` 继续；授权不跨会话或重启继承。没有完全访问模式，详见[统一权限与按需授权](docs/permissions.md)。
+默认保持严格权限。native 可用 `--read-only-root /绝对目录` 授权外部只读输入；`--allow-host-discovery` 允许查询宿主程序位置。任务中的申请由用户通过 `/permissions` 批准或拒绝，再 `/continue` 继续；授权不跨会话或重启继承。新增受控 HTTPS、Python/npm 锁定依赖和 GitHub 查询/草稿 PR/文件发布，均按具体操作一次性审批，命令沙箱仍断网。没有完全访问模式，详见[统一权限与按需授权](docs/permissions.md)。
 
 ## 当前功能
 

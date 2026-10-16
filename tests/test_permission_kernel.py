@@ -1,6 +1,7 @@
 """Opt-in real OS enforcement; mocked contracts do not establish kernel isolation."""
 
 import os
+import socket
 import sys
 import threading
 import time
@@ -21,6 +22,15 @@ pytestmark = pytest.mark.skipif(
     FLAG is None or os.getenv(FLAG) != "1",
     reason="Requires explicit real native OS isolation opt-in",
 )
+
+
+@pytest.fixture
+def listening_port():
+    # A listening endpoint distinguishes denied networking from a closed port.
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        yield listener.getsockname()[1]
 
 
 @pytest.fixture
@@ -86,6 +96,50 @@ print(str(p), flush=True)
     )
     assert not denied.success or denied.data["exit_code"] != 0, denied
     assert backend.healthy
+
+
+def test_native_installed_dependency_runs_offline_without_host_credentials(
+    native_inputs, monkeypatch, listening_port
+):
+    from test_scoped_services import HTTP, approve, dependency, tool
+
+    from tools.scoped_services import ScopedServices
+
+    backend, manager, _, _ = native_inputs
+    monkeypatch.setenv("REPO_AGENT_GITHUB_TOKEN", "kernel-test-host-secret")
+    service = ScopedServices(
+        manager, backend=backend, http=HTTP(), github_token="kernel-test-host-secret"
+    )
+    args = dependency(service)
+    action = tool(service, "install_python_dependencies")
+    approve(service, action.execute(args))
+    installed = action.execute(args)
+    assert installed.success, installed
+    directory = installed.data["directory"]
+    result = backend.execute(
+        backend.workspace,
+        "run_python",
+        {
+            "code": f"""
+import os, socket, sys
+from pathlib import Path
+sys.path.insert(0, {directory!r})
+import demo
+assert demo.VALUE == 73
+assert 'REPO_AGENT_GITHUB_TOKEN' not in os.environ
+try:
+    socket.create_connection(('127.0.0.1', {listening_port}), timeout=1)
+except OSError:
+    pass
+else:
+    raise AssertionError('unexpected network connection')
+Path('dependency-result.txt').write_text(str(demo.VALUE))
+"""
+        },
+    )
+    assert result.success and result.data["exit_code"] == 0, result
+    assert (backend.workspace / "dependency-result.txt").read_text() == "73"
+    assert backend.healthy and not manager.profile.operations
 
 
 def test_native_input_copy_removed_after_timeout(native_inputs):

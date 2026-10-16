@@ -19,7 +19,7 @@ try {
         & $Python -X utf8 -m sandbox.build --profile standard --image $Image
         if ($LASTEXITCODE -ne 0) { throw "Image build failed ($LASTEXITCODE)." }
     }
-    & $Python -X utf8 -m pytest -q -ra tests/test_windows_files.py tests/test_host_file_contracts.py tests/test_docker_backend.py tests/test_windows_job.py tests/test_docker_acceptance.py tests/test_cancellation.py -k "not real_windows_docker and not real_outer_timeout and not real_docker_complete_acceptance and not real_docker_tui"
+    & $Python -X utf8 -m pytest -q -ra tests/test_windows_files.py tests/test_host_file_contracts.py tests/test_docker_backend.py tests/test_windows_job.py tests/test_docker_acceptance.py tests/test_cancellation.py -k "not real_windows_docker and not real_outer_timeout and not real_docker_complete_acceptance and not real_docker_tui and not real_docker_scoped"
     if ($LASTEXITCODE -ne 0) { throw "Host contracts failed ($LASTEXITCODE)." }
     $acceptanceArgs = @("-X", "utf8", "-m", "sandbox.docker_acceptance", "--image", $Image, "--report", $Report)
     if ($ManualCtrlC) { $acceptanceArgs += "--manual-ctrl-c" }
@@ -32,8 +32,8 @@ try {
         $env:RUN_WINDOWS_DOCKER_TESTS = "1"
         $env:SANDBOX_LSP_TEST_IMAGE = $Image
         $env:DOCKER_TUI_REPORT = [IO.Path]::ChangeExtension($Report, "tui.json")
-        & $Python -X utf8 -m pytest -q -ra tests/test_docker_acceptance.py -k real_docker_tui
-        if ($LASTEXITCODE -ne 0) { throw "Real-container TUI acceptance failed." }
+        & $Python -X utf8 -m pytest -q -ra tests/test_docker_acceptance.py -k "real_docker_tui or real_docker_scoped" --junitxml artifacts/windows-docker-services.xml
+        if ($LASTEXITCODE -ne 0) { throw "Real-container TUI/dependency acceptance failed." }
     } finally {
         $env:RUN_WINDOWS_DOCKER_TESTS = $oldWindowsTests
         $env:SANDBOX_LSP_TEST_IMAGE = $oldImage

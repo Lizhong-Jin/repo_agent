@@ -169,7 +169,9 @@ def test_normal_cli_uses_detected_profile_without_extra_flags(
             assert writeback_mode == "manual"
             return []
 
-        return SimpleNamespace(workspace=root, directory=root, tools=tools)
+        return SimpleNamespace(
+            workspace=root, directory=root, tools=tools, backend=SimpleNamespace(healthy=True)
+        )
 
     monkeypatch.setattr("cli.execution_environment.SandboxSession", session)
     monkeypatch.setattr("cli.application.run_interactive", lambda *a, **kw: None)

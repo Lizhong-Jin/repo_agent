@@ -384,6 +384,90 @@ def test_real_docker_complete_acceptance(tmp_path):
 @pytest.mark.skipif(
     os.environ.get("RUN_SANDBOX_DOCKER_TESTS") != "1"
     and not (os.name == "nt" and os.environ.get("RUN_WINDOWS_DOCKER_TESTS") == "1"),
+    reason="Requires real Docker for scoped Python/npm imports and writeback",
+)
+def test_real_docker_scoped_dependencies(tmp_path, monkeypatch):
+    import base64
+    import hashlib
+
+    from test_scoped_services import HTTP, approve, dependency, npm_archive, tool
+
+    from tools.permissions import PermissionManager
+    from tools.scoped_services import ScopedServices
+
+    monkeypatch.setenv("REPO_AGENT_GITHUB_TOKEN", "docker-host-only-secret")
+    acceptance = Acceptance(os.environ.get("SANDBOX_LSP_TEST_IMAGE", "repo-agent-sandbox:v1"))
+    with acceptance.project():
+        session = acceptance.session
+        manager = PermissionManager(session.root, backend="docker")
+        service = ScopedServices(
+            manager, workspace=session.workspace, backend=session.backend, http=HTTP()
+        )
+        args = dependency(service)
+        action = tool(service, "install_python_dependencies")
+        approve(service, action.execute(args))
+        installed = action.execute(args)
+        assert installed.success, installed
+        python_path = installed.data["directory"]
+        blob = npm_archive()
+        (session.workspace / "package-lock.json").write_text(
+            json.dumps(
+                {
+                    "lockfileVersion": 3,
+                    "packages": {
+                        "node_modules/demo": {
+                            "resolved": "https://registry.npmjs.org/demo/-/demo-1.tgz",
+                            "integrity": "sha512-"
+                            + base64.b64encode(hashlib.sha512(blob).digest()).decode(),
+                        }
+                    },
+                }
+            )
+        )
+        service.http.calls.clear()
+        service.http.respond = lambda *a, **kw: blob
+        action = tool(service, "install_npm_dependencies")
+        args = {"lock_path": "package-lock.json"}
+        approve(service, action.execute(args))
+        installed = action.execute(args)
+        assert installed.success, installed
+        node_path = installed.data["directory"]
+        acceptance.command(
+            "run_python",
+            {
+                "code": (
+                    f"import sys,os; sys.path.insert(0, {python_path!r}); import demo; "
+                    "assert demo.VALUE == 73; assert 'REPO_AGENT_GITHUB_TOKEN' not in os.environ"
+                )
+            },
+        )
+        acceptance.command(
+            "run_command",
+            {
+                "command": [
+                    "node",
+                    "-e",
+                    (
+                        f"if (require('./{node_path}/node_modules/demo') !== 73 "
+                        "|| process.env.REPO_AGENT_GITHUB_TOKEN) process.exit(1)"
+                    ),
+                ]
+            },
+        )
+        assert not (session.root / python_path).exists()
+        changed = session.apply()
+        assert f"{python_path}/demo.py" in changed
+        assert (session.root / python_path / "demo.py").is_file()
+        assert not (session.root / node_path / "node_modules").exists()
+        session.restore(session.last_backup.name)
+        assert not (session.root / python_path / "demo.py").exists()
+        assert not (session.root / "package-lock.json").exists()
+        assert session.backend.healthy and not manager.profile.operations
+
+
+@pytest.mark.skipif(
+    os.environ.get("RUN_SANDBOX_DOCKER_TESTS") != "1"
+    and not (os.name == "nt" and os.environ.get("RUN_WINDOWS_DOCKER_TESTS") == "1"),
     reason="Requires real Docker; simulated TUI input does not certify Windows console delivery",
 )
 def test_real_docker_tui_ctrl_c(tmp_path):
