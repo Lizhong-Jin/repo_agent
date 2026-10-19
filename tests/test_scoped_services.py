@@ -79,8 +79,27 @@ def wheel(entries=None):
             "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
         )
         for path, data in (entries or {"demo.py": "VALUE = 73"}).items():
-            archive.writestr(path, data)
+            if isinstance(path, str):
+                # Passing a string to writestr constructs ZipInfo, which rewrites
+                # backslashes on Windows and truncates NUL on every platform.
+                # Keep malicious fixtures malicious in both ZIP headers.
+                entry = zipfile.ZipInfo("placeholder")
+                entry.filename = entry.orig_filename = path
+            else:
+                entry = path
+            archive.writestr(entry, data)
     return stream.getvalue()
+
+
+@pytest.fixture(params=["posix", "windows"])
+def zip_separators(request, monkeypatch):
+    # Exercise both ZIP name normalization behaviors on every CI runner, without
+    # modifying the real filesystem's os module or skipping native Windows tests.
+    values = {**vars(os), "sep": "/", "altsep": None}
+    if request.param == "windows":
+        values.update(sep="\\", altsep="/")
+    monkeypatch.setattr(zipfile, "os", SimpleNamespace(**values))
+    return request.param
 
 
 def dependency(service, blob=None):
@@ -347,6 +366,13 @@ def test_dependencies_refuse_changed_content_and_unsafe_destinations(service, tm
         "/escape.py",
         "C:/escape.py",
         "a\\b.py",
+        "a.py\x00hidden",
+        "\x00a.py",
+        "a/./b.py",
+        "a/../b.py",
+        "a//b.py",
+        "./a.py",
+        "pkg//",
         "x:stream",
         "CON",
         "a/.env",
@@ -356,9 +382,63 @@ def test_dependencies_refuse_changed_content_and_unsafe_destinations(service, tm
         "repo-agent-manifest.json",
     ],
 )
-def test_wheel_cannot_escape_or_install_startup_hooks(path):
+def test_wheel_cannot_escape_or_install_startup_hooks(path, zip_separators):
     with pytest.raises(ValueError):
         unpack_wheels([wheel({path: "malicious"})])
+
+
+@pytest.mark.parametrize("path", ["a\\b.py", "a.py\x00hidden", "pkg//", "a/./b.py"])
+def test_wheel_fixture_preserves_raw_names_in_both_headers(path, zip_separators):
+    blob = wheel({path: "malicious"})
+    # Names occur in the local header and the central directory, never the data.
+    assert blob.count(path.encode()) == 2
+    with zipfile.ZipFile(io.BytesIO(blob)) as archive:
+        entry = archive.infolist()[1]
+        assert entry.orig_filename == path
+        if "\x00" in path or (zip_separators == "windows" and "\\" in path):
+            assert entry.filename != path
+        else:
+            assert entry.filename == path
+
+
+@pytest.mark.parametrize("path", ["a\\b.py", "a.py\x00hidden", "pkg//"])
+def test_invalid_wheel_names_rejected_before_reading_any_content(path, zip_separators, monkeypatch):
+    blob = wheel({path: "malicious"})
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            zipfile.ZipFile, "open", lambda *a, **kw: pytest.fail("Read before name validation")
+        )
+        with pytest.raises(ValueError):
+            unpack_wheels([blob])
+
+
+def test_valid_wheel_directories_and_unicode_names_remain_supported(zip_separators):
+    files = unpack_wheels([wheel({"pkg/": "", "pkg/示例.py": "VALUE = 73"})])
+    assert files["pkg/示例.py"] == b"VALUE = 73"
+    assert "pkg" not in files
+
+
+def test_wheel_metadata_name_is_checked_before_reading(zip_separators, monkeypatch):
+    # Replace the separator in both headers, retaining lengths and payload CRC.
+    blob = wheel().replace(b"demo-1.dist-info/WHEEL", b"demo-1.dist-info\\WHEEL")
+    assert blob.count(b"demo-1.dist-info\\WHEEL") == 2
+    monkeypatch.setattr(
+        zipfile.ZipFile, "open", lambda *a, **kw: pytest.fail("Read invalid WHEEL name")
+    )
+    with pytest.raises(ValueError):
+        unpack_wheels([blob])
+
+
+@pytest.mark.parametrize("path", ["a\\b.py", "a.py\x00hidden", "a/./b.py", "pkg//"])
+def test_install_rejects_raw_invalid_names_without_writing(service, zip_separators, path):
+    args = dependency(service, wheel({path: "malicious"}))
+    action = tool(service, "install_python_dependencies")
+    approve(service, action.execute(args))
+    result = action.execute(args)
+    assert not result.success and result.error_code == "SCOPED_SERVICE_FAILED"
+    assert len(service.http.calls) == 1
+    assert not (service.workspace / ".agent-dependencies").exists()
+    assert not service.manager.profile.operations
 
 
 def test_wheel_symlinks_collisions_and_expansion_budget():

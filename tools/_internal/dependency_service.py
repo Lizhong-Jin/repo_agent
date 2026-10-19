@@ -86,6 +86,20 @@ def lock_scope(access, lock_path, manager="python"):
     }
 
 
+def wheel_path(entry):
+    # ZipInfo.filename has already had NUL suffixes removed and, on Windows,
+    # backslashes replaced. Validate the original central-directory name before
+    # reading ANY member (including WHEEL metadata), never the sanitized alias.
+    original = entry.orig_filename
+    if original != entry.filename:
+        raise ValueError("Wheel member name was normalized by the ZIP reader")
+    # Only a single trailing slash denotes a directory. rstrip would hide empty
+    # components in names such as pkg// that the path policy must still reject.
+    name = original[:-1] if original.endswith("/") else original
+    relative_path(name)
+    return name
+
+
 def unpack_wheels(downloads):
     """Validate the entire set before writing, including cross-wheel collisions."""
     files, seen, total = {}, set(), 0
@@ -95,6 +109,10 @@ def unpack_wheels(downloads):
             entries = wheel.infolist()
             if len(entries) + len(files) > 10000:
                 raise ValueError("Too many wheel entries")
+            names = []
+            for entry in entries:
+                checkpoint()
+                names.append(wheel_path(entry))
             metadata = [item for item in entries if item.filename.endswith(".dist-info/WHEEL")]
             if len(metadata) != 1 or metadata[0].file_size > 8192:
                 raise ValueError("Invalid wheel metadata")
@@ -104,10 +122,8 @@ def unpack_wheels(downloads):
                 or "Tag: py3-none-any" not in description.splitlines()
             ):
                 raise ValueError("Only portable pure Python wheels are supported")
-            for entry in entries:
+            for entry, name in zip(entries, names, strict=True):
                 checkpoint()
-                name = entry.filename.rstrip("/")
-                relative_path(name)
                 mode = entry.external_attr >> 16
                 if stat.S_IFMT(mode) not in {0, stat.S_IFREG, stat.S_IFDIR} or entry.flag_bits & 1:
                     raise ValueError("Links, special files and encrypted entries are forbidden")
