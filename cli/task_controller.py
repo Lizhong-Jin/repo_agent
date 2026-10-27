@@ -437,7 +437,28 @@ class TaskController:
                 self.write(delivery.describe(self.delivery_result()))
             return state
 
+    def recovery_command(self, text):
+        from agent.recovery import Recovery, describe
+
+        if self.conversation is None:
+            raise ValueError("恢复入口需要已保存会话")
+        parts = text.split()
+        with self.lock:
+            recovery = Recovery(
+                self.conversation.store, self.conversation.store.id, controller=self
+            )
+            if parts in (["/recover"], ["/recover", "status"], ["/recover", "plan"]):
+                return describe(recovery.inspect())
+            if len(parts) == 4 and parts[1] == "apply" and parts[3] == "checkpoint":
+                return describe(recovery.apply(parts[2], "checkpoint"))
+            raise ValueError(
+                "用法：/recover [status|plan] 或 /recover apply 计划编号 checkpoint；"
+                "其他恢复请退出后操作"
+            )
+
     def command(self, text):
+        if text.split()[:1] == ["/recover"]:
+            return self.recovery_command(text)
         if text.split()[:1] == ["/permissions"]:
             return self.permissions_command(text)
         if text.split()[:1] == ["/delivery"]:

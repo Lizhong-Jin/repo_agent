@@ -264,3 +264,7 @@ CLI 会话绑定 `ExecutionLedger` 后自动注册 `read_tool_result`，用于�
 可信交付回归 `tests/test_delivery.py` 使用固定模型和真实 Git/短命令验证：必需规则不可降级、报告/结论/会话保存中断、内容过期、人工意见与例外绑定、队列优先重验、重启和合并限制。它已纳入跨平台契约 CI；不替代 native 内核或真实模型任务效果验收。
 
 发行门槛回归：`python -m pytest -q tests/test_release_acceptance.py`。它检查失败/跳过作业、证据缺失、跨提交或跨尝试混用、参数用例缺失与资产变化不会放行；完整发行验收另需实际平台归档。
+
+### 异常恢复与外部结果核实回归
+
+`tests/test_unified_recovery.py` 覆盖无副作用诊断、计划过期、项目锁、保存中断、真实 Git 工作区恢复与交付不确定性；`tests/test_external_operations.py` 覆盖 GitHub 发送前持久化、取消/超时、一次性核实审批、候选提交及 PR 身份判断。二者纳入默认套件和 Windows contracts，均不调用真实 GitHub 写入。功能边界及操作方式见[统一异常恢复](recovery.md)。

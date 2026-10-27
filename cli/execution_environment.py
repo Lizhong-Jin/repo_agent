@@ -8,6 +8,7 @@ from sandbox import SandboxPolicy, SandboxSession
 from sandbox.environment import DEFAULT_IMAGE, check_image_profile, detect_environment
 from sandbox.native import create_native_backend as NativeBackend
 from tools import create_default_tools
+from tools._internal.operation_journal import OperationJournal
 from tools.permissions import PermissionManager, permission_tools
 from tools.scoped_services import scoped_service_tools
 
@@ -67,7 +68,9 @@ def open_execution_environment(args, workspace_root, store, capabilities, cleanu
         previous_sandbox = store.data.get("sandbox") if store.data else None
         if previous_sandbox and store.data["mode"] == "docker":
             if store.data.get("sandbox_healthy") is False:
-                raise ValueError("上次沙箱清理未确认；请检查遗留容器后用 --new-session 启动")
+                raise ValueError(
+                    "上次沙箱清理未确认；退出后运行 repo-agent recover plan 核实遗留容器"
+                )
             session = SandboxSession.resume(
                 previous_sandbox,
                 workspace_root,
@@ -88,7 +91,7 @@ def open_execution_environment(args, workspace_root, store, capabilities, cleanu
             and store.data["mode"] == "native"
             and store.data.get("sandbox_healthy") is False
         ):
-            raise ValueError("上次原生进程清理未确认；请检查遗留进程后用 --new-session 启动")
+            raise ValueError("上次进程清理未确认；退出后运行 repo-agent recover plan 核实遗留进程")
         options = {"isolated_workspace": True} if independent else {}
         native = NativeBackend(
             workspace_root,
@@ -160,6 +163,9 @@ def open_execution_environment(args, workspace_root, store, capabilities, cleanu
         workspace=session.workspace if session is not None else workspace_root,
         backend=native if native is not None else session.backend if session is not None else None,
         github_token=os.environ.get("REPO_AGENT_GITHUB_TOKEN") or None,
+        journal=OperationJournal(store.directory, lambda: store.id)
+        if hasattr(store, "directory")
+        else None,
     )
     cleanup.callback(services[0].service.http.close)
     tools += services

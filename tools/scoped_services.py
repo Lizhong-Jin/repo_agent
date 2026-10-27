@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from host_support.cancellation import checkpoint
+from host_support.execution_receipt import PersistenceError
 from llm import ToolDefinition
 
 from ._internal.base import ExecutionKind, ToolEffects, ToolResult
@@ -13,11 +14,14 @@ from .service_scopes import fields, text, validate_scope
 
 
 class ScopedServices:
-    def __init__(self, manager, *, workspace=None, backend=None, github_token=None, http=None):
+    def __init__(
+        self, manager, *, workspace=None, backend=None, github_token=None, http=None, journal=None
+    ):
         # Imported only by host composition, never by the sandbox tool factory.
         from ._internal.github_service import GitHubService
         from ._internal.service_http import ServiceHTTP
 
+        self.journal = journal
         self.manager = manager
         self.workspace = Path(workspace or manager.profile.workspace)
         self.backend = backend
@@ -65,9 +69,33 @@ class ScopedServices:
                 elif capability == "dependencies":
                     data = install(access, scope, self.http)
                 elif capability == "github_read":
-                    data = self.github.read(scope)
+                    if scope["operation"] == "verify_operation":
+                        data = self.journal.verify(
+                            scope["operation_id"], self.github, expected=scope["record_digest"]
+                        )
+                    else:
+                        data = self.github.read(scope)
                 else:
-                    data = self.github.write(scope, access)
+                    if self.journal is None:
+                        raise ValueError("Durable operation storage is required for GitHub writes")
+                    record = self.journal.begin(scope)
+                    self.manager._event("external_operation", operation_id=record["id"])
+                    try:
+                        data = self.github.write(scope, access, journal=self.journal, record=record)
+                    except PersistenceError:
+                        raise
+                    except Exception:
+                        return ToolResult(
+                            False,
+                            {"operation_id": record["id"]},
+                            error_code="EXTERNAL_OPERATION_UNCONFIRMED",
+                            error=(
+                                "外部操作未确认；使用 /recover 查看操作ID并核实，勿直接重试写入。"
+                            ),
+                            effects=ToolEffects(),
+                        )
+                    self.journal.update(record, stage="completed")
+                    data["operation_id"] = record["id"]
                 self.manager._event("service_completed", capability=capability)
                 return ToolResult(
                     True,
@@ -101,6 +129,16 @@ class ScopedServices:
                 if scope.get("operation") in {"publish_files", "create_pull_request"}
                 else "github_read"
             )
+            if scope.get("operation") == "verify_operation":
+                from ._internal.operation_journal import fingerprint
+
+                fields(scope, {"operation", "repo", "operation_id"})
+                if self.journal is None:
+                    raise ValueError("No operation journal")
+                record = self.journal.read(scope["operation_id"])
+                if record["scope"]["repo"] != scope["repo"]:
+                    raise ValueError("Operation repository mismatch")
+                scope["record_digest"] = fingerprint(record)
             if scope.get("operation") == "publish_files":
                 paths = scope.get("files")
                 if not isinstance(paths, list) or not 1 <= len(paths) <= 32:
@@ -158,6 +196,7 @@ class ScopedServiceTool:
                         "body",
                         "branch",
                         "expected_sha",
+                        "operation_id",
                         "message",
                     )
                 },
@@ -173,6 +212,7 @@ class ScopedServiceTool:
                         "branches",
                         "create_pull_request",
                         "publish_files",
+                        "verify_operation",
                     ],
                 },
                 "number": {"type": "integer"},
@@ -182,6 +222,8 @@ class ScopedServiceTool:
             description = (
                 "Prepare exact single-use GitHub approval, then execute. repo=owner/name. "
                 "Reads: repository,pulls,branches,runs; pull/run/jobs require number. "
+                "verify_operation requires repo and recorded operation_id; a separately approved "
+                "GET-only result check, never retries a write. "
                 "create_pull_request requires head,base,title,body and always creates a draft. "
                 "publish_files requires existing branch, expected_sha, message, files "
                 "(explicit workspace paths); publishes reviewed bytes as a new commit via API, "
@@ -213,6 +255,8 @@ class ScopedServiceTool:
             )
         try:
             return self.service.execute(self.name, arguments)
+        except PersistenceError:
+            raise
         except Exception:
             # Do not leak auth headers, host paths, package bodies or transport
             # exception strings. Cancellation (BaseException) still propagates.

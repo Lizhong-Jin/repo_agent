@@ -47,6 +47,7 @@ local 的 Git 状态、差异和历史查询工具会拒绝文件实际使用外
 | --- | --- |
 | `/help` | 查看帮助 |
 | `/continue` | 继续最近达到调用上限的任务，再获得当前 `max_steps` 轮预算并优先执行 |
+| `/recover [status|plan]` | 统一检查异常；空闲时可按计划重试 checkpoint，其他动作退出后处理，见[统一异常恢复](recovery.md) |
 | `/ledger` | 查看近期持久化工具执行证据，见[执行账本](execution-ledger.md) |
 | `/report [任务编号] [--diff]` | 查看任务报告；TUI 打开独立报告页，见[任务报告](task-reports.md) |
 | `/delivery` | 查看严格交付；refresh 重判、recheck 重验、repair 修复、accept-exception 接受例外，见[可信交付](delivery.md) |

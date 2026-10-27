@@ -184,7 +184,7 @@ native 为隔离执行工具提供平台内核级的文件/网络隔离，不提
 - 超时仍返回已收集的 stdout/stderr，每路保留最多 32 KiB 原始字节的首尾内容，截断时附加标记。`status=timed_out`、`timed_out=true`、`output_complete=false` 提醒模型这是部分结果。尚未从程序内部缓冲区刷新到管道的内容无法取回。
 - 输出活动不延长总超时；清理和最后的输出收集通常最多额外耗时约 3 秒。超时前写入的项目文件仍然保留。
 - `cleanup_status` 与执行状态分开：`confirmed` 表示清理已核验，`unknown` 表示无法确认，`cleanup_error` 和 `cleanup_diagnostics` 给出原因。正常超时且清理已确认时，可以继续使用工具。取消操作也会先清理，再向上传播。
-- 清理无法确认时暂停后续命令、Python、语言服务及文件写入，返回 `NATIVE_UNHEALTHY`。`read_file`、`list_files`、`find_files`、`search_files`、`get_path_info` 仍通过轻量文件服务的路径检查执行；`get_execution_environment` 返回无需启动探测程序的环境信息及清理诊断。读取成功不会自动解除该状态；检查遗留进程后使用 `--new-session` 重启。
+- 清理无法确认时暂停后续命令、Python、语言服务及文件写入，返回 `NATIVE_UNHEALTHY`。`read_file`、`list_files`、`find_files`、`search_files`、`get_path_info` 仍通过轻量文件服务的路径检查执行；`get_execution_environment` 返回无需启动探测程序的环境信息及清理诊断。读取成功不会自动解除该状态；退出后可用 `repo-agent recover plan` 检查，核实全部遗留进程已停止后按计划显式确认，再恢复会话；也可选择新会话。人工确认不会改写历史执行结果，见[统一异常恢复](recovery.md)。
 - worker 自身异常、超时或返回无效协议时，也保留有限的 stdout/stderr，并标记 `output_kind=worker_protocol`；其中可能是未完成的工具协议文本。
 
 Apple 将 `sandbox-exec` 标记为弃用；不同 macOS 版本和外层沙箱可能不支持它。启动自检是必要条件，并非完整的安全审计。需要严格的资源限额、可控依赖或工作副本回写时，继续选择 Docker。

@@ -156,6 +156,7 @@ Docker 安装不会立即写入原项目，回写/备份仍走现有流程；`no
 | `repository` | `repo` | 仓库详情 |
 | `pulls` / `branches` / `runs` | `repo` | PR、分支或 Actions runs 首屏（最多 30 条） |
 | `pull` / `run` / `jobs` | `repo`, `number` | PR 详情、run 详情或 run 的 jobs 首屏 |
+| `verify_operation` | `repo`, `operation_id` | 单独审批后，只读核实已保存 GitHub 写入的结果；绑定操作记录摘要 |
 | `create_pull_request` | `repo`, `head`, `base`, `title`, `body` | 创建 draft PR |
 | `publish_files` | `repo`, `branch`, `expected_sha`, `message`, `files` | 将批准的工作区文件快照发布为现有分支上的新提交 |
 
@@ -171,7 +172,7 @@ Docker 安装不会立即写入原项目，回写/备份仍走现有流程；`no
 
 公开查询可无 token；私有查询和写入使用启动进程提供的 `REPO_AGENT_GITHUB_TOKEN`。用专用、最小仓库范围的 token；读取和写入所需权限由 GitHub 端控制。该变量不加入项目 `.env` 配置、不作为模型参数、不放入授权快照，不传递给命令沙箱，只发送到固定 GitHub API。缺失凭据时写入失败关闭，不寻找宿主其他凭据。远端内容是不可信数据，输出会截断；当前不下载 Actions 日志、不重跑/取消 Actions、不管理 secrets、release 或 issue。
 
-多步发布失败可能留下未引用的 Git 对象；请求发出后超时/取消也可能意味着远端写入已生效。此时授权已消耗，先通过新审批查询远端状态，不能自动重试写入。GitHub 写入是外部副作用，不受本地工作区备份恢复撤销。API 语义参见 [Git refs](https://docs.github.com/en/rest/git/refs) 和 [Pull requests](https://docs.github.com/en/rest/pulls/pulls)。
+多步发布失败可能留下未引用的 Git 对象；请求发出后超时/取消也可能意味着远端写入已生效。此时授权已消耗，先用[统一异常恢复](recovery.md)检查操作记录，通过明确联网核实或新审批的 `verify_operation` 查询远端状态，不能自动重试写入。GitHub 写入是外部副作用，不受本地工作区备份恢复撤销。API 语义参见 [Git refs](https://docs.github.com/en/rest/git/refs) 和 [Pull requests](https://docs.github.com/en/rest/pulls/pulls)。
 
 ## 回归与实机验收
 
@@ -197,7 +198,7 @@ python -m pytest -q tests/test_permission_kernel.py tests/test_windows_native_ke
 
 内核测试验证带中文/空格路径的读取、执行外部脚本、拒绝修改输入副本及宿主原件、工作区输出、撤销、超时和取消后的输入清理。取消既覆盖启动前，也覆盖观察到子进程已经运行后的取消；Windows 确认 Job 清理后删除只读输入，待恢复工作区仍按原机制保留，清理未知时不提前删除资源。
 
-服务回归覆盖精确单次审批、同批调用暂停、并发防重复消费、撤销/重启、审批保存失败回滚、SSRF/DNS/实际连接地址/重定向/大小限制、取消关闭连接、包摘要/恶意归档/写入中断、Docker 私有工作区以及 GitHub 文件变化和分支竞争。测试使用合成 token、包和 HTTP 响应，不对真实 GitHub 仓库写入。新增 native 内核用例验证已安装 Python 包可导入、宿主 token 不进入子进程、对实际监听端口的连接被拒绝；自动进入三平台 mandatory permissions 验收，跳过不能算通过。
+服务回归覆盖精确单次审批、同批调用暂停、并发防重复消费、撤销/重启、审批保存失败回滚、SSRF/DNS/实际连接地址/重定向/大小限制、取消关闭连接、包摘要/恶意归档/写入中断、Docker 私有工作区以及 GitHub 文件变化和分支竞争。测试使用合成 token、包和 HTTP 响应，不对真实 GitHub 仓库写入。外部操作落盘、模糊结果和只读核实另由 `tests/test_external_operations.py` 覆盖。新增 native 内核用例验证已安装 Python 包可导入、宿主 token 不进入子进程、对实际监听端口的连接被拒绝；自动进入三平台 mandatory permissions 验收，跳过不能算通过。
 
 Windows/Linux 实机还须核验各自内核用例；Windows Docker 须用实际镜像验证 Python/npm 导入、安装后的后续调用、Ctrl+C、工作区回写/备份恢复仍排除 npm 内容，并确认无残留容器或 Job 进程。真实 GitHub token 权限、组织策略与 TLS/公网连通性需在测试仓库逐次审批验收（查询、draft PR、文件发布及分支竞争），不能用模拟响应宣称已通过远端集成验收。
 

@@ -40,6 +40,7 @@
 | `thinking_display.py`、`thinking_store.py` | 思考显示、偏好与 CLI 参数衔接 |
 | `sessions_command.py`、`doctor.py` | 会话/日志命令、诊断结果汇总 |
 | `review_mode.py`、`workspaces_command.py` | 审查权限与目录校验、独立工作区管理入口 |
+| `recovery_command.py` | 无模型恢复命令、项目锁与显式远端核实装配 |
 | `windows_native_command.py` | Windows native 租约与残留回收命令 |
 | `terminal/report_page.py` | TUI 报告浏览与人工验收表单，不触发模型请求 |
 | `formatting.py`、`shortcuts.py` | 文本格式与快捷键 |
@@ -208,3 +209,5 @@ Rust `src/scan_pool.rs` 提供每次调用的有界线程池；`policy_scan/engi
 ### 工具执行证据与提交修复
 
 `agent/execution_ledger.py` 管理执行证据事务；Runtime 注入结果回执，分派器在取消检查前提交结果，工具和界面不直接访问数据库。`agent/result_refs.py` 定义引用格式，`agent/tool_results.py` 通过 Runtime 注入的会话查询接口提供 `read_tool_result`；其归属是执行证据，不是工作区文件工具。会话记录通过 `ledger_cursor` 关联证据。`SessionStore` 使用 `.pending-save` 与单调提交版本修复会话、索引和最新指针的部分发布，保持原有名称权威规则。详见[执行账本与崩溃恢复](execution-ledger.md)。
+
+统一恢复策略位于 `agent/recovery.py`，会话目录的 `inspect_index()` 提供无副作用读取；现有 `locked()` 仍保留启动时 redo 和旧索引迁移。GitHub 操作记录位于 `tools/_internal/operation_journal.py`，由 CLI 注入受保护的会话状态目录；发送、候选身份保存与只读核实由 GitHub 服务完成。记录跟随显式新建会话的身份，不恢复授权。详见[异常恢复](recovery.md)。

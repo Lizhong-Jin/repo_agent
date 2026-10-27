@@ -4,9 +4,10 @@ from copy import deepcopy
 import pytest
 
 from agent import AgentRuntime
+from agent.skills import SkillRegistry
 from agent.Tracing import Tracer
 from llm import LLMResponse, LLMTimeoutError, Message, ToolCall, Usage
-from tools import ExecutionKind, ReadFileTool, WriteFileTool
+from tools import DEFAULT_TOOL_GROUPS, ExecutionKind, ReadFileTool, WriteFileTool
 
 
 @pytest.fixture
@@ -284,3 +285,153 @@ def test_per_call_text_log_includes_reasoning_subtotal(tracer):
     )
     assert "输入=6687, 输出=48304, 其中思考=44963" in line
     assert runtime.last_stats.token_total("total_tokens")[0] == 54991
+
+
+@pytest.mark.parametrize(
+    "tool_name, key, requested_name, expected_status",
+    [
+        ("load_skill", "name", "debug-and-fix", "success"),
+        ("load_skill", "name", "missing-skill", "failed"),
+        ("load_skill", "name", '未知-技能"' + "x" * 310, "failed"),
+        ("load_tool_group", "group", "file_editing", "success"),
+        ("load_tool_group", "group", "missing_group", "failed"),
+        ("load_tool_group", "group", '未知-分组"\n' + "x" * 310, "failed"),
+    ],
+)
+def test_load_names_are_preserved_in_all_trace_logs(
+    tmp_path, open_conversation, tool_name, key, requested_name, expected_status
+):
+    conversation = open_conversation()
+    store = conversation.store
+    arguments = {key: requested_name}
+    call = ToolCall("load-call", tool_name, deepcopy(arguments))
+    with Tracer(tmp_path / "run-logs", session_store=store) as writer:
+        runtime = AgentRuntime(
+            Model([reply(calls=[call]), reply()]),
+            [WriteFileTool(store.project)],
+            tool_groups=DEFAULT_TOOL_GROUPS,
+            skills=SkillRegistry(store.project),
+            on_event=writer,
+        )
+        result = runtime.run("加载指定技能")
+    assert call.arguments == arguments
+    assert result.stats.tool_calls[0].arguments == arguments
+    for path in (writer.jsonl_path, store.catalog.log_path(store.id, "jsonl")):
+        events = [json.loads(line) for line in path.read_text().splitlines()]
+        calls = [
+            event["tool_call"] for event in events if event["event"] in {"tool_start", "tool_end"}
+        ]
+        assert len(calls) == 2
+        assert all(record["arguments"] == arguments for record in calls)
+        assert calls[-1]["status"] == expected_status
+    for path in (writer.text_path, store.catalog.log_path(store.id, "trace")):
+        text = path.read_text()
+        assert "参数=" + json.dumps(arguments, ensure_ascii=False) in text
+        assert "省略正文" not in text
+
+
+def test_skill_name_exception_does_not_expose_other_arguments(tmp_path, tracer):
+    private_content = "private source or extra argument"
+    private_name = "private unrelated tool name parameter"
+    calls = [
+        ToolCall("invalid-skill", "load_skill", {"name": "coding", "content": private_content}),
+        ToolCall(
+            "invalid-write",
+            "write_file",
+            {
+                "path": "unused.txt",
+                "name": private_name,
+                "content": private_content,
+            },
+        ),
+    ]
+    original = deepcopy(calls)
+    result = AgentRuntime(
+        Model([reply(calls=calls), reply()]),
+        [WriteFileTool(tmp_path)],
+        skills=SkillRegistry(tmp_path),
+        on_event=tracer,
+    ).run("检查非法调用的日志")
+    assert calls == original
+    assert result.stats.tool_calls[0].arguments["name"] == "coding"
+    assert all(record.status == "failed" for record in result.stats.tool_calls)
+    for path in (tracer.text_path, tracer.jsonl_path):
+        text = path.read_text()
+        assert private_content not in text and private_name not in text
+        assert "省略正文" in text
+
+
+@pytest.mark.parametrize(
+    "tool_name, arguments",
+    [
+        ("read_file", {"reads": [{"path": "src/主程序.py", "start_line": 2, "end_line": 8}]}),
+        ("move_file", {"source": "a.py", "destination": "b.py", "create_parents": True}),
+        ("git_diff", {"cwd": ".", "mode": "staged", "paths": ["a.py"], "context_lines": 3}),
+        ("git_log", {"revision": "HEAD~2", "limit": 5, "offset": 1}),
+        ("git_status", {"include_untracked": False, "paths": []}),
+        ("run_command", {"cwd": "src", "timeout_seconds": 30, "check_id": "unit-tests"}),
+        (
+            "find_references",
+            {
+                "path": "a.py",
+                "line": 3,
+                "column": 4,
+                "include_declaration": True,
+                "start_index": 0,
+                "limit": 20,
+            },
+        ),
+        (
+            "read_tool_result",
+            {"result_ref": "result:abc", "field": "stderr", "offset": 10, "limit": 50},
+        ),
+        ("get_execution_environment", {"sections": ["python", "tools"]}),
+    ],
+)
+def test_operation_metadata_survives_trace_serialization(tracer, tool_name, arguments):
+    from agent.Tracing import RunTrace
+
+    original = deepcopy(arguments)
+    trace = RunTrace(1, tracer)
+    token = trace.start_tool(1, ToolCall("metadata", tool_name, arguments))
+    trace.finish_tool(token)
+    assert arguments == original
+    events = [json.loads(line) for line in tracer.jsonl_path.read_text().splitlines()]
+    calls = [event["tool_call"] for event in events if event["event"].startswith("tool_")]
+    assert len(calls) == 2
+    assert all(call["arguments"] == original for call in calls)
+    assert json.dumps(original, ensure_ascii=False) in tracer.text_path.read_text()
+
+
+def test_metadata_summary_is_bounded_and_does_not_reveal_nested_bodies():
+    from agent.Tracing import summarize_arguments
+
+    secret = "private code, command arguments or extra fields"
+    cases = [
+        ("load_tool_group", {"group": "coding", "name": secret, "content": secret}),
+        (
+            "read_file",
+            {"reads": [{"path": "a.py", "content": secret}, secret, {"path": {"nested": secret}}]},
+        ),
+        ("git_diff", {"paths": [{"content": secret}]}),
+        ("run_command", {"command": [secret], "cwd": {"nested": secret}}),
+        ("run_python", {"code": secret}),
+        ("run_shell", {"script": secret}),
+        ("edit_file", {"edits": [{"old_text": secret, "new_text": secret}]}),
+        ("apply_patch", {"patch": secret}),
+        ("unknown_tool", {"group": secret, "reads": [{"path": secret}], "cwd": secret}),
+    ]
+    original = deepcopy(cases)
+    for tool_name, arguments in cases:
+        summary = summarize_arguments(arguments, tool_name=tool_name)
+        assert secret not in json.dumps(summary)
+    assert cases == original
+    for tool_name, field, value in [
+        ("git_diff", "paths", "a" * 400),
+        ("read_file", "reads", {"path": "a" * 400}),
+    ]:
+        summary = summarize_arguments({field: [value] * 40}, tool_name=tool_name)
+        assert len(summary[field]) == 33  # 32 entries and an explicit omission marker.
+        assert summary[field][-1] == "<省略 8 项>"
+        assert "截断" in json.dumps(summary, ensure_ascii=False)
+    assert summarize_arguments({"edits": [secret] * 4}) == {"edits": "<省略，4 项>"}

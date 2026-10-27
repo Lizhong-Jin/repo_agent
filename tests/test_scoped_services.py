@@ -44,7 +44,14 @@ class HTTP:
 @pytest.fixture
 def service(tmp_path):
     manager = PermissionManager(tmp_path, backend="native")
-    return ScopedServices(manager, http=HTTP(), github_token="test-secret-token")
+    from tools._internal.operation_journal import OperationJournal
+
+    return ScopedServices(
+        manager,
+        http=HTTP(),
+        github_token="test-secret-token",
+        journal=OperationJournal(tmp_path / "state", "f" * 32),
+    )
 
 
 @pytest.fixture

@@ -92,27 +92,98 @@ class RunStats:
         return (sum(values) if values else None, len(values))
 
 
-def summarize_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Record file targets and small options without copying source text or secrets."""
-    visible = {
-        "path",
-        "start_line",
-        "end_line",
-        "overwrite",
-        "create_parents",
-        "parents",
-        "include_hidden",
-        "case_sensitive",
-        "glob",
+# Additional metadata is scoped to known tools rather than exposing similarly
+# named fields everywhere. Loading identities are intentionally retained verbatim.
+_VISIBLE_ARGUMENTS = {
+    "path",
+    "start_line",
+    "end_line",
+    "overwrite",
+    "create_parents",
+    "parents",
+    "include_hidden",
+    "case_sensitive",
+    "glob",
+}
+_TOOL_ARGUMENTS = {
+    "move_file": {"source", "destination"},
+    "find_files": {"type"},
+    "git_diff": {"cwd", "mode", "context_lines"},
+    "git_log": {"cwd", "revision", "limit", "offset"},
+    "git_show": {"cwd", "revision", "context_lines"},
+    "git_status": {"cwd", "include_untracked"},
+    "run_command": {"cwd", "timeout_seconds", "check_id"},
+    "run_shell": {"cwd", "timeout_seconds", "check_id"},
+    "run_python": {"cwd", "timeout_seconds", "check_id"},
+    "get_symbols": {"start_index", "limit"},
+    "go_to_definition": {"line", "column", "start_index", "limit"},
+    "find_references": {"line", "column", "start_index", "limit", "include_declaration"},
+    "get_diagnostics": {"start_index", "limit"},
+    "get_hover": {"line", "column"},
+    "search_workspace_symbols": {"server_id", "limit"},
+    "read_tool_result": {"result_ref", "field", "offset", "limit"},
+}
+_LIST_ARGUMENTS = {
+    "git_diff": "paths",
+    "git_log": "paths",
+    "git_show": "paths",
+    "git_status": "paths",
+    "get_execution_environment": "sections",
+}
+_MAX_ARGUMENT_CHARS = 300
+_MAX_ARGUMENT_ITEMS = 32
+
+
+def _omitted_argument(value: Any) -> str:
+    if isinstance(value, str):
+        return f"<省略正文，{len(value)} 字符>"
+    if isinstance(value, (list, dict)):
+        return f"<省略，{len(value)} 项>"
+    return "<省略>"
+
+
+def _visible_argument(value: Any) -> Any:
+    if isinstance(value, str):
+        if len(value) > _MAX_ARGUMENT_CHARS:
+            remaining = len(value) - _MAX_ARGUMENT_CHARS
+            return value[:_MAX_ARGUMENT_CHARS] + f"<截断，剩余 {remaining} 字符>"
+        return value
+    if isinstance(value, (bool, int, float)):
+        return value
+    return _omitted_argument(value)
+
+
+def _summarize_fields(arguments: dict, visible: set[str]) -> dict:
+    return {
+        key: _visible_argument(value) if key in visible else _omitted_argument(value)
+        for key, value in arguments.items()
     }
-    summary = {}
-    for key, value in arguments.items():
-        if key in visible and isinstance(value, (str, bool, int, float)):
-            summary[key] = value[:300] if isinstance(value, str) else value
-        elif isinstance(value, str):
-            summary[key] = f"<省略正文，{len(value)} 字符>"
-        else:
-            summary[key] = "<省略>"
+
+
+def summarize_arguments(
+    arguments: dict[str, Any], *, tool_name: str | None = None
+) -> dict[str, Any]:
+    """Keep loading identities and bounded operation metadata, without body text."""
+    visible = _VISIBLE_ARGUMENTS | _TOOL_ARGUMENTS.get(tool_name, set())
+    summary = _summarize_fields(arguments, visible)
+    identity = {"load_skill": "name", "load_tool_group": "group"}.get(tool_name)
+    if identity in arguments and isinstance(arguments[identity], str):
+        summary[identity] = arguments[identity]
+
+    list_key = "reads" if tool_name == "read_file" else _LIST_ARGUMENTS.get(tool_name)
+    entries = arguments.get(list_key)
+    if isinstance(entries, list):
+        items = []
+        for entry in entries[:_MAX_ARGUMENT_ITEMS]:
+            if tool_name == "read_file" and isinstance(entry, dict):
+                items.append(_summarize_fields(entry, {"path", "start_line", "end_line"}))
+            elif tool_name != "read_file" and isinstance(entry, str):
+                items.append(_visible_argument(entry))
+            else:
+                items.append(_omitted_argument(entry))
+        if len(entries) > _MAX_ARGUMENT_ITEMS:
+            items.append(f"<省略 {len(entries) - _MAX_ARGUMENT_ITEMS} 项>")
+        summary[list_key] = items
     return summary
 
 
@@ -285,7 +356,9 @@ class RunTrace:
             self.emit("model_end")
 
     def start_tool(self, step, call):
-        record = ToolCallRecord(step, call.id, call.name, summarize_arguments(call.arguments))
+        record = ToolCallRecord(
+            step, call.id, call.name, summarize_arguments(call.arguments, tool_name=call.name)
+        )
         self.stats.tool_calls.append(record)
         started = perf_counter()
         self._emit_tool("tool_start", record)

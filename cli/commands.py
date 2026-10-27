@@ -5,6 +5,11 @@ from sandbox import SandboxSession
 
 
 def dispatch_command(argv):
+    if argv[:1] == ["recover"] or (argv[:1] == ["--root"] and argv[2:3] == ["recover"]):
+        from .recovery_command import main as recovery_main
+
+        recovery_main(argv[1:] if argv[0] == "recover" else ["--root", argv[1], *argv[3:]])
+        return True
     if argv[:1] == ["delivery"] or (argv[:1] == ["--root"] and argv[2:3] == ["delivery"]):
         from .delivery_command import main as delivery_main
 

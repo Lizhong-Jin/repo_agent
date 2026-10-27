@@ -155,6 +155,10 @@ def validate_scope(capability, value):
                 fields(scope, {"repo", "operation", "number"})
                 if type(scope["number"]) is not int or not 1 <= scope["number"] <= 2**63 - 1:
                     raise ValueError("Invalid GitHub identifier")
+            elif operation == "verify_operation":
+                fields(scope, {"repo", "operation", "operation_id", "record_digest"})
+                digest(scope["operation_id"], 32)
+                digest(scope["record_digest"])
             else:
                 raise ValueError("Unsupported GitHub read")
         elif operation == "create_pull_request":

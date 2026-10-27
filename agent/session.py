@@ -370,6 +370,40 @@ class SessionCatalog:
         (self.directory / ".pending-save").unlink()
         sync_directory(self.directory)
 
+    def inspect_index(self):
+        """Read catalog metadata without replay, migration, locks or directory creation."""
+        path = self.directory / "index"
+        if path.exists() or path.is_symlink():
+            index = _read(path)
+            if (
+                not isinstance(index, dict)
+                or index.get("version") != 1
+                or type(index.get("next_sequence")) is not int
+                or not isinstance(index.get("sessions"), dict)
+                or type(index.get("commit_revision", 0)) is not int
+                or index.get("commit_revision", 0) < 0
+            ):
+                raise ValueError("会话索引损坏，请保留记录并修复 index")
+            numbers = set()
+            for sid, row in index["sessions"].items():
+                if (
+                    not SESSION_ID.fullmatch(sid)
+                    or not isinstance(row, dict)
+                    or type(row.get("sequence")) is not int
+                    or row["sequence"] < 1
+                    or row["sequence"] in numbers
+                    or not isinstance(row.get("created_at"), str)
+                    or not isinstance(row.get("updated_at"), str)
+                ):
+                    raise ValueError("会话索引损坏")
+                validate_name(row.get("name"))
+                numbers.add(row["sequence"])
+            if index["next_sequence"] <= max(numbers, default=0):
+                raise ValueError("会话序号索引损坏")
+        else:
+            index = {"version": 1, "next_sequence": 1, "sessions": {}}
+        return index
+
     @contextmanager
     def locked(self):
         if self.directory.is_symlink():
@@ -378,36 +412,7 @@ class SessionCatalog:
         fd = open_file(self.directory / ".metadata.lock", os.O_RDWR | os.O_CREAT, nonblocking=False)
         try:
             lock_descriptor(fd)
-            path = self.directory / "index"
-            if path.exists() or path.is_symlink():
-                index = _read(path)
-                if (
-                    not isinstance(index, dict)
-                    or index.get("version") != 1
-                    or type(index.get("next_sequence")) is not int
-                    or not isinstance(index.get("sessions"), dict)
-                    or type(index.get("commit_revision", 0)) is not int
-                    or index.get("commit_revision", 0) < 0
-                ):
-                    raise ValueError("会话索引损坏，请保留记录并修复 index")
-                numbers = set()
-                for sid, row in index["sessions"].items():
-                    if (
-                        not SESSION_ID.fullmatch(sid)
-                        or not isinstance(row, dict)
-                        or type(row.get("sequence")) is not int
-                        or row["sequence"] < 1
-                        or row["sequence"] in numbers
-                        or not isinstance(row.get("created_at"), str)
-                        or not isinstance(row.get("updated_at"), str)
-                    ):
-                        raise ValueError("会话索引损坏")
-                    validate_name(row.get("name"))
-                    numbers.add(row["sequence"])
-                if index["next_sequence"] <= max(numbers, default=0):
-                    raise ValueError("会话序号索引损坏")
-            else:
-                index = {"version": 1, "next_sequence": 1, "sessions": {}}
+            index = self.inspect_index()
             pending = self.directory / ".pending-save"
             if pending.exists() or pending.is_symlink():
                 self.complete_commit(index, _read(pending))
