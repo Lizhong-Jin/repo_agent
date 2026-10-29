@@ -15,7 +15,13 @@ from cli.task_controller import TaskController
 
 def contents(directory):
     return {
-        str(p.relative_to(directory)): p.read_bytes() for p in directory.rglob("*") if p.is_file()
+        # Windows byte-range locks forbid reading this file via another descriptor.
+        # Still compare its existence and identity without opening its locked bytes.
+        str(p.relative_to(directory)): (p.stat().st_ino, p.stat().st_size)
+        if p == directory / ".lock"
+        else p.read_bytes()
+        for p in directory.rglob("*")
+        if p.is_file()
     }
 
 
@@ -29,6 +35,142 @@ def pending_save(conversation, monkeypatch):
     with pytest.raises(OSError):
         conversation.checkpoint(strict=True)
     monkeypatch.setattr(conversation.store.catalog, "complete_commit", original)
+
+
+def test_read_only_snapshot_does_not_open_locked_bytes(open_conversation, monkeypatch):
+    from pathlib import Path
+
+    conversation = open_conversation()
+    directory = conversation.store.directory
+    read = Path.read_bytes
+
+    def windows_read(path):
+        if path == directory / ".lock":
+            raise PermissionError("mandatory byte-range lock")
+        return read(path)
+
+    monkeypatch.setattr(Path, "read_bytes", windows_read)
+    before = contents(directory)
+    assert ".lock" in before
+    assert Recovery(conversation.store).inspect()["plan"]
+    assert contents(directory) == before
+    (directory / "sentinel").write_bytes(b"changed")
+    assert contents(directory) != before
+
+
+@pytest.mark.parametrize("state", ["pending", "empty_pending", "running", "unhealthy", "ledger"])
+@pytest.mark.parametrize("backend", ["local", "native", "docker"])
+def test_startup_cannot_bypass_recovery_by_switching_backend(
+    open_conversation, monkeypatch, state, backend
+):
+    from contextlib import ExitStack
+
+    from cli import execution_environment as environment
+    from cli.arguments import parse_arguments
+
+    conversation = open_conversation()
+    data = deepcopy(conversation.store.data)
+    if state in {"pending", "empty_pending"}:
+        data["pending_task"] = "unfinished" if state == "pending" else ""
+    elif state == "running":
+        queue = TaskQueue(data["task_queue"])
+        queue.add("unfinished")
+        queue.claim({})
+        data["task_queue"] = queue.snapshot()
+    elif state == "unhealthy":
+        data["sandbox_healthy"] = False
+    conversation.store.save(data)
+    if state == "ledger":
+        conversation.ledger.begin("newer-than-snapshot", {})
+    monkeypatch.setattr(environment, "PermissionManager", lambda *a, **k: pytest.fail("startup"))
+    _, args = parse_arguments(["--sandbox", backend])
+    with ExitStack() as cleanup, pytest.raises(ValueError, match="recover plan"):
+        environment.open_execution_environment(
+            args, conversation.store.project, conversation.store, None, cleanup
+        )
+
+
+@pytest.mark.parametrize("pending", ["unfinished", ""])
+def test_restart_keeps_cleanup_unknown_until_explicit_recovery(open_conversation, pending):
+    conversation = open_conversation()
+    conversation.pending_task = pending
+    conversation.checkpoint(strict=True)
+    conversation.store.close()
+    for _ in range(2):
+        restored = open_conversation()
+        control = TaskController(restored.runtime, conversation=restored)
+        assert restored.store.data["sandbox_healthy"] is False
+        assert not control._healthy()
+        with pytest.raises(ValueError, match="清理"):
+            control.resume()
+        assert not restored.runtime.llm.requests
+        restored.store.close()
+
+
+@pytest.mark.parametrize("state", ["intended", "started", "uncertain", "returned"])
+def test_ledger_only_recovery_preserves_cleanup_uncertainty(open_conversation, state):
+    from llm import Message, ToolCall
+
+    conversation = open_conversation()
+    ledger = conversation.ledger
+    ledger.begin("lost-run", {})
+    ledger.prepare(
+        "lost-run", Message("assistant", tool_calls=[ToolCall("lost", "run_command", {})])
+    )
+    if state != "intended":
+        ledger.start("lost-run", "lost")
+    if state in {"uncertain", "returned"}:
+        ledger.finish(
+            "lost-run",
+            "lost",
+            Message("tool", "{}", tool_call_id="lost", name="run_command"),
+            {},
+            certain=state == "returned",
+        )
+    # More recent calls must not hide uncertainty beyond the display's 30-row limit.
+    for index in range(35):
+        ledger.prepare(
+            "lost-run", Message("assistant", tool_calls=[ToolCall(str(index), "read_file", {})])
+        )
+    before = ledger.evidence()
+    recovery = Recovery(conversation.store)
+    result = recovery.apply(recovery.inspect()["plan"], "reconcile-session")
+    assert ("confirm-cleanup" in result["actions"]) == (state in {"started", "uncertain"})
+    assert ledger.evidence() == before
+    _, evidence = select_snapshot(conversation.store, "latest")
+    assert evidence["session"]["sandbox_healthy"] == (state in {"intended", "returned"})
+
+
+def test_missing_workspace_record_never_falls_back_to_project(open_conversation, monkeypatch):
+    conversation = open_conversation()
+    data = deepcopy(conversation.store.data)
+    data.update(workspace_id=conversation.store.id, sandbox_healthy=False)
+    conversation.store.save(data)
+    monkeypatch.setattr("agent.recovery.snapshot", lambda *a, **k: pytest.fail("project fallback"))
+    report = Recovery(conversation.store).inspect()
+    assert report["plan"] is None and not report["actions"]
+    assert report["issues"][0]["code"] == "evidence.unreadable"
+
+
+def test_session_number_takes_precedence_over_numeric_name(open_conversation):
+    first = open_conversation()
+    first_id = first.store.id
+    first.store.close()
+    second = open_conversation(new=True)
+    second.rename("1")
+    selected, _ = select_snapshot(second.store, "1")
+    assert selected.id == first_id
+
+
+def test_legacy_null_queue_does_not_block_healthy_restart(open_conversation):
+    conversation = open_conversation()
+    data = deepcopy(conversation.store.data)
+    data["task_queue"] = None
+    conversation.store.save(data)
+    assert not conversation.ledger.recovery_required()
+    conversation.store.close()
+    restored = open_conversation()
+    assert not restored.recovery_blocked and not restored.queue.data["tasks"]
 
 
 def test_status_and_plan_never_replay_pending_commit(open_conversation, monkeypatch, capsys):
@@ -276,6 +418,40 @@ def test_workspace_recovery_uses_real_git_without_replaying_merge(tmp_path, monk
         monkeypatch.setattr(Workspace, "merge", lambda *a: pytest.fail("never merge again"))
         recovery.apply(plan["plan"], "workspace-recover")
         assert Workspace(store).data["state"] == "merged"
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("damage", ["missing", "replacement"])
+def test_workspace_cleanup_rejects_lost_git_identity(tmp_path, damage):
+    from agent.workspaces import prepare_workspace
+    from host_support.git_worktree import Git
+
+    root = tmp_path / "git-project"
+    root.mkdir()
+    (root / "file").write_text("baseline")
+    git = Git(root)
+    git.run("init", "--template=", "--initial-branch=main")
+    git.run("add", "file")
+    git.run("commit", "-m", "baseline")
+    store = SessionStore(root).open()
+    try:
+        workspace = prepare_workspace(store, "worktree")
+        workspace.data["state"] = "blocked"
+        workspace.save()
+        recovery = Recovery(store, store.id)
+        plan = recovery.inspect()
+        assert "confirm-cleanup" in plan["actions"]
+        workspace.root.rename(workspace.root.with_name("retained"))
+        if damage == "replacement":
+            workspace.root.mkdir()
+        report = recovery.inspect()
+        assert report["plan"] is None and not report["actions"]
+        with pytest.raises(ValueError, match="过期"):
+            recovery.apply(
+                plan["plan"], "confirm-cleanup", confirm_stopped=True, note="old observation"
+            )
+        assert workspace.data["state"] == "blocked"
     finally:
         store.close()
 

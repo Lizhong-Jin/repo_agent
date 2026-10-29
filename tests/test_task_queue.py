@@ -206,6 +206,21 @@ def test_restore_pauses_and_never_replays_uncertain_work(open_conversation, runn
     assert after.queue.paused and after.start_next() is None
     assert not restored.runtime.llm.requests
     assert after.queue.get(1)["state"] == ("interrupted" if running else "queued")
+    if running:
+        from agent.recovery import Recovery
+
+        with pytest.raises(ValueError, match="清理"):
+            after.resume()
+        recovery = Recovery(restored.store)
+        recovery.apply(
+            recovery.inspect()["plan"],
+            "confirm-cleanup",
+            confirm_stopped=True,
+            note="测试执行器未派发进程，已核实停止",
+        )
+        restored.store.close()
+        restored = open_conversation()
+        after = controller(restored)
     after.resume()
     finish_next(after)
     assert restored.runtime.llm.requests[0].messages[-1].content == (

@@ -41,10 +41,10 @@ def select_snapshot(store, selector):
         sid = selector
     else:
         matches = [
-            sid
-            for sid, row in index["sessions"].items()
-            if selector in {str(row["sequence"]), row["name"]}
+            sid for sid, row in index["sessions"].items() if selector == str(row["sequence"])
         ]
+        if not matches:
+            matches = [sid for sid, row in index["sessions"].items() if selector == row["name"]]
         if len(matches) != 1:
             raise ValueError("找不到唯一会话；请指定完整会话 ID")
         sid = matches[0]
@@ -126,6 +126,14 @@ class Recovery:
                     "repair-save",
                 )
             workspace = Workspace(view)
+            if (
+                data
+                and data.get("workspace_id")
+                and (not workspace.data or data["workspace_id"] != workspace.id)
+            ):
+                raise ValueError("会话绑定的工作区记录缺失或不匹配；不能回退到原项目")
+            if workspace.data and workspace.data["state"] in {"ready", "running", "blocked"}:
+                workspace.validate()
             evidence["workspace"] = workspace.data
             root = workspace.root if workspace.data else view.project
             if data is None:
@@ -188,7 +196,7 @@ class Recovery:
                         ["execute"],
                         "reconcile-session",
                     )
-                if queue.running or data.get("pending_task"):
+                if queue.running or data.get("pending_task") is not None:
                     issue(
                         "task.interrupted",
                         "执行未确认完成；标记中断，不重放工具",
@@ -355,7 +363,13 @@ class Recovery:
                 operation_id = action.split(":", 1)[1]
                 journal = OperationJournal(view.directory, view.id)
                 journal.verify(
-                    operation_id, github, expected=fingerprint(journal.read(operation_id))
+                    operation_id,
+                    github,
+                    expected=next(
+                        row["record_digest"]
+                        for row in report["operations"]
+                        if row["id"] == operation_id
+                    ),
                 )
             elif action == "workspace-recover":
                 workspace.recover()
@@ -372,7 +386,11 @@ class Recovery:
             elif action == "reconcile-session":
                 ledger = ExecutionLedger(view)
                 queue = TaskQueue(data.get("task_queue"))
-                if queue.running or data.get("pending_task"):
+                if (
+                    queue.running
+                    or data.get("pending_task") is not None
+                    or ledger.unconfirmed(after=data.get("ledger_cursor", 0))
+                ):
                     # A crashed owner cannot attest that its descendants stopped.
                     data["sandbox_healthy"] = False
                 if data.get("pending_task") and "task_queue" not in data:
@@ -401,7 +419,7 @@ class Recovery:
                 ):
                     raise ValueError("先恢复执行环境和工作区")
                 queue = TaskQueue(data.get("task_queue"))
-                if queue.running or data.get("pending_task"):
+                if queue.running or data.get("pending_task") is not None:
                     raise ValueError("先核实中断任务")
                 previous = delivery.latest_task(queue.data)
                 previous["result"]["delivery"] = delivery.publish(

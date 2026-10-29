@@ -101,7 +101,7 @@ class OperationJournal:
         for previous in self.records():
             if (
                 previous["scope_digest"] == fingerprint(scope)
-                and previous["stage"] == "mutation_requested"
+                and previous["stage"] in {"mutation_requested", "response_received"}
                 and previous.get("verification", {}).get("state") != "confirmed"
             ):
                 raise ValueError("Identical external write is unresolved; verify its operation ID")

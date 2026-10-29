@@ -106,12 +106,18 @@ class GitHubService:
         if self.api(repo, reference)["object"]["sha"] != base:
             raise ValueError("Remote branch advanced; no reference was updated")
         journal.update(record, stage="mutation_requested")
-        self.api(
+        updated = self.api(
             repo,
             "/git/refs/heads/" + quote(scope["branch"], safe="/"),
             method="PATCH",
             payload={"sha": created["sha"], "force": False},
         )
+        if (
+            updated.get("ref") != "refs/heads/" + scope["branch"]
+            or updated.get("object", {}).get("sha") != created["sha"]
+            or updated.get("object", {}).get("type") != "commit"
+        ):
+            raise ValueError("GitHub branch update response does not confirm the approved commit")
         journal.update(record, stage="response_received")
         return {
             "commit": created["sha"],

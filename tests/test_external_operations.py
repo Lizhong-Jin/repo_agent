@@ -261,3 +261,78 @@ def test_operation_journal_follows_explicit_new_session(tmp_path):
     assert second["session_id"] != first["session_id"]
     with pytest.raises(FileNotFoundError):
         journal.read(first["id"])
+
+
+@pytest.mark.parametrize("damage", ["missing", "commit", "branch", "type", "malformed"])
+def test_patch_response_must_confirm_exact_publication(service, publication, damage):
+    args, action = publication
+    normal = service.http.respond
+
+    def response(method, url, **kwargs):
+        if method != "PATCH":
+            return normal(method, url, **kwargs)
+        value = {"ref": "refs/heads/feature/change", "object": {"sha": "d" * 40, "type": "commit"}}
+        if damage == "missing":
+            value = {}
+        elif damage == "commit":
+            value["object"]["sha"] = "e" * 40
+        elif damage == "branch":
+            value["ref"] = "refs/heads/other"
+        elif damage == "type":
+            value["object"]["type"] = "tag"
+        else:
+            return b"not json"
+        return json.dumps(value).encode()
+
+    service.http.respond = response
+    result = action.execute(args)
+    assert not result.success and result.error_code == "EXTERNAL_OPERATION_UNCONFIRMED"
+    (record,) = service.journal.records()
+    assert record["stage"] == "mutation_requested" and record["candidate_commit"] == "d" * 40
+    assert not service.manager.profile.operations
+
+
+def test_response_saved_but_completion_lost_cannot_repeat_pr(service, monkeypatch):
+    args, action = pr_args(), tool(service, "github")
+    approve(service, action.execute(args))
+    service.http.respond = lambda *a, **k: b'{"number":17}'
+    save = service.journal.save
+
+    def fail_completion(record):
+        if record["stage"] == "completed":
+            raise PersistenceError("completion lost")
+        save(record)
+
+    monkeypatch.setattr(service.journal, "save", fail_completion)
+    with pytest.raises(PersistenceError):
+        action.execute(args)
+    (record,) = service.journal.records()
+    assert record["stage"] == "response_received" and record["number"] == 17
+    service.http.calls.clear()
+    approve(service, action.execute(args))
+    assert not action.execute(args).success
+    assert not service.http.calls and len(service.journal.records()) == 1
+
+
+def test_recovery_verification_pins_digest_before_start_receipt(open_conversation, monkeypatch):
+    from agent import recovery as module
+    from tools._internal.github_service import GitHubService
+
+    conversation = open_conversation()
+    journal = OperationJournal(conversation.store.directory, conversation.store.id)
+    record = journal.begin(pr_args())
+    journal.update(record, stage="response_received", number=23)
+    recovery = module.Recovery(conversation.store)
+    report = recovery.inspect()
+    save = module.save_json
+
+    def change_after_validation(path, receipt):
+        save(path, receipt)
+        if receipt["state"] == "started":
+            journal.update(record, number=24)
+
+    monkeypatch.setattr(module, "save_json", change_after_validation)
+    http = HTTP()
+    with pytest.raises(ValueError, match="evidence changed"):
+        recovery.apply(report["plan"], "verify:" + record["id"], github=GitHubService(http))
+    assert not http.calls and "verification" not in journal.read(record["id"])

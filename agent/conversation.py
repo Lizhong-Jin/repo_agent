@@ -83,6 +83,7 @@ class SavedConversation:
         self.state_lock = RLock()
         self.queue = TaskQueue()
         self.ledger = ExecutionLedger(store)
+        self.recovery_blocked = self.ledger.recovery_required()
         self.ledger_cursor = 0
         runtime.execution_ledger = self.ledger
         self.pending_task = None
@@ -213,7 +214,8 @@ class SavedConversation:
             "pending_task": self.pending_task,
             "ledger_cursor": self.ledger_cursor,
             "task_queue": self.queue.snapshot(),
-            "sandbox_healthy": getattr(
+            "sandbox_healthy": not self.recovery_blocked
+            and getattr(
                 self.execution_backend or getattr(self.sandbox, "backend", None), "healthy", True
             ),
         }

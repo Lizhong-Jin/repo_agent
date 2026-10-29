@@ -212,6 +212,32 @@ class ExecutionLedger:
                 "SELECT COALESCE(MAX(seq),0) FROM events WHERE session=?", (self.store.id,)
             ).fetchone()[0]
 
+    def recovery_required(self):
+        """Check before startup normalizes the queue or acknowledges new evidence."""
+        data = self.store.data or {}
+        return bool(
+            data.get("sandbox_healthy") is False
+            or data.get("pending_task") is not None
+            or any(t["state"] == "running" for t in (data.get("task_queue") or {}).get("tasks", []))
+            or self.watermark() != data.get("ledger_cursor", 0)
+        )
+
+    def unconfirmed(self, *, after=0):
+        """An unbounded existence query, independent of the diagnostic display limit."""
+        if not self.path.exists() and not self.required:
+            return False
+        with self.connect() as db:
+            return (
+                db.execute(
+                    """SELECT 1 FROM calls c JOIN runs r ON r.id=c.run
+                   WHERE r.session=? AND c.state IN ('started','uncertain')
+                   AND EXISTS (SELECT 1 FROM events e WHERE e.run=c.run
+                               AND e.call_id=c.call_id AND e.seq>?) LIMIT 1""",
+                    (self.store.id, after),
+                ).fetchone()
+                is not None
+            )
+
     def evidence(self, *, after=0, limit=100, before=None, run=None):
         if not self.path.exists() and not self.required:
             return []

@@ -169,14 +169,16 @@ class TaskController:
         backend = getattr(self.conversation, "execution_backend", None) or getattr(
             self.sandbox, "backend", None
         )
-        return getattr(backend, "healthy", True)
+        return not getattr(self.conversation, "recovery_blocked", False) and getattr(
+            backend, "healthy", True
+        )
 
     def resume(self):
         with self.lock:
             if self.closing or (self.active and self.cancellation.event.is_set()):
                 raise ValueError("正在停止，请等待当前任务收尾")
             if self.cleanup_blocked or not self._healthy():
-                raise ValueError("进程清理尚未确认；请退出、检查进程后重新启动")
+                raise ValueError("进程清理尚未确认；请退出后运行 repo-agent recover plan")
             if not self.delivery_allowed():
                 raise ValueError(
                     delivery.describe(self.delivery_result())
@@ -195,7 +197,7 @@ class TaskController:
             if self.active or self.closing:
                 raise ValueError("请等待当前任务收尾后再使用 /continue")
             if self.cleanup_blocked or not self._healthy():
-                raise ValueError("进程清理尚未确认；请退出、检查进程后重新启动")
+                raise ValueError("进程清理尚未确认；请退出后运行 repo-agent recover plan")
             permissions = getattr(getattr(self.runtime, "access_policy", None), "permissions", None)
             if permissions is not None and permissions.pending:
                 raise ValueError("请先 /permissions approve ID 或 deny ID 处理申请")

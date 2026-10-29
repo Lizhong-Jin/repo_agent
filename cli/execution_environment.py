@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent.execution_ledger import ExecutionLedger
 from sandbox import SandboxPolicy, SandboxSession
 from sandbox.environment import DEFAULT_IMAGE, check_image_profile, detect_environment
 from sandbox.native import create_native_backend as NativeBackend
@@ -32,6 +33,8 @@ def describe_retained_sandbox(session):
 
 def open_execution_environment(args, workspace_root, store, capabilities, cleanup):
     session = native = None
+    if getattr(store, "data", None) and ExecutionLedger(store).recovery_required():
+        raise ValueError("上次执行仍需核实；请先运行 repo-agent recover plan 完成恢复")
     permissions = PermissionManager(
         workspace_root,
         backend=args.sandbox,
@@ -67,10 +70,6 @@ def open_execution_environment(args, workspace_root, store, capabilities, cleanu
         print(f"[沙箱环境：{environment.profile}] {environment.reason}", flush=True)
         previous_sandbox = store.data.get("sandbox") if store.data else None
         if previous_sandbox and store.data["mode"] == "docker":
-            if store.data.get("sandbox_healthy") is False:
-                raise ValueError(
-                    "上次沙箱清理未确认；退出后运行 repo-agent recover plan 核实遗留容器"
-                )
             session = SandboxSession.resume(
                 previous_sandbox,
                 workspace_root,
@@ -86,12 +85,6 @@ def open_execution_environment(args, workspace_root, store, capabilities, cleanu
         cleanup.callback(describe_retained_sandbox, session)
         tools = session.tools(writeback_mode=args.sandbox_writeback)
     elif args.sandbox == "native":
-        if (
-            store.data
-            and store.data["mode"] == "native"
-            and store.data.get("sandbox_healthy") is False
-        ):
-            raise ValueError("上次进程清理未确认；退出后运行 repo-agent recover plan 核实遗留进程")
         options = {"isolated_workspace": True} if independent else {}
         native = NativeBackend(
             workspace_root,

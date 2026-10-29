@@ -490,6 +490,11 @@ def github_responses(service, *, advanced=False):
             value = {"object": {"sha": ("b" if advanced else "a") * 40}}
         elif method == "GET":
             value = {"tree": {"sha": "c" * 40}}
+        elif method == "PATCH":
+            value = {
+                "ref": "refs/heads/feature/change",
+                "object": {"sha": "d" * 40, "type": "commit"},
+            }
         else:
             value = {"sha": "d" * 40}
         return json.dumps(value).encode()

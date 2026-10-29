@@ -296,10 +296,11 @@ def test_new_session_revokes_and_snapshot_cannot_restore_authority(open_conversa
     snapshot = conversation.store.data
     conversation.new_session()
     assert manager.snapshot()["policy"] == "strict"
+    conversation.store.select(snapshot["session_id"])
     _, args = parse_arguments(["--sandbox", "local"])
     with ExitStack() as cleanup:
         env = open_execution_environment(
-            args, conversation.store.project, SimpleNamespace(data=snapshot), None, cleanup
+            args, conversation.store.project, conversation.store, None, cleanup
         )
     assert env.permissions.snapshot()["policy"] == "strict"
 
